@@ -1,0 +1,208 @@
+# AGENTS.md — VideoMesh 智能体工作指南
+
+> 本文档是任何智能体（Agent / AI 编程助手）参与本项目时的**首个引入式指导文档**。
+> 参与本项目前，请先完整阅读本文档。
+
+---
+
+## 1. 项目是什么
+
+VideoMesh 是一个**个人视频资料管理平台**（DAM，Digital Asset Management），部署在家里的一台
+PC 上，通过局域网 Web 界面供所有设备（PC / 手机 / 平板 / TV）访问。
+
+- 核心能力：**视频管理**——目标是达到「简易 JellyFin」体验（海报墙、元数据、剧集/季/集分组、
+  继续观看、首页行式浏览），但**不做** JellyFin 的冗余加法功能（插件系统、多用户档案、直播、
+  音乐库等）。
+- 辅助能力：基础文件管理（浏览 / 上传 / 下载 / 重命名 / 移动 / 删除）。
+- 定位：单用户、单访问口令；**支持多终端并发访问**（卧室/书房 PC、同机多标签页可同时在线，
+  各自独立会话，互不挤占）；Windows 优先部署。
+
+## 2. 文档优先级（开始工作前先读这些）
+
+| 文档 | 作用 | 备注 |
+|---|---|---|
+| `DEVELOPMENT_PLAN.md` | **唯一权威开发方案**，所有开发活动以此为准；关键决策记录（ADR）在 0.4 节 | 如有修订必须留痕 |
+| `Personal_Media_DAM_Architecture.md` | 上游原始构想 | 可能滞后于 plan，仅作背景 |
+
+**规则**：修改代码或架构前必须先读 `DEVELOPMENT_PLAN.md`。发现文档与代码不一致时，以
+`DEVELOPMENT_PLAN.md` 为准，并向用户指出差异。
+
+## 3. 核心原则（来自 plan 0.2）
+
+1. 视频体验优先
+2. 保留任意文件管理能力
+3. AI 可长期维护（模块化、低耦合、显式优先）
+4. UI 现代化
+5. Windows 优先部署
+6. 单用户：唯一所有者，通过一个访问口令保护；**支持多终端并发访问**（每终端独立会话，
+   可同时看视频 + 整理文件，互不挤占）
+7. **最高级原则**：一切功能围绕「元数据」扩展，而非「文件系统」——文件系统只保存字节，
+   元数据负责查找、理解与组织
+8. Library 提供简易 JellyFin 媒体库体验，但不引入冗余功能
+9. **功能正确优先，禁止过度优化**（用户新增原则）：先保证功能正确，再谈性能与并发。两个操作
+   彼此无依赖时可异步并行；但凡存在**条件竞争风险**时，一律先用同步串行手段保证正确性，
+   待有真实瓶颈证据后再优化
+
+## 4. 关键架构决策（ADR 摘要，详见 plan 0.4）
+
+- **单 Go 服务**：v1.0 全程不拆服务；内部按包拆分，预留拆分边界（ADR-001）
+- **认证（多终端并发会话）**：单口令 + 会话 Cookie；每终端独立登录/独立会话，登出只清自身，
+  互不挤占（ADR-002）
+- **数据库**：SQLite（纯 Go 驱动 + WAL），演进路线 WAL → FTS5 → 队列 → 缓存，**不默认迁移
+  PostgreSQL**（ADR-005）
+- **播放策略**：能力探测三层——可直连 → HTTP Range；不可直连 → HLS 转码；仍不可 → 转码兜底；
+  HLS 默认 `auto`（ADR-006）
+- **文件身份**：`(storage_id, file_id, relative_path)` 三元组 + `(file_id, size, mtime)` 指纹
+  （ADR-007）
+- **多数据源**：`storages` 抽象（type: internal/external/network），外接卷热插拔、盘符重映射、
+  离线不删元数据（ADR-011 / ADR-014）
+- **剧集分组 + 刮削**：目录/文件名规则识别 Show/Season/Episode；元数据离线优先（NFO → 手动 →
+  可选 TMDB）（ADR-015 / ADR-016）
+- **AI 解耦**：事件总线（`VideoImported` 等），AI/OCR/转写作为 Listener（ADR-010）
+- **搜索隔离**：`SearchProvider` 接口，当前 FTS5，Meilisearch 后续替换（ADR-009）
+- **前端形态**：Explorer 与 Library 是两个共享 API/播放器/元数据的 App（ADR-013）
+
+## 5. 技术栈（详见 plan 1 章）
+
+- 前端：React 18 + TypeScript、Vite、Tailwind + shadcn/ui、TanStack Router / Query / Table、
+  Motion、Vidstack（播放器）；Vitest + Testing Library
+- **前端包管理器：一律使用 `pnpm`**（本机已装 pnpm 11.x）；**禁止**使用 `npm` / `cnpm` / `yarn`
+  执行安装、脚本等任何前端命令
+- 后端：Go 1.22+、标准库 `net/http`、`modernc.org/sqlite`（免 CGO）、`fsnotify`、`slog`、ULID
+- 媒体：FFmpeg / ffprobe（探测、缩略图、HLS、字幕）
+- 部署：`CGO_ENABLED=0` 单 `.exe` + `data_dir` + `config.yaml` + ffmpeg 二进制
+
+### 5.1 开发环境要求（当前本机状态）
+
+| 工具 | 用途 | 本机状态 |
+|---|---|---|
+| Go 1.22+ | 后端编译（当前 1.26.5，`CGO_ENABLED=0`） | ✅ 已装（`C:\Program Files\Go`） |
+| Node.js 18+ | 前端运行（当前 v24.18.0） | ✅ 已装 |
+| pnpm | 前端包管理（当前 11.9.0，registry 为 npmmirror） | ✅ 已装 |
+| Git | 版本管理（当前 2.55.0） | ✅ 已装 |
+| winget | 软件安装（备选 choco/scoop 未装） | ✅ 已装 |
+| **FFmpeg / ffprobe** | 媒体探测、缩略图、HLS 转码、字幕；integration 测试依赖 | ✅ 已装（8.1.2，`winget install Gyan.FFmpeg`，已入 PATH） |
+
+- FFmpeg 安装方式（选一）：`winget install Gyan.FFmpeg --source winget`（装后写入 PATH，
+  需新开终端生效）；或将 `ffmpeg.exe` / `ffprobe.exe` 放入项目 `bin/` 并在 `config.yaml` 的
+  `media.ffmpeg_path` / `media.ffprobe_path` 指定。
+- 当前安装位置：`C:\Users\tolov\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_*`
+  （`bin\ffmpeg.exe` / `bin\ffprobe.exe`）。
+- **运行时注意**：winget 装的 FFmpeg 需新开终端 PATH 才生效；若服务进程 PATH 里找不到
+  `ffprobe`（probe 任务报 `executable file not found in %PATH%`），在 `config.yaml` 的
+  `media.ffmpeg_path` / `media.ffprobe_path` 显式指定绝对路径（YAML 双引号内用 `\\` 转义），
+  改后需重启服务。
+- 本机 `go env`：`GOOS=windows GOARCH=amd64 CGO_ENABLED=0`，符合「免 CGO 单 exe」要求。
+
+## 6. 工程目录约定（详见 plan 3 章）
+
+```
+backend/
+  cmd/server            # 装配 + 启动
+  internal/
+    config  auth  api  db  domain  store
+    files  storage  events  scanner  scrape
+    jobs  media  streaming  search
+  testdata/
+frontend/
+  src/
+    api  components  features  lib  styles
+    # features: auth home explorer library player shows collections search settings
+```
+
+**依赖方向单向**：`api → domain → store / files / media`，禁止循环依赖；模块职责单一、目录扁平、
+显式优先、少用复杂设计模式。
+
+## 7. 工作规范
+
+- 动手前先理解：读相关文件上下文，遵循既有代码风格、命名与模式；新用库前先确认项目是否已引入。
+- **不加多余注释**，除非能解释「为什么」而非「是什么」。
+- 完成后运行项目提供的 lint / typecheck / test（后端：`go test ./...`；前端：`pnpm run lint`、
+  `pnpm run test` 等；**前端命令一律用 `pnpm`**，未配置则向用户确认命令）。
+- **知识 / 全局要求性内容必须同步更新到 AGENTS.md**：当会话中发现任何适用于项目全局的约定
+  （工具链、命令、命名、工作流程等）时，立即将其写入本文档，以便后续会话继承。
+- **需要人工验证的项交给用户**：当某个验证无法通过命令行反馈、或命令行验证的难度/效果远不如
+  人工验证时（例如浏览器端视觉/交互、播放体验、局域网设备访问等），不强行用脚本模拟，应明确
+  告知用户「该项需你手动验证 + 验证方法」，由用户执行。
+- **禁止为验证长期占用命令行**：不得自行启动后台 webserver / 服务再用命令轮询等待；不得执行
+  不会立即返回的命令去「跑通」交互流程。命令行链路验证以 httptest / 单次可返回的 curl 为准，
+  浏览器与交互类验证一律直接列入「需手动验证清单」交给用户。
+- 不主动 `git commit` / `push`，除非用户明确要求。
+- 不擅自创建文档文件（`.md`、README），除非用户明确要求。
+- 引用代码时使用 `文件路径:行号` 格式。
+
+## 8. 强制规则
+
+以下三条是用户明确要求、必须遵守的硬性规则：
+
+### 规则 A —— 影响环境的操作必须先经用户批准
+
+涉及以下类别的操作，**必须先向用户说明「做什么 / 为什么 / 影响面」，得到确认后再执行**：
+
+- 安装、卸载、升级依赖包（如 `pnpm add` / `pnpm install`、`go get`、`go mod tidy`、`pip install` 等）
+- 修改全局环境变量、系统 PATH、注册表、防火墙、服务注册（NSSM）等环境级配置
+- 在项目目录之外写入文件、修改用户主目录内容
+- 启动/停止系统服务、部署、执行可能耗时或占用大量资源的操作
+- `git` 提交、推送、打 tag、创建 PR
+
+**例外**：纯只读操作（读文件、搜索、grep、查看状态）无需批准。
+
+### 规则 B —— 代码核心标准：可维护、可读、架构清晰，严禁修补式代码
+
+- **禁止修补式代码**：例如原逻辑只针对 A 情况，为新增的小概率 B 情况沿原逻辑链堆叠大量
+  `if` 特判分支。这是本项目的红线。
+- 当需求需要扩展原有行为时，应把变化**归入统一的抽象**（策略 / 接口 / 配置驱动 / 数据驱动），
+  而不是在调用链上打补丁。
+- 判断标准：若一段逻辑因新增场景出现多份特判、重复分支，应停下来**重构**而非继续堆代码。
+- 保持模块职责单一，遵守 plan 中的 ADR 与架构边界，不越界耦合。
+
+### 规则 C —— 需求模糊时，必须提供选择并询问用户
+
+- 当需求存在歧义、有多种可行方案、或选择会显著影响架构 / 体验 / 未来演进时：
+  - 给出 2~3 个候选方案，说明各自利弊
+  - 标出推荐项
+  - **询问用户后再动手**，禁止自行臆断决定
+- 例外：ADR / plan 已有明确结论的事项不必再问。
+
+## 9. 质量与验证
+
+- 开发阶段与验收标准见 plan 10 章（Phase 0~4），每个 Phase 的「验收」即完成判定，不得跳过测试。
+- 测试策略见 plan 12 章：后端 `go test ./...`（`httptest` 全链路、mock 文件系统可注入、
+  媒体相关打 `//go:build integration`）；前端 Vitest + Testing Library。
+- 阶段完成后建议打 tag 并写阶段小结（走查 ADR 与目录结构），修订 ADR 必须留痕并回填关联章节。
+
+## 10. 沟通约定
+
+- 回复简洁、直接、可执行；避免冗长的解释性前缀。
+- 与项目文档一致，使用中文交流。
+
+## 11. 当前进度（Phase 2 起点快照）
+
+> 本节是会话间交接快照。新会话开工前先读本节 + plan 对应章节。
+
+### 已完成
+
+- **Phase 0 骨架与认证**：Go 后端（config/db/auth/api）+ React 前端脚手架 + 单口令会话认证闭环（已修复登录竞态）。验收通过。
+- **Phase 1 文件管理与索引**（里程碑 M1→M4 全部完成，`go vet`/`gofmt`/`go test ./...` 全绿，ffmpeg integration 测试通过）：
+  - **M1 存储卷 + Explorer 浏览**：`storages` CRUD + 可用性探测（2s 超时）、`GET /api/fs/list`
+  - **M2 文件操作**：`/api/fs/{download,mkdir,rename,move,delete}`（Range 下载、批量摘要、只读卷 403）、分块上传 `/api/upload`（末片合并、幂等续传、断点重试）；前端操作 UI（上传/新建/重命名/删除/移动）
+  - **M3 扫描与索引**：`events` 总线、`jobs` 队列+Worker（probe/thumbnail/rescan，崩溃恢复）、`media`（ffprobe/ffmpeg）、`scanner`（指纹 `(file_id,size,mtime)`、移动识别、删除标记、fsnotify 5s 去抖监视）、NTFS FileID（免 CGO）、缩略图（covers 320px + thumbs 160px）
+  - **M4 前端 Explorer 页面**：存储卷侧边栏（在线/离线分组）+ 文件列表 + 面包屑
+
+### 关键约定（新会话必须遵守）
+
+- **时间戳统一固定宽度纳秒 RFC3339**（`2006-01-02T15:04:05.000000000Z07:00`），保证字符串字典序=时间序（扫描 recency 比较依赖）。`store.util.nowRFC3339` / `scanner.timeLayout`。
+- **SQLite 单写者**：`SetMaxOpenConns(1)`；写操作收敛到 store 层。
+- **扫描安全**：外接卷根路径不可达时中止扫描、绝不误删元数据（ADR-014）；无 probe 元数据（`duration==0 && codec==""`）的视频即使指纹未变也会强制重 probe（自愈）。
+- **上传清理**：合并完成/已完成即删 staging 目录；启动时 + 每小时清理超 24h 的孤儿分片。
+- **ffprobe/ffmpeg**：服务进程 PATH 找不到时必须在 `config.yaml` 的 `media.ffmpeg_path`/`media.ffprobe_path` 显式配置（YAML 双引号 `\\` 转义），改后重启。
+- **新增依赖需用户批准**（规则 A），包括 `go get`。
+
+### 待办 / 遗留（Phase 2 及以后）
+
+- **下一步：Phase 2 播放与媒体体验**（plan 10 章）：视频库网格页、Vidpack→Vidstack 直连播放、HLS 按需转码、续播、字幕。前端已有 `features/library` 目录预留，但 `videos` 相关 API 尚未暴露（仅 DB/`/api/jobs` 层面）。
+- `docs/decisions.md` 尚未创建（plan 附录 A 建议 Phase 0 建）；ADR 修订已留痕于 plan 0.4 与各章回填。
+- 实际脚手架为 **React 19**（plan 1.1 写 React 18，未回填，待用户拍板）。
+- 设备热插拔盘符重映射未实现：监视仅在启动时对 enabled 卷建立，拔出/插入不会自动重扫/重映射（ADR-014 的后半部分）。
+- `delete_mode: trash` 未实现（当前永久删除）；前端断点续传 UI 未实现；`/api/stream` 播放接口未实现。
+- 尚未执行首个 `git commit`（仓库已 `git init`，未提交）。

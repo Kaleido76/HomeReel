@@ -1,0 +1,26 @@
+# Go
+backend/bin/
+backend/*.exe
+backend/*.test
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# Runtime data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Config with secrets
+config.yaml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
