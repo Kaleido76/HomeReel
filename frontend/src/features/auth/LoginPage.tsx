@@ -26,7 +26,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-neutral-950 px-4">
       <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-900 p-6 shadow-xl">
         <div className="mb-6 text-center">
-          <h1 className="text-xl font-semibold text-neutral-50">VideoMesh</h1>
+          <h1 className="text-xl font-semibold text-neutral-50">HomeReel</h1>
           <p className="mt-1 text-sm text-neutral-400">请输入访问口令</p>
         </div>
         <form onSubmit={onSubmit} className="space-y-4">

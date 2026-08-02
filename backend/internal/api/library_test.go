@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/store"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/store"
 )
 
 const ts2026 = "2026-01-01T00:00:00.000000000Z"

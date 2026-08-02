@@ -8,7 +8,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // Service manages storage volumes (ADR-011 / ADR-014): CRUD plus runtime

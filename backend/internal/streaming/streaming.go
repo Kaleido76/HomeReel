@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // Errors surfaced to the API layer.

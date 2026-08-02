@@ -31,7 +31,7 @@ export function AppShell() {
           <div className="flex min-w-0 items-center gap-4">
             <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold text-neutral-900">
               <Video className="size-5 text-indigo-600" />
-              VideoMesh
+              HomeReel
             </Link>
             <nav className="flex min-w-0 items-center gap-1 overflow-x-auto">
               {navItems.map((item) => (

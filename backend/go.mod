@@ -1,4 +1,4 @@
-module videomesh/backend
+module homereel/backend
 
 go 1.26.5
 

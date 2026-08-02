@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 type storageRepo struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // Options refines a search query.

@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 func (s *Server) seriesOrError(w http.ResponseWriter, r *http.Request, id string) (*domain.Series, bool) {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // TMDBConfig enables optional online scraping (ADR-016). An empty APIKey

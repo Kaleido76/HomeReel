@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/store"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/store"
 )
 
 // seedVideo inserts a video row into the given test database.

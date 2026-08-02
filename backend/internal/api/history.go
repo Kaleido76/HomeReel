@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // timeLayout matches the fixed-width nanosecond timestamp used across the

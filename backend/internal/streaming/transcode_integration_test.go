@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // segmentRefRe matches segment file references inside an HLS playlist.

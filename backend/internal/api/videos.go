@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/streaming"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/streaming"
 )
 
 // videoOrError loads a video, writing an error response when missing.

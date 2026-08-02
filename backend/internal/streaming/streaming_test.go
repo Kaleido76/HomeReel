@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 func TestDirectPlayable(t *testing.T) {

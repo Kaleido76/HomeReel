@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strconv"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 type seriesRepo struct {

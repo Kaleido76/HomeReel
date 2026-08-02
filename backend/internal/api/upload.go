@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"videomesh/backend/internal/files"
+	"homereel/backend/internal/files"
 )
 
 // handleUpload accepts one chunk of a multipart upload per request

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/store"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/store"
 )
 
 func seedSeries(t *testing.T, database *sql.DB) {

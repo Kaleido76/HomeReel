@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"videomesh/backend/internal/jobs"
+	"homereel/backend/internal/jobs"
 )
 
 type jobRepo struct {

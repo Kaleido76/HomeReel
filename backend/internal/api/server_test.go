@@ -13,17 +13,17 @@ import (
 	"strings"
 	"testing"
 
-	"videomesh/backend/internal/auth"
-	"videomesh/backend/internal/db"
-	"videomesh/backend/internal/events"
-	"videomesh/backend/internal/files"
-	"videomesh/backend/internal/jobs"
-	"videomesh/backend/internal/scanner"
-	"videomesh/backend/internal/scrape"
-	"videomesh/backend/internal/search"
-	"videomesh/backend/internal/storage"
-	"videomesh/backend/internal/store"
-	"videomesh/backend/internal/streaming"
+	"homereel/backend/internal/auth"
+	"homereel/backend/internal/db"
+	"homereel/backend/internal/events"
+	"homereel/backend/internal/files"
+	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/scanner"
+	"homereel/backend/internal/scrape"
+	"homereel/backend/internal/search"
+	"homereel/backend/internal/storage"
+	"homereel/backend/internal/store"
+	"homereel/backend/internal/streaming"
 )
 
 func newTestServer(t *testing.T, password string) (*httptest.Server, string) {
@@ -511,7 +511,7 @@ func TestUploadMultiChunk(t *testing.T) {
 	cookie := loginCookie(t, ts, "secret")
 	storageID, root := newTestStorage(t, ts, cookie)
 
-	data := "hello-videomesh"
+	data := "hello-homereel"
 	const total = 3
 	for i := 0; i < total; i++ {
 		start := i * 5
@@ -522,7 +522,7 @@ func TestUploadMultiChunk(t *testing.T) {
 		body := multipartBody(t, data[start:end], i)
 		req, _ := http.NewRequest("POST",
 			ts.URL+"/api/upload?storageId="+storageID+"&path=", strings.NewReader(body))
-		req.Header.Set("Content-Type", "multipart/form-data; boundary=videomesh")
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=homereel")
 		req.Header.Set("Cookie", cookie)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -545,12 +545,12 @@ func TestUploadMultiChunk(t *testing.T) {
 }
 
 // multipartBody builds a multipart form body using the fixed boundary
-// "videomesh" with fields uploadId/filename/chunkIndex/chunkTotal plus file.
+// "homereel" with fields uploadId/filename/chunkIndex/chunkTotal plus file.
 func multipartBody(t *testing.T, chunk string, chunkIndex int) string {
 	t.Helper()
 	var b strings.Builder
 	writePart := func(name, value string) {
-		b.WriteString("--videomesh\r\n")
+		b.WriteString("--homereel\r\n")
 		b.WriteString("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n")
 		b.WriteString(value)
 		b.WriteString("\r\n")
@@ -559,11 +559,11 @@ func multipartBody(t *testing.T, chunk string, chunkIndex int) string {
 	writePart("filename", "movie.mp4")
 	writePart("chunkIndex", strconv.Itoa(chunkIndex))
 	writePart("chunkTotal", "3")
-	b.WriteString("--videomesh\r\n")
+	b.WriteString("--homereel\r\n")
 	b.WriteString("Content-Disposition: form-data; name=\"file\"; filename=\"f\"\r\n")
 	b.WriteString("Content-Type: application/octet-stream\r\n\r\n")
 	b.WriteString(chunk)
-	b.WriteString("\r\n--videomesh--\r\n")
+	b.WriteString("\r\n--homereel--\r\n")
 	return b.String()
 }
 

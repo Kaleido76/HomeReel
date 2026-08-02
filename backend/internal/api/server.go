@@ -8,19 +8,19 @@ import (
 	"os"
 	"time"
 
-	"videomesh/backend/internal/auth"
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/events"
-	"videomesh/backend/internal/files"
-	"videomesh/backend/internal/jobs"
-	"videomesh/backend/internal/scanner"
-	"videomesh/backend/internal/scrape"
-	"videomesh/backend/internal/search"
-	"videomesh/backend/internal/storage"
-	"videomesh/backend/internal/streaming"
+	"homereel/backend/internal/auth"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/events"
+	"homereel/backend/internal/files"
+	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/scanner"
+	"homereel/backend/internal/scrape"
+	"homereel/backend/internal/search"
+	"homereel/backend/internal/storage"
+	"homereel/backend/internal/streaming"
 )
 
-const sessionCookie = "videomesh_session"
+const sessionCookie = "homereel_session"
 
 // Server wires routes and shared dependencies.
 type Server struct {

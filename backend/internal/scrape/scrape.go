@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strconv"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // ErrNoTMDB reports that online scraping is disabled (no API key configured).

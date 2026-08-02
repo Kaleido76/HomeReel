@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 type memRepo struct {
@@ -98,7 +98,7 @@ func TestProbeMissingDirOffline(t *testing.T) {
 	got, err := svc.Create(context.Background(), domain.Storage{
 		Name:     "x",
 		Type:     domain.StorageTypeInternal,
-		RootPath: "C:\\definitely\\missing\\videomesh-test",
+		RootPath: "C:\\definitely\\missing\\homereel-test",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)

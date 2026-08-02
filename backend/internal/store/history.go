@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 type historyRepo struct {

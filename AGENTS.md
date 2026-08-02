@@ -1,4 +1,4 @@
-# AGENTS.md — VideoMesh 智能体工作指南
+# AGENTS.md — HomeReel 智能体工作指南
 
 > 本文档是任何智能体（Agent / AI 编程助手）参与本项目时的**首个引入式指导文档**。
 > 参与本项目前，请先完整阅读本文档。
@@ -7,7 +7,7 @@
 
 ## 1. 项目是什么
 
-VideoMesh 是一个**个人视频资料管理平台**（DAM，Digital Asset Management），部署在家里的一台
+HomeReel 是一个**个人视频资料管理平台**（DAM，Digital Asset Management），部署在家里的一台
 PC 上，通过局域网 Web 界面供所有设备（PC / 手机 / 平板 / TV）访问。
 
 - 核心能力：**视频管理**——目标是达到「简易 JellyFin」体验（海报墙、元数据、剧集/季/集分组、
@@ -177,59 +177,49 @@ frontend/
 - 回复简洁、直接、可执行；避免冗长的解释性前缀。
 - 与项目文档一致，使用中文交流。
 
-## 11. 当前进度（Phase 3 + 视频库组织重构完成）
+## 11. 当前状态与后续方向
 
-> 本节是会话间交接快照。新会话开工前先读本节 + plan 对应章节。
+> 本节是会话间交接快照：已实现能力清单（现状）、后续开发必须遵守的约定、遗留与验证事项。
 
-### 已完成
+### 11.1 已实现能力（现状）
 
-- **Phase 0 骨架与认证**：Go 后端（config/db/auth/api）+ React 前端脚手架 + 单口令会话认证闭环（已修复登录竞态）。验收通过。
-- **Phase 1 文件管理与索引**（里程碑 M1→M4 全部完成，`go vet`/`gofmt`/`go test ./...` 全绿，ffmpeg integration 测试通过）：
-  - **M1 存储卷 + Explorer 浏览**：`storages` CRUD + 可用性探测（2s 超时）、`GET /api/fs/list`
-  - **M2 文件操作**：`/api/fs/{download,mkdir,rename,move,delete}`（Range 下载、批量摘要、只读卷 403）、分块上传 `/api/upload`（末片合并、幂等续传、断点重试）；前端操作 UI（上传/新建/重命名/删除/移动）
-  - **M3 扫描与索引**：`events` 总线、`jobs` 队列+Worker（probe/thumbnail/rescan，崩溃恢复）、`media`（ffprobe/ffmpeg）、`scanner`（指纹 `(file_id,size,mtime)`、移动识别、删除标记、fsnotify 5s 去抖监视）、NTFS FileID（免 CGO）、缩略图（covers 320px + thumbs 160px）
-  - **M4 前端 Explorer 页面**：存储卷侧边栏（在线/离线分组）+ 文件列表 + 面包屑
-- **Phase 2 播放与媒体体验**（M1→M4 代码完成，后端 `go test ./...`/`go vet`/`gofmt`（含 ffmpeg integration）与前端 `pnpm lint`/`pnpm build` 全绿；**浏览器播放体验仍待用户手动验收**）：
-  - **M1 视频库 API + 网格页**：`store.VideoRepo.List`（q/sort/order/page/pageSize，白名单排序）、`GET /api/videos`、前端 `/library` 海报网格（缩略图/时长/搜索/排序/分页/离线置灰）+ 首页「最近添加」
-  - **M2 直连播放 + 封面**：`streaming` 包（`internal/streaming/`）、`GET /api/stream/{id}`（HTTP Range + 由 container/codec 推导 Content-Type）、`GET /api/stream/{id}/cover`（含 `?thumb=1`）；前端 Vidstack 播放页 `/library/video/:id`
-  - **M3 历史与续播**：`history` 表迁移（`PRIMARY KEY(video_id, user)`，user 固定 `local`）、`GET/PUT /api/videos/{id}/history`；前端 10s 节流保存 + 进入时 seek（距片尾 20s 内不续播、播完归零）
-  - **M4 HLS 按需转码 + 侧边字幕**：能力探测 `streaming.DirectPlayable`（native container+codec 白名单，unprobed 按扩展名兜底）；`MasterM3U8` 单飞去重、后台 ffmpeg **增量 live 型** HLS 转码到 `data_dir/hls/<video_id>/`（`-hls_list_size 0` + `-hls_flags temp_file+independent_segments` + `-map 0:a:0?`，完成后写 `.done` 标记以区分崩溃残留），`master.m3u8` 读入内存快照、仅含 `#EXTINF` 才服务、`Cache-Control: no-store`；`Segment` 服务分片；`/api/stream/{id}/subtitle` 服务同目录 `.srt/.vtt/.ass`；`VideoDeleted`/`VideoUpdated` 事件触发 `RemoveCache` 失效；前端不可直连时经本地 hls.js 播 master.m3u8
-  - **Bug 修复（2026-08）**：mp4/h264 因 ffprobe `format_name` 逗号列表整串匹配失败被误判为「不可直连」→ 全部误走 HLS 转码导致卡死；已改为 `media.Probe` 归一化首个 token + `DirectPlayable`/`contentType` 按逗号分词匹配（兼容旧行）。同时加固 HLS：原子写（temp_file）、内存快照服务、hls.js 放宽 manifest 超时（60s）+ `liveDurationInfinity`。新增 `TestMasterM3U8ServesGrowingPlaylist`/`TestSegmentsServableDuringTranscode` 集成测试证明转码中清单与分片始终可服务。
-- **Phase 3 媒体库体验**（M1→M5 完成，后端 `go test ./...`/`go vet`/`gofmt` 与前端 `pnpm lint`/`pnpm build` 全绿；浏览器端仍待用户手动验收）：
-  - **M1 数据迁移**：`videos` 补 18 列（kind/description/show_id/season_number/episode_number/episode_title/year/rating/genre/overview/studio/cast_text/metadata_source/search_text/backdrop_path/audio_codec/fps/file_size）+ 新增 `shows`/`seasons`/`video_tags`/`collections`/`collection_videos` + FTS5 external content（`videos_fts` + ai/ad/au 触发器）+ `videos_bd` 空 show 清理触发器；迁移机制支持多语句（感知 BEGIN…END 块），真实旧库升级已验证（7 视频 + FTS 回填）
-  - **M2 剧集分组**（ADR-015）：`scanner/episode.go` 规则识别 `<Show>/Season N`、`第 N 季`、`SxxEyy`、`第x集`（含中文数字）；`groupVideo` 集成于 Scan/ImportUploaded/probe，**已有数据在 unchanged 分支按路径回填分组**（老库升级后触发一次重扫即可自动归类）
-  - **M3 搜索**（ADR-009）：`search.Provider` 接口 + FTS5 实现（`/api/search`、`bm25` 排序）；`search_text` 反规范化（title+description+tags+show 名）由 store 层 `rebuildSearchText` 维护
-  - **M4 刮削**（ADR-016）：`scrape` 包——NFO 解析（Kodi 新旧 rating 格式）+ 手动编辑（PATCH）+ 可选 TMDB（`scrape.tmdb_api_key` 未配置则在线刮削 400 `no_provider`，NFO+手动不受影响）；`VideoImported` listener 自动应用 NFO；海报落盘 `covers|posters|backdrops`
-  - **M5 API 与前端**：`/api/shows`、`/api/tags`、`/api/collections`、`/api/home`（继续观看/最近/集合）、`/api/search`、`PATCH/DELETE /api/videos/:id`、`/api/videos/:id/{refresh,scrape,cover}`、`/api/shows/:id/{scrape,poster,seasons}`；前端新增 `/movies` `/shows` `/shows/:id` `/collections` `/collections/:id` `/search` 路由 + 首页行 + kind 筛选 + 播放页元数据面板（标签编辑/加入集合/刮削候选/上传封面）
-- **视频库组织重构（2026-08，按 Note.md「视频库组织」需求）**：视频库不再按「电影/剧集/集合」页签区分，统一组织为**单集**（standalone，`show_id IS NULL`）与**系列**（series）两类。
-  - **系列模型**：系列 = `seasons` 行（**一季/一部一个系列**）；`seasons.kind`（`tv`=剧集季 / `movie`=电影部）；成员 = `videos`（show_id+season_number+episode_number 位次排序，**允许缺失**，排序绝不依赖 DB id）；`series_links` 表存系列间**弱关联**（无名称、有排序），同 show 相邻季自动关联，也支持手动增删
-  - **扫描分组**：默认单集；`Season N`/`第N季` 目录即系列关系（目录内文件即使无 `SxxEyy` 也从数字后缀取集号）；否则同目录下 ≥2 个标题键相同/编辑距离相近（`scanner.editDistance`）才归系列；电影多部识别 `Part N`/`第N部`/数字后缀 → `kind=movie` 系列；分组在 **Scan 结束时统一执行**（`toGroup` 收集后 dedupe 再 `groupVideo`，避免单文件入库时看不到同目录兄弟）
-  - **API**：`GET /api/series`、`GET /api/series/{id}`（含 members/links）、`GET /api/series/{id}/{members,links}`、`POST/DELETE /api/series/{id}/links[/{linkedId}]`、`GET /api/series/{id}/poster`；`GET /api/videos?ungrouped=1` 查单集；`GET /api/videos/{id}` 返回 `series_id` 供播放页「所属系列」跳转
-  - **前端**：`/library` = 单集/系列两视图（`features/library/LibraryPage.tsx` + `StandaloneGrid`）；新增 `/series/:id` 系列详情（成员列表含缺失占位、关联系列跳转/增删）；移除 `/movies` `/shows` `/shows/:id` 页面与顶部「电影/剧集/集合」页签（集合路由保留、仅首页入口）；删除 `features/shows/` 与 `api/shows.ts`
-- **播放器修复（2026-08）**：`/api/stream/{id}` 无扩展名，Vidstack 无法从 URL 推断媒体类型 → 回退 `HEAD` 探测 Content-Type，探测请求一旦被取消（日志 `get video err="context canceled"` 500）即报 `could not find a loader for any of the given media sources`。已改为给 `MediaPlayer` 的 `src` 显式带 `type`（直连 `video/mp4`、HLS `application/x-mpegurl`，类型为 `VideoSrc | HLSSrc`），跳过探测。
+- **认证与会话**（ADR-002）：单口令 + 会话 Cookie；多终端独立会话，登出只清自身。
+- **存储卷与文件管理**：`storages` CRUD + 可用性探测；Explorer 浏览、分块可续传上传、Range 下载、新建/重命名/移动/删除（只读卷 403）。
+- **扫描与索引**：指纹 `(file_id,size,mtime)` 增量扫描、移动识别、删除标记、fsnotify 5s 去抖监视、NTFS FileID；`jobs` 队列 + Worker（probe/thumbnail/rescan，崩溃恢复）；缩略图 covers 320px + thumbs 160px。
+- **播放**：能力探测三层（直连 Range / HLS 按需转码 / 兜底）；live 型增量 HLS 转码（单飞、内存快照、`.done` 标记、no-store）；封面；侧边 `.srt/.vtt/.ass` 字幕；Vidstack 播放器 + 本地 hls.js。
+- **历史续播**：`history` 表（user=`local`）；前端 10s 节流保存、进入 seek（距片尾 20s 内不续播、播完归零）。
+- **媒体库（单集/系列）**：统一「单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个系列，`kind`=tv/movie）」；成员位次排序允许缺失；`series_links` 弱关联（同 show 相邻季自动关联 + 手动增删）；首页行（继续观看/最近添加/集合）。
+- **搜索**：FTS5（`videos_fts` external content + 触发器，bm25 排序），`search_text` 由 store 层维护。
+- **刮削**（ADR-016）：NFO（Kodi 新旧 rating）/ 手动 PATCH / 可选 TMDB；封面落盘 `covers|posters|backdrops`。
+- **前端**：Explorer 与 Library 共享 API/播放器/元数据；路由 `/login` `/` `/library` `/series/:id` `/library/video/:id` `/collections` `/search` `/explorer`。
 
-### 关键约定（新会话必须遵守）
+### 11.2 关键约定（后续开发必须遵守）
 
-- **时间戳统一固定宽度纳秒 RFC3339**（`2006-01-02T15:04:05.000000000Z07:00`），保证字符串字典序=时间序（扫描 recency 比较依赖）。`store.util.nowRFC3339` / `scanner.timeLayout` / `api.timeLayout`。
-- **SQLite 单写者**：`SetMaxOpenConns(1)`；写操作收敛到 store 层。**单连接下禁止在 rows 迭代期间发起新的查询（会死锁）**：FTS 结果先收集 id 关闭 rows 再取详情；show 改名重建 search_text 同理。
-- **迁移机制**：`db.go` 的 `migrations` 数组尾部追加；`applyMigration` 支持一条迁移内多语句，`splitStatements` 感知字符串字面量与 `BEGIN…END` 块（触发器内部的分号不会误切分）。**不要在触发器里写会以 `;` 结尾且含内部 `;` 的单条 CREATE TRIGGER 迁移**（会被正确识别，但新迁移务必走此机制）。
-- **剧集/系列组织**：视频库 = 单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个系列，`seasons.kind`=tv/movie）。分组唯一来源是 `scanner.ParseEpisode`（`SxxEyy`/`第x集`/`Season N` 目录/中文数字）与 `scanner.ParseMoviePart`（`Part N`/`第N部`/数字后缀）；**默认单集**，仅当位于 `Season N` 目录、或同目录 ≥2 个标题键相同/编辑距离相近（`scanner.editDistance` ≤2）才归系列；`groupVideo` 在 **Scan 结束时统一对 `toGroup` 执行**（同目录兄弟可见），也在 ImportUploaded/probe/手动归组后调用；老库已有数据在 unchanged 分支回填。系列间弱关联存 `series_links`（无名称、`sort_index` 排序），同 show 相邻季由 `SeriesRepo.SyncShowLinks` 自动关联，`/api/series/{id}/links` 支持手动增删。`videos_bd` 触发器在删光某 show 的最后一集时自动删除空 show；删空 season 不会自动清理，由扫描/后续处理兜底。
-- **FTS5（search_text）**：`videos_fts` 为 external content，`ai/ad/au` 触发器同步；写入侧统一由 store 层 `rebuildSearchText` 维护（Create/UpdateProbe/UpdateMetadata/AssignEpisode/AssignMovie/SetTags/show 改名）。新增任何「会改变搜索命中内容」的写路径都要重建 search_text。
-- **刮削（scrape）**：NFO 解析 `scrape.ParseNFO`（Kodi 新旧 rating）；`VideoImported` listener 自动应用侧边 `.nfo`/`tvshow.nfo`；在线 TMDB 需 `config.yaml` 的 `scrape.tmdb_api_key`（空则不启用，`POST .../scrape` 返回 400 `no_provider`），改配置后重启。手动封面经 `POST /api/videos/{id}/cover`（multipart）落盘 `covers/<id>.<ext>`；`UpdateCovers` 空串=该列不动。
-- **扫描安全**：外接卷根路径不可达时中止扫描、绝不误删元数据（ADR-014）；无 probe 元数据（`duration==0 && codec==""`）的视频即使指纹未变也会强制重 probe（自愈）。
-- **上传清理**：合并完成/已完成即删 staging 目录；启动时 + 每小时清理超 24h 的孤儿分片。
-- **ffprobe/ffmpeg**：服务进程 PATH 找不到时必须在 `config.yaml` 的 `media.ffmpeg_path`/`media.ffprobe_path` 显式配置（YAML 双引号 `\\` 转义），改后重启。
-- **容器（container）判定**：ffprobe `format_name` 是逗号分隔的解复用器列表（如 `mov,mp4,m4a,3gp,3g2,mj2`）。`media.Probe` 归一化为首个 token 入库；`streaming.DirectPlayable`/`contentType` 按逗号分词匹配（兼容旧数据行），**禁止用整串查映射**（否则 mp4/h264 会被误判为不可直连而错误走 HLS 转码）。
-- **HLS 转码**：单飞（in-flight 去重）+ 后台进程；转码命令见 `streaming/transcode.go`（`-hls_list_size 0` 保留全部分片、`-hls_flags temp_file+independent_segments` 原子写避免读到半截文件、`-map 0:a:0?` 音频可选）；`master.m3u8` 由 `MasterM3U8` **读入内存快照**服务（ffmpeg 原地重写文件，直接 ServeContent 会读到截断内容），仅当含 `#EXTINF` 段行才对外服务，响应必须 `Cache-Control: no-store`（避免 304 卡死 hls.js）；`.done` 标记区分「完成缓存」与「崩溃残留」，残留整目录重建；转码结束从 `s.active` 移除；HLS 缓存随 `VideoDeleted`/`VideoUpdated` 失效。
-- **能力探测唯一来源**：直连/HLS 判定由后端 `streaming.DirectPlayable`/`HLSEnabled` 计算，`GET /api/videos/{id}` 返回 `direct_playable`/`hls_enabled` 字段，前端不重复实现判定逻辑。
-- **Vidstack**：前端用 `@vidstack/react`（v1.15+，自带核心，**不要装废弃的 `@vidstack/player`**）；HLS 必须通过 `useMediaProvider` 把 `provider.library = () => import('hls.js')` 指向本地包（默认走 jsdelivr CDN，LAN 离线会失败），并放宽 `provider.config.manifestLoadingTimeOut`（默认 10s 会在首播转码期间超时→无限转圈）；样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，布局组件 `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。**`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（直连 `video/mp4`、HLS `application/x-mpegurl`，类型 `VideoSrc | HLSSrc`），否则 Vidstack 回退 HEAD 探测、探测失败即报 `could not find a loader`。
-- **新增依赖需用户批准**（规则 A），包括 `go get` / `pnpm add`。
+- **时间戳**：统一固定宽度纳秒 RFC3339（`2006-01-02T15:04:05.000000000Z07:00`），保证字典序=时间序（recency 比较依赖）。`store.util.nowRFC3339` / `scanner.timeLayout` / `api.timeLayout`。
+- **SQLite 单写者**：`SetMaxOpenConns(1)`，写操作收敛到 store 层；**禁止在 rows 迭代期间发起新查询（死锁）**——FTS 先收集 id 关闭 rows 再取详情，show 改名重建 search_text 同理。
+- **迁移机制**：`db.go` migrations 数组尾部追加；一条迁移可含多语句，`splitStatements` 感知字符串字面量与 `BEGIN…END` 块（触发器内分号不会误切分）。
+- **剧集/系列组织**：库 = 单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个，`kind`=tv/movie）。分组唯一来源 `scanner.ParseEpisode`（`SxxEyy`/`第x集`/`Season N` 目录/中文数字）与 `scanner.ParseMoviePart`（`Part N`/`第N部`/数字后缀）；**默认单集**，仅当位于 `Season N` 目录、或同目录 ≥2 个标题键相同/编辑距离 ≤2（`scanner.editDistance`）才归系列；`groupVideo` 在 **Scan 结束时统一对 `toGroup` 执行**（同目录兄弟可见），也用于 ImportUploaded/probe/手动归组；老库数据在 unchanged 分支回填。`series_links` 无名称、`sort_index` 排序，同 show 相邻季 `SyncShowLinks` 自动关联，`/api/series/{id}/links` 手动增删。`videos_bd` 触发器删光某 show 最后一集时删空 show；删空 season 由扫描/后续兜底。
+- **FTS5（search_text）**：`videos_fts` external content + `ai/ad/au` 触发器；写入侧统一 `rebuildSearchText`（Create/UpdateProbe/UpdateMetadata/AssignEpisode/AssignMovie/SetTags/show 改名）；新增影响搜索内容的写路径都要重建。
+- **刮削**：`scrape.ParseNFO`（Kodi 新旧 rating）；`VideoImported` listener 自动应用侧边 `.nfo`/`tvshow.nfo`；TMDB 需 `scrape.tmdb_api_key`（空则 400 `no_provider`），改后重启；手动封面 `POST /api/videos/{id}/cover` 落盘 `covers/<id>.<ext>`；`UpdateCovers` 空串=该列不动。
+- **扫描安全**：卷根不可达中止扫描、绝不误删元数据（ADR-014）；无 probe 元数据（`duration==0 && codec==""`）强制重 probe（自愈）。
+- **上传清理**：合并完成即删 staging；启动时 + 每小时清理超 24h 孤儿分片。
+- **ffprobe/ffmpeg**：进程 PATH 找不到时在 `config.yaml` 显式配置 `media.ffmpeg_path`/`media.ffprobe_path`（YAML `\\` 转义），改后重启。
+- **容器判定**：ffprobe `format_name` 是逗号分隔列表（如 `mov,mp4,m4a,...`）。`media.Probe` 归一化首个 token 入库；`DirectPlayable`/`contentType` 按逗号分词匹配，**禁止整串查映射**（否则 mp4/h264 被误判为不可直连而误走 HLS）。
+- **HLS 转码**：单飞（in-flight 去重）+ 后台；命令见 `streaming/transcode.go`（`-hls_list_size 0`、`-hls_flags temp_file+independent_segments` 原子写、`-map 0:a:0?`）；`master.m3u8` **读入内存快照**服务（ffmpeg 原地重写，直接 ServeContent 会读到截断），仅含 `#EXTINF` 才对外服务、`Cache-Control: no-store`（避免 304 卡死 hls.js）；`.done` 标记区分完成缓存/崩溃残留，残留整目录重建；转码结束从 `s.active` 移除；缓存随 `VideoDeleted`/`VideoUpdated` 失效。
+- **能力探测唯一来源**：直连/HLS 判定由后端 `streaming.DirectPlayable`/`HLSEnabled` 计算，`GET /api/videos/{id}` 返回 `direct_playable`/`hls_enabled`，前端不重复实现。
+- **Vidstack**：用 `@vidstack/react`（v1.15+，**勿装废弃的 `@vidstack/player`**）；HLS 经 `useMediaProvider` 设 `provider.library = () => import('hls.js')` 指向本地包（默认 jsdelivr CDN，LAN 离线失败），并放宽 `provider.config.manifestLoadingTimeOut`（默认 10s 首播转码期超时→无限转圈）；样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，`DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入；**`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc | HLSSrc`），否则回退 HEAD 探测失败即报 `could not find a loader`。
+- **新增依赖需用户批准**（规则 A），含 `go get` / `pnpm add`。
 
-### 待办 / 遗留（Phase 3 完成之后）
+### 11.3 待办 / 遗留
 
-- **人工验证清单（需用户执行，浏览器体验）**：① 播放器修复后重验直连播放（mp4/h264 秒开、拖动流畅、续播、播完从头）；② 真 MKV/HEVC 触发 HLS 首播（等 60s 内首屏）并播放；③ 手机/平板局域网访问播放；④ 同名 `.srt/.vtt` 侧边字幕出现在字幕菜单；⑤ 重启服务后老库自动迁移、触发一次「存储卷刷新/重扫」让已有视频自动归组（同目录多集/`Season N` 目录 → 系列，其余保持单集）；⑥ 视频库「单集/系列」两视图正确、系列详情季/部成员按位次展示（含缺失占位）；⑦ 同一标题的季/部在系列间自动关联，系列详情内可跳转与手动增删关联；⑧ 首页「继续观看」随播放历史变化；⑨ 标签增删后可被搜索命中、集合增删后首页与集合页正常；⑩ 播放页「在线刮削」在未配置 TMDB Key 时给出友好提示（配置 `config.yaml` 的 `scrape.tmdb_api_key` 后重启可启用真实刮削）；⑪ 上传封面后播放页/海报墙封面更新。
-- **Phase 3 遗留**：前端尚无 Vitest 测试（`package.json` 无 test script）；单集/系列的手动归组与编辑 UI 未做（`PATCH /api/videos/:id` 支持 show_id/season_number/episode_number，API 已就绪）；TMDB 刮削依赖用户配置 API Key；`docs/decisions.md` 尚未创建（plan 附录 A）；实际脚手架为 **React 19**（plan 1.1 写 React 18，未回填，待用户拍板）。
-- 设备热插拔盘符重映射未实现：监视仅在启动时对 enabled 卷建立，拔出/插入不会自动重扫/重映射（ADR-014 的后半部分）。
-- `delete_mode: trash` 未实现（当前永久删除）；前端断点续传 UI 未实现。
-- HLS 只做了单一路码率（`-hls_time 10`，无自适应多码率）；嵌入字幕轨道抽取未实现（仅侧边字幕文件）。
-- 尚未执行首个 `git commit`（仓库已 `git init`，未提交）。
+- **人工验证清单（需用户执行，浏览器体验，尚未验证）**：① 直连播放（mp4/h264 秒开、拖动流畅、续播、播完从头）；② 真 MKV/HEVC 触发 HLS 首播（60s 内首屏）并播放；③ 手机/平板局域网访问播放；④ 同名 `.srt/.vtt` 字幕出现在字幕菜单；⑤ 重启后老库自动迁移 + 触发一次「存储卷刷新/重扫」让已有视频自动归组；⑥ 单集/系列两视图、系列详情成员按位次展示（含缺失占位）；⑦ 同标题季/部自动关联、可跳转与手动增删；⑧ 首页「继续观看」随历史变化；⑨ 标签/集合增删后搜索与首页正常；⑩ 未配置 TMDB Key 时在线刮削给友好提示；⑪ 上传封面后播放页/海报墙更新。
+- 单集/系列**手动归组与编辑 UI** 未做（`PATCH /api/videos/:id` 支持 show_id/season_number/episode_number，API 已就绪）。
+- 前端无 Vitest 测试（`package.json` 无 test script）；TMDB 需配置 `scrape.tmdb_api_key`（改后重启）。
+- 设备热插拔**盘符重映射未实现**：监视仅在启动时对 enabled 卷建立，拔出/插入不会自动重扫/重映射（ADR-014 后半部分）。
+- `delete_mode: trash` 未实现（当前永久删除）；前端断点续传 UI 未做。
+- HLS 仅单一路码率（`-hls_time 10`，无自适应多码率）；嵌入字幕轨道抽取未做（仅侧边字幕文件）。
+- `docs/decisions.md` 尚未创建（plan 附录 A）。
+
+### 11.4 未来方向
+
+见 `DEVELOPMENT_PLAN.md` §14 演进路线（PostgreSQL 迁移、Meilisearch、AI 模块、多用户、TV Mode、更多刮削源等均仅预留，不在近期实施）。

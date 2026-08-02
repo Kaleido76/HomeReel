@@ -15,11 +15,11 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/oklog/ulid/v2"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/events"
-	"videomesh/backend/internal/files"
-	"videomesh/backend/internal/jobs"
-	"videomesh/backend/internal/media"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/events"
+	"homereel/backend/internal/files"
+	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/media"
 )
 
 // ProbeFn and ThumbnailFn are injectable for tests.

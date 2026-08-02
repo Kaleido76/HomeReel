@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 // FTS5 is the SQLite full-text implementation of Provider (ADR-009). It

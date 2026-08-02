@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/domain"
 )
 
 type videoRepo struct {

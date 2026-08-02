@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/events"
-	"videomesh/backend/internal/scrape"
-	"videomesh/backend/internal/search"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/events"
+	"homereel/backend/internal/scrape"
+	"homereel/backend/internal/search"
 )
 
 // ---- Videos: PATCH / DELETE / refresh / scrape / cover ----

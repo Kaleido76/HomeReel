@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"videomesh/backend/internal/db"
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/search"
+	"homereel/backend/internal/db"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/search"
 )
 
 func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.CollectionRepo, domain.HistoryRepo) {

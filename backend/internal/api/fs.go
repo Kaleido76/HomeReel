@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/files"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/files"
 )
 
 // storageOrError loads a storage volume, writing an error response and

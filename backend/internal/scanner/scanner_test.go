@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"videomesh/backend/internal/db"
-	"videomesh/backend/internal/domain"
-	"videomesh/backend/internal/events"
-	"videomesh/backend/internal/files"
-	"videomesh/backend/internal/jobs"
-	"videomesh/backend/internal/media"
-	"videomesh/backend/internal/store"
+	"homereel/backend/internal/db"
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/events"
+	"homereel/backend/internal/files"
+	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/media"
+	"homereel/backend/internal/store"
 )
 
 func newTestScanner(t *testing.T) (*Service, *jobs.Service) {

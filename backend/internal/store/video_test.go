@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"videomesh/backend/internal/db"
-	"videomesh/backend/internal/domain"
+	"homereel/backend/internal/db"
+	"homereel/backend/internal/domain"
 )
 
 func newVideoTestRepo(t *testing.T) (domain.VideoRepo, domain.StorageRepo) {
