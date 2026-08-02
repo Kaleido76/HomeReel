@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 import { Loader2, Search } from 'lucide-react'
 import type { Storage } from '../../api/storages'
 import { fetchStorages } from '../../api/storages'
@@ -20,11 +21,18 @@ const sortOptions = [
 type SortValue = (typeof sortOptions)[number]['value']
 
 // StandaloneGrid lists videos that are not part of any series (the 单集 view).
+// Its filter/sort/page state lives in the library URL (?q=&sort=&page=) so it
+// survives refresh, in-tab back/forward and view switching.
 export function StandaloneGrid({ emptyHint }: { emptyHint?: string }) {
-  const [q, setQ] = useState('')
-  const [query, setQuery] = useState('')
-  const [sort, setSort] = useState<SortValue>('date')
-  const [page, setPage] = useState(1)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const search = (location.search ?? {}) as { view?: string; q?: string; sort?: string; page?: number }
+  const [input, setInput] = useState(search.q ?? '')
+  const query = search.q ?? ''
+  const sort = (sortOptions as readonly { value: string }[]).some((o) => o.value === search.sort)
+    ? (search.sort as SortValue)
+    : 'date'
+  const page = typeof search.page === 'number' && search.page > 0 ? search.page : 1
 
   const videos = useQuery({
     queryKey: ['videos', 'standalone', query, sort, page],
@@ -50,9 +58,20 @@ export function StandaloneGrid({ emptyHint }: { emptyHint?: string }) {
   const total = videos.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+  function update(next: Partial<{ q: string; sort: SortValue; page: number }>) {
+    navigate({
+      to: '/library',
+      search: {
+        view: search.view ?? 'standalone',
+        q: next.q ?? query,
+        sort: next.sort ?? sort,
+        page: next.page ?? page,
+      },
+    })
+  }
+
   function submitSearch() {
-    setQuery(q.trim())
-    setPage(1)
+    update({ q: input.trim(), page: 1 })
   }
 
   return (
@@ -67,8 +86,8 @@ export function StandaloneGrid({ emptyHint }: { emptyHint?: string }) {
         >
           <Search className="size-4 shrink-0 text-neutral-400" />
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
             placeholder="搜索标题或文件名…"
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
           />
@@ -76,8 +95,7 @@ export function StandaloneGrid({ emptyHint }: { emptyHint?: string }) {
         <select
           value={sort}
           onChange={(e) => {
-            setSort(e.target.value as SortValue)
-            setPage(1)
+            update({ sort: e.target.value as SortValue, page: 1 })
           }}
           className="rounded-lg border border-neutral-200 bg-white px-2.5 py-2 text-sm text-neutral-700 outline-none focus:border-indigo-400"
         >
@@ -118,7 +136,7 @@ export function StandaloneGrid({ emptyHint }: { emptyHint?: string }) {
           {pageCount > 1 && (
             <div className="flex items-center justify-center gap-3 text-sm">
               <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => update({ page: Math.max(1, page - 1) })}
                 disabled={page <= 1}
                 className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
               >
@@ -128,7 +146,7 @@ export function StandaloneGrid({ emptyHint }: { emptyHint?: string }) {
                 第 {page} / {pageCount} 页 · 共 {total} 个视频
               </span>
               <button
-                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                onClick={() => update({ page: Math.min(pageCount, page + 1) })}
                 disabled={page >= pageCount}
                 className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
               >

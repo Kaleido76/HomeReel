@@ -64,16 +64,15 @@ type VideoPatch struct {
 
 // VideoQuery filters and paginates the video library.
 type VideoQuery struct {
-	Q          string // matches title or relative path
-	Kind       string // movie | episode
-	Tag        string
-	Collection string
-	ShowID     string
-	Ungrouped  bool   // standalone videos only (not part of a series)
-	Sort       string // title | date | duration | name | rating
-	Order      string // asc | desc
-	Page       int    // 1-based
-	PageSize   int
+	Q         string // matches title or relative path
+	Kind      string // movie | episode
+	Tag       string
+	ShowID    string
+	Ungrouped bool   // standalone videos only (not part of a series)
+	Sort      string // title | date | duration | name | rating
+	Order     string // asc | desc
+	Page      int    // 1-based
+	PageSize  int
 }
 
 // VideoPage is one page of library results with the total match count.
@@ -94,7 +93,7 @@ type VideoRepo interface {
 	UpdateFingerprint(ctx context.Context, id, path, relativePath string, size, mtime int64, lastScannedAt string) error
 	// Touch refreshes last_scanned_at for an unchanged video.
 	Touch(ctx context.Context, id string, lastScannedAt string) error
-	// Delete removes a video record (FK cascades clear tags/history/collections
+	// Delete removes a video record (FK cascades clear tags/history
 	// and the FTS/empty-show triggers run).
 	Delete(ctx context.Context, id string) error
 	// UpdateProbe stores ffprobe-derived metadata.

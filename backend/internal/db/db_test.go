@@ -17,10 +17,15 @@ func TestMigrateFresh(t *testing.T) {
 		t.Fatalf("migrate fresh: %v", err)
 	}
 
-	tables := []string{"shows", "seasons", "video_tags", "collections", "collection_videos", "videos_fts"}
+	tables := []string{"shows", "seasons", "video_tags", "videos_fts"}
 	for _, table := range tables {
 		if !tableExists(t, database, table) {
 			t.Errorf("table %s missing after migration", table)
+		}
+	}
+	for _, gone := range []string{"collections", "collection_videos"} {
+		if tableExists(t, database, gone) {
+			t.Errorf("table %s should have been dropped (collections removed)", gone)
 		}
 	}
 

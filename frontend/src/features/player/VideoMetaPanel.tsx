@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Calendar, FolderHeart, ImageUp, Star, Wand2, X } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Calendar, ImageUp, Star, Wand2, X } from 'lucide-react'
 import type { ScrapeCandidate, Video } from '../../api/videos'
-import { fetchCollections, addToCollection } from '../../api/collections'
 import { scrapeVideo, updateVideo, uploadVideoCover } from '../../api/videos'
 
 export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTags: string[] }) {
@@ -11,10 +10,7 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
   const [tagInput, setTagInput] = useState('')
   const [candidates, setCandidates] = useState<ScrapeCandidate[] | null>(null)
   const [scrapeError, setScrapeError] = useState('')
-  const [collectionId, setCollectionId] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
-
-  const collections = useQuery({ queryKey: ['collections'], queryFn: fetchCollections })
 
   const save = useMutation({
     mutationFn: (patch: Parameters<typeof updateVideo>[1]) => updateVideo(video.id, patch),
@@ -51,11 +47,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
       setCandidates(null)
       setScrapeError(err.message)
     },
-  })
-
-  const addTo = useMutation({
-    mutationFn: () => addToCollection(collectionId, video.id),
-    onSuccess: () => setCollectionId(''),
   })
 
   const uploadCover = useMutation({
@@ -184,28 +175,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
           placeholder="+ 添加标签"
           className="w-28 rounded-full border border-dashed border-neutral-300 bg-transparent px-2.5 py-1 text-xs outline-none focus:border-indigo-400"
         />
-      </div>
-
-      <div className="flex items-center gap-2">
-        <select
-          value={collectionId}
-          onChange={(e) => setCollectionId(e.target.value)}
-          className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-sm text-neutral-700 outline-none focus:border-indigo-400"
-        >
-          <option value="">加入集合…</option>
-          {collections.data?.collections.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => addTo.mutate()}
-          disabled={!collectionId || addTo.isPending}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-40"
-        >
-          <FolderHeart className="size-4" /> 加入
-        </button>
       </div>
 
       <p className="truncate text-xs text-neutral-400" title={video.relative_path}>

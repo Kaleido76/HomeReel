@@ -49,7 +49,6 @@ export interface VideoQuery {
   q?: string
   kind?: 'movie' | 'episode'
   tag?: string
-  collection?: string
   showId?: string
   ungrouped?: boolean
   sort?: 'title' | 'date' | 'duration' | 'name' | 'rating'
@@ -111,7 +110,6 @@ export function fetchVideos(query: VideoQuery = {}): Promise<VideoListResult> {
   if (query.q) params.set('q', query.q)
   if (query.kind) params.set('kind', query.kind)
   if (query.tag) params.set('tag', query.tag)
-  if (query.collection) params.set('collection', query.collection)
   if (query.showId) params.set('showId', query.showId)
   if (query.ungrouped) params.set('ungrouped', '1')
   if (query.sort) params.set('sort', query.sort)

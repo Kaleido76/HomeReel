@@ -32,7 +32,6 @@ func (s *Server) handleVideosList(w http.ResponseWriter, r *http.Request) {
 		Q:          r.URL.Query().Get("q"),
 		Kind:       r.URL.Query().Get("kind"),
 		Tag:        r.URL.Query().Get("tag"),
-		Collection: r.URL.Query().Get("collection"),
 		ShowID:     r.URL.Query().Get("showId"),
 		Ungrouped:  r.URL.Query().Get("ungrouped") == "1",
 		Sort:       r.URL.Query().Get("sort"),

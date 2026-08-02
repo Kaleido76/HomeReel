@@ -409,116 +409,6 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tags": tags})
 }
 
-// ---- Collections ----
-
-func (s *Server) handleCollectionsList(w http.ResponseWriter, r *http.Request) {
-	list, err := s.collections.List(r.Context())
-	if err != nil {
-		slog.Error("list collections", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"collections": list})
-}
-
-func (s *Server) handleCollectionCreate(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	if strings.TrimSpace(body.Name) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "名称不能为空")
-		return
-	}
-	c, err := s.collections.Create(r.Context(), strings.TrimSpace(body.Name))
-	if err != nil {
-		slog.Error("create collection", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"collection": c})
-}
-
-func (s *Server) handleCollectionPatch(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var body struct {
-		Name string `json:"name"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	if strings.TrimSpace(body.Name) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "名称不能为空")
-		return
-	}
-	if err := s.collections.Rename(r.Context(), id, strings.TrimSpace(body.Name)); err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "集合不存在")
-			return
-		}
-		slog.Error("rename collection", "id", id, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-func (s *Server) handleCollectionDelete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.collections.Delete(r.Context(), id); err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "集合不存在")
-			return
-		}
-		slog.Error("delete collection", "id", id, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
-}
-
-func (s *Server) handleCollectionVideos(w http.ResponseWriter, r *http.Request) {
-	videos, err := s.collections.Videos(r.Context(), r.PathValue("id"))
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "集合不存在")
-			return
-		}
-		slog.Error("list collection videos", "id", r.PathValue("id"), "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"videos": videos})
-}
-
-func (s *Server) handleCollectionAddVideo(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	videoID := r.PathValue("videoId")
-	if err := s.collections.AddVideo(r.Context(), id, videoID); err != nil {
-		slog.Error("add collection video", "collection", id, "video", videoID, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-func (s *Server) handleCollectionRemoveVideo(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	videoID := r.PathValue("videoId")
-	if err := s.collections.RemoveVideo(r.Context(), id, videoID); err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "集合或视频不存在")
-			return
-		}
-		slog.Error("remove collection video", "collection", id, "video", videoID, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
 // ---- Home & Search ----
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -534,16 +424,9 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
-	collections, err := s.collections.List(r.Context())
-	if err != nil {
-		slog.Error("home collections", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"continue_watching": continueWatching,
 		"recent":            recent.Videos,
-		"collections":       collections,
 	})
 }
 

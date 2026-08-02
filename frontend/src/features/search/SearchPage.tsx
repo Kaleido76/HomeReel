@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 import { Loader2, Search } from 'lucide-react'
 import type { Storage } from '../../api/storages'
 import { fetchStorages } from '../../api/storages'
@@ -7,9 +8,14 @@ import { searchVideos } from '../../api/videos'
 import { VideoCard } from '../library/VideoCard'
 import { useMemo } from 'react'
 
+// The search query lives in the URL (?q=) so the submitted term and its results
+// survive refresh and in-tab back/forward.
 export function SearchPage() {
-  const [q, setQ] = useState('')
-  const [submitted, setSubmitted] = useState('')
+  const location = useLocation()
+  const navigate = useNavigate()
+  const search = (location.search ?? {}) as { q?: string }
+  const [input, setInput] = useState(search.q ?? '')
+  const submitted = search.q ?? ''
 
   const results = useQuery({
     queryKey: ['search', submitted],
@@ -24,6 +30,10 @@ export function SearchPage() {
     return map
   }, [storages.data])
 
+  function submit() {
+    navigate({ to: '/search', search: { q: input.trim() } })
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold text-neutral-900">搜索</h1>
@@ -31,21 +41,21 @@ export function SearchPage() {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          setSubmitted(q.trim())
+          submit()
         }}
         className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2.5"
       >
         <Search className="size-5 shrink-0 text-neutral-400" />
         <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
           placeholder="搜索标题、剧名、标签、简介…"
           autoFocus
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
         />
         <button
           type="submit"
-          disabled={!q.trim()}
+          disabled={!input.trim()}
           className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-40"
         >
           搜索

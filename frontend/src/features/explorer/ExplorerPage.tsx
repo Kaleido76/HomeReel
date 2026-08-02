@@ -24,7 +24,7 @@ export function ExplorerPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] gap-4">
+    <div className="flex h-full gap-4">
       <StorageSidebar
         storages={storages.data?.storages ?? []}
         isLoading={storages.isLoading}

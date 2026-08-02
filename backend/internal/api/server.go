@@ -32,7 +32,6 @@ type Server struct {
 	videos      domain.VideoRepo
 	shows       domain.ShowRepo
 	series      domain.SeriesRepo
-	collections domain.CollectionRepo
 	history     domain.HistoryRepo
 	streaming   *streaming.Service
 	scrape      *scrape.Service
@@ -44,14 +43,14 @@ type Server struct {
 // New builds the root handler for all /api routes.
 func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Service,
 	jobsSvc *jobs.Service, scannerSvc *scanner.Service, videosRepo domain.VideoRepo,
-	showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo, collectionsRepo domain.CollectionRepo,
+	showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
 	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
 	scrapeSvc *scrape.Service, searchProvider search.Provider, bus *events.Bus,
 	dataDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, storages: storageSvc, files: filesSvc,
 		jobs: jobsSvc, scanner: scannerSvc,
-		videos: videosRepo, shows: showsRepo, series: seriesRepo, collections: collectionsRepo,
+		videos: videosRepo, shows: showsRepo, series: seriesRepo,
 		history: historyRepo, streaming: streamingSvc,
 		scrape: scrapeSvc, search: searchProvider, bus: bus, dataDir: dataDir,
 	}
@@ -98,13 +97,6 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("DELETE /api/series/{id}/links/{linkedId}", s.requireAuth(http.HandlerFunc(s.handleSeriesRemoveLink)))
 	mux.Handle("GET /api/series/{id}/poster", s.requireAuth(http.HandlerFunc(s.handleSeriesPoster)))
 	mux.Handle("GET /api/tags", s.requireAuth(http.HandlerFunc(s.handleTags)))
-	mux.Handle("GET /api/collections", s.requireAuth(http.HandlerFunc(s.handleCollectionsList)))
-	mux.Handle("POST /api/collections", s.requireAuth(http.HandlerFunc(s.handleCollectionCreate)))
-	mux.Handle("PATCH /api/collections/{id}", s.requireAuth(http.HandlerFunc(s.handleCollectionPatch)))
-	mux.Handle("DELETE /api/collections/{id}", s.requireAuth(http.HandlerFunc(s.handleCollectionDelete)))
-	mux.Handle("GET /api/collections/{id}/videos", s.requireAuth(http.HandlerFunc(s.handleCollectionVideos)))
-	mux.Handle("PUT /api/collections/{id}/videos/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCollectionAddVideo)))
-	mux.Handle("DELETE /api/collections/{id}/videos/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCollectionRemoveVideo)))
 	mux.Handle("GET /api/home", s.requireAuth(http.HandlerFunc(s.handleHome)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/stream/{id}", s.requireAuth(http.HandlerFunc(s.handleStreamDirect)))

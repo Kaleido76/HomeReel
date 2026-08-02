@@ -151,7 +151,7 @@ func TestShowDetailAndEpisodes(t *testing.T) {
 	}
 }
 
-func TestTagsCollectionsHome(t *testing.T) {
+func TestTagsHome(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
@@ -159,33 +159,6 @@ func TestTagsCollectionsHome(t *testing.T) {
 	resp, body := doJSON(t, "GET", ts.URL+"/api/tags", "", cookie)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "科幻") {
 		t.Fatalf("tags = %d (body %s)", resp.StatusCode, body)
-	}
-
-	// Create collection + add video.
-	resp, body = doJSON(t, "POST", ts.URL+"/api/collections", `{"name":"我的最爱"}`, cookie)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create collection = %d (body %s)", resp.StatusCode, body)
-	}
-	var created struct {
-		Collection struct {
-			ID string `json:"id"`
-		} `json:"collection"`
-	}
-	if err := json.Unmarshal([]byte(body), &created); err != nil {
-		t.Fatal(err)
-	}
-	cid := created.Collection.ID
-	resp, _ = doJSON(t, "PUT", ts.URL+"/api/collections/"+cid+"/videos/m1", "", cookie)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("add video = %d", resp.StatusCode)
-	}
-	resp, body = doJSON(t, "GET", ts.URL+"/api/collections/"+cid+"/videos", "", cookie)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Interstellar") {
-		t.Fatalf("collection videos = %d (body %s)", resp.StatusCode, body)
-	}
-	resp, _ = doJSON(t, "DELETE", ts.URL+"/api/collections/"+cid+"/videos/m1", "", cookie)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("remove video = %d", resp.StatusCode)
 	}
 
 	// Home rows.

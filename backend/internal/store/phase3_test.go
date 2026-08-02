@@ -9,7 +9,7 @@ import (
 	"homereel/backend/internal/search"
 )
 
-func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.CollectionRepo, domain.HistoryRepo) {
+func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.HistoryRepo) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -23,7 +23,7 @@ func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.Col
 		VALUES ('s1', 'test', 'internal', 'C:\\Videos', '2026-01-01T00:00:00.000000000Z')`); err != nil {
 		t.Fatalf("seed storage: %v", err)
 	}
-	return NewVideoRepo(database), NewShowRepo(database), NewCollectionRepo(database), NewHistoryRepo(database)
+	return NewVideoRepo(database), NewShowRepo(database), NewHistoryRepo(database)
 }
 
 func mkVideo(id, title string) domain.Video {
@@ -36,7 +36,7 @@ func mkVideo(id, title string) domain.Video {
 }
 
 func TestEpisodeGroupingAndSearch(t *testing.T) {
-	videos, shows, _, _ := newPhase3Store(t)
+	videos, shows, _ := newPhase3Store(t)
 	ctx := context.Background()
 
 	// Show must exist before episodes can reference it (FK).
@@ -100,8 +100,8 @@ func TestEpisodeGroupingAndSearch(t *testing.T) {
 	}
 }
 
-func TestTagsCollectionsContinueWatching(t *testing.T) {
-	videos, _, collections, history := newPhase3Store(t)
+func TestTagsContinueWatching(t *testing.T) {
+	videos, _, history := newPhase3Store(t)
 	ctx := context.Background()
 
 	if err := videos.Create(ctx, mkVideo("v1", "Movie A")); err != nil {
@@ -128,29 +128,6 @@ func TestTagsCollectionsContinueWatching(t *testing.T) {
 	}
 	if all[0].Count != 1 {
 		t.Errorf("tag count wrong: %+v", all[0])
-	}
-
-	// Collection CRUD.
-	c1, err := collections.Create(ctx, "我的最爱")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := collections.AddVideo(ctx, c1.ID, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := collections.AddVideo(ctx, c1.ID, "v2"); err != nil {
-		t.Fatal(err)
-	}
-	members, err := collections.Videos(ctx, c1.ID)
-	if err != nil || len(members) != 2 {
-		t.Fatalf("collection videos = %d, err = %v", len(members), err)
-	}
-	if err := collections.RemoveVideo(ctx, c1.ID, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	members, _ = collections.Videos(ctx, c1.ID)
-	if len(members) != 1 {
-		t.Errorf("after remove, members = %d", len(members))
 	}
 
 	// ContinueWatching: v1 started halfway, v3 completed → excluded.

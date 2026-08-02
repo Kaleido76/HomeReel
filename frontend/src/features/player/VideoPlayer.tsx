@@ -16,6 +16,7 @@ import '@vidstack/react/player/styles/default/theme.css'
 import '@vidstack/react/player/styles/default/layouts/video.css'
 import type { Video } from '../../api/videos'
 import { coverUrl, fetchHistory, hlsUrl, putHistory, streamUrl, subtitleUrl } from '../../api/videos'
+import { getActiveTab, subscribeTabs } from '../../tabs/manager'
 
 // Resume only kicks in beyond these boundaries so an almost-finished video
 // starts fresh and a stray 1s glitch never seeks anywhere.
@@ -79,6 +80,19 @@ export function VideoPlayer({
       }
     },
     [video.id],
+  )
+
+  // Auto-pause when the user switches away from the library tab: the player's
+  // component tree stays alive (keep-alive), so the media would otherwise keep
+  // playing in the background like an uncontrolled browser tab.
+  useEffect(
+    () =>
+      subscribeTabs(() => {
+        if (getActiveTab() !== 'library') {
+          remote.pause()
+        }
+      }),
+    [remote],
   )
 
   const direct = directPlayable || !hlsEnabled

@@ -96,8 +96,8 @@ var migrations = []string{
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (video_id, user)
 	)`,
-	// Phase 3 — media library (ADR-015 / ADR-016): shows/seasons, tags,
-	// collections. All timestamps use the fixed-width nanosecond layout.
+	// Phase 3 — media library (ADR-015 / ADR-016): shows/seasons, tags.
+	// All timestamps use the fixed-width nanosecond layout.
 	`CREATE TABLE shows (
 		id              TEXT PRIMARY KEY,
 		name            TEXT NOT NULL,
@@ -126,17 +126,7 @@ var migrations = []string{
 		tag       TEXT NOT NULL,
 		PRIMARY KEY (video_id, tag)
 	);
-	CREATE INDEX idx_video_tags ON video_tags(tag);
-	CREATE TABLE collections (
-		id         TEXT PRIMARY KEY,
-		name       TEXT NOT NULL UNIQUE,
-		created_at TEXT NOT NULL
-	);
-	CREATE TABLE collection_videos (
-		collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
-		video_id      TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
-		PRIMARY KEY (collection_id, video_id)
-	)`,
+	CREATE INDEX idx_video_tags ON video_tags(tag);`,
 	// Phase 3 — videos metadata & grouping columns (kind/show/season/episode,
 	// scraped fields, denormalised search_text for FTS5).
 	`ALTER TABLE videos ADD COLUMN kind TEXT NOT NULL DEFAULT 'movie';
@@ -197,6 +187,10 @@ var migrations = []string{
 		created_at       TEXT NOT NULL,
 		PRIMARY KEY (series_id, linked_series_id)
 	)`,
+	// 移除集合子系统（collections）：视频库以单集/系列组织，集合不再需要。
+	// 旧库已建表，这里物理删除；新库从未创建。
+	`DROP TABLE IF EXISTS collection_videos;
+	DROP TABLE IF EXISTS collections`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

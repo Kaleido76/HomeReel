@@ -1,10 +1,10 @@
-import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Clapperboard, FolderHeart, Loader2, Play } from 'lucide-react'
+import { Clapperboard, Loader2, Play } from 'lucide-react'
 import { fetchHome } from '../../api/home'
 import { coverUrl } from '../../api/videos'
 import { VideoCard } from '../library/VideoCard'
 import { formatDuration } from '../../lib/format'
+import { openLibrary, openVideo } from '../../tabs/manager'
 
 export function HomePage() {
   const home = useQuery({ queryKey: ['home'], queryFn: fetchHome })
@@ -25,22 +25,21 @@ export function HomePage() {
     )
   }
 
-  const { continue_watching: continueWatching, recent, collections } = home.data ?? {
+  const { continue_watching: continueWatching, recent } = home.data ?? {
     continue_watching: [],
     recent: [],
-    collections: [],
   }
 
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-neutral-900">媒体首页</h1>
-        <Link
-          to="/library"
+        <button
+          onClick={openLibrary}
           className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
         >
           <Clapperboard className="size-4" /> 全部视频
-        </Link>
+        </button>
       </div>
 
       {continueWatching.length > 0 && (
@@ -49,30 +48,6 @@ export function HomePage() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {continueWatching.map((v) => (
               <ResumeCard key={v.id} id={v.id} title={v.title} thumb={v.thumb_path} duration={v.duration} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {collections.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-neutral-500">集合</h2>
-            <Link to="/collections" className="text-xs text-neutral-400 hover:text-neutral-700">
-              全部集合
-            </Link>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            {collections.map((c) => (
-              <Link
-                key={c.id}
-                to="/collections/$id"
-                params={{ id: c.id }}
-                className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-700 transition-shadow hover:shadow-md"
-              >
-                <FolderHeart className="size-4 text-indigo-500" />
-                {c.name}
-              </Link>
             ))}
           </div>
         </section>
@@ -98,10 +73,9 @@ export function HomePage() {
 
 function ResumeCard({ id, title, thumb, duration }: { id: string; title: string; thumb: string; duration: number }) {
   return (
-    <Link
-      to="/library/video/$id"
-      params={{ id }}
-      className="group relative overflow-hidden rounded-xl border border-neutral-200 bg-white"
+    <button
+      onClick={() => openVideo(id)}
+      className="group relative overflow-hidden rounded-xl border border-neutral-200 bg-white text-left"
     >
       <div className="relative aspect-video w-full overflow-hidden bg-neutral-100">
         {thumb ? (
@@ -123,6 +97,6 @@ function ResumeCard({ id, title, thumb, duration }: { id: string; title: string;
       <p className="truncate px-3 py-2 text-sm font-medium text-neutral-800" title={title}>
         {title}
       </p>
-    </Link>
+    </button>
   )
 }

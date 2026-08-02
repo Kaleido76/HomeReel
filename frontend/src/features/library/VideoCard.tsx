@@ -1,18 +1,17 @@
-import { Link } from '@tanstack/react-router'
 import { Film, HardDrive, PlayCircle } from 'lucide-react'
 import type { Storage } from '../../api/storages'
 import type { Video } from '../../api/videos'
 import { coverUrl } from '../../api/videos'
 import { formatBytes, formatDuration } from '../../lib/format'
+import { openVideo } from '../../tabs/manager'
 
 export function VideoCard({ video, storage }: { video: Video; storage?: Storage }) {
   const offline = storage !== undefined && !storage.available
 
   return (
-    <Link
-      to="/library/video/$id"
-      params={{ id: video.id }}
-      className="group flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white transition-shadow hover:shadow-md"
+    <button
+      onClick={() => openVideo(video.id)}
+      className="group flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white text-left transition-shadow hover:shadow-md"
     >
       <div className="relative aspect-video w-full overflow-hidden bg-neutral-100">
         {video.thumb_path ? (
@@ -54,6 +53,6 @@ export function VideoCard({ video, storage }: { video: Video; storage?: Storage 
           {formatBytes(video.size)}
         </p>
       </div>
-    </Link>
+    </button>
   )
 }

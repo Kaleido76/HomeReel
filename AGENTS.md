@@ -107,8 +107,9 @@ backend/
   testdata/
 frontend/
   src/
-    api  components  features  lib  styles
-    # features: auth home explorer library player series collections search
+    api  components  features  lib  styles  tabs
+    # features: auth home explorer library player series search
+    # tabs: 多 Router 页签宿主（config/routers/manager/TabBar/TabHost/TabSync）
 ```
 
 **依赖方向单向**：`api → domain → store / files / media`，禁止循环依赖；模块职责单一、目录扁平、
@@ -188,10 +189,10 @@ frontend/
 - **扫描与索引**：指纹 `(file_id,size,mtime)` 增量扫描、移动识别、删除标记、fsnotify 5s 去抖监视、NTFS FileID；`jobs` 队列 + Worker（probe/thumbnail/rescan，崩溃恢复）；缩略图 covers 320px + thumbs 160px。
 - **播放**：能力探测三层（直连 Range / HLS 按需转码 / 兜底）；live 型增量 HLS 转码（单飞、内存快照、`.done` 标记、no-store）；封面；侧边 `.srt/.vtt/.ass` 字幕；Vidstack 播放器 + 本地 hls.js。
 - **历史续播**：`history` 表（user=`local`）；前端 10s 节流保存、进入 seek（距片尾 20s 内不续播、播完归零）。
-- **媒体库（单集/系列）**：统一「单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个系列，`kind`=tv/movie）」；成员位次排序允许缺失；`series_links` 弱关联（同 show 相邻季自动关联 + 手动增删）；首页行（继续观看/最近添加/集合）。
+- **媒体库（单集/系列）**：统一「单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个系列，`kind`=tv/movie）」；成员位次排序允许缺失；`series_links` 弱关联（同 show 相邻季自动关联 + 手动增删）；首页行（继续观看/最近添加）。集合子系统已整体移除（2026-08）。
 - **搜索**：FTS5（`videos_fts` external content + 触发器，bm25 排序），`search_text` 由 store 层维护。
 - **刮削**（ADR-016）：NFO（Kodi 新旧 rating）/ 手动 PATCH / 可选 TMDB；封面落盘 `covers|posters|backdrops`。
-- **前端**：Explorer 与 Library 共享 API/播放器/元数据；路由 `/login` `/` `/library` `/series/:id` `/library/video/:id` `/collections` `/search` `/explorer`。
+- **前端（多 Router 页签架构）**：顶部 4 个页签（首页/视频库/搜索/文件），每页签一个独立 TanStack Router 实例（`tabs/`），组件树常驻不卸载 = 类浏览器 keep-alive（滚动/筛选/播放器/上传状态切页签不丢）；URL 与活动页签双向同步（`TabManager` + `TabSync`）；页面组件 `React.lazy` 分包懒加载；ARIA tablist 语义 + 方向键切换；深链/刷新按 URL 恢复对应页签视图。库的视图状态（`view/q/sort/page`）与搜索词 `q` 存在 URL 参数中。视频卡片任意页签点击 → 切到视频库页签打开播放器。**播放器切走自动暂停**（`VideoPlayer` 订阅页签 store，非 library 页签即 `remote.pause()`，切回保持暂停由用户手动播放）。
 
 ### 11.2 关键约定（后续开发必须遵守）
 
@@ -208,11 +209,13 @@ frontend/
 - **HLS 转码**：单飞（in-flight 去重）+ 后台；命令见 `streaming/transcode.go`（`-hls_list_size 0`、`-hls_flags temp_file+independent_segments` 原子写、`-map 0:a:0?`）；`master.m3u8` **读入内存快照**服务（ffmpeg 原地重写，直接 ServeContent 会读到截断），仅含 `#EXTINF` 才对外服务、`Cache-Control: no-store`（避免 304 卡死 hls.js）；`.done` 标记区分完成缓存/崩溃残留，残留整目录重建；转码结束从 `s.active` 移除；缓存随 `VideoDeleted`/`VideoUpdated` 失效。
 - **能力探测唯一来源**：直连/HLS 判定由后端 `streaming.DirectPlayable`/`HLSEnabled` 计算，`GET /api/videos/{id}` 返回 `direct_playable`/`hls_enabled`，前端不重复实现。
 - **Vidstack**：用 `@vidstack/react`（v1.15+，**勿装废弃的 `@vidstack/player`**）；HLS 经 `useMediaProvider` 设 `provider.library = () => import('hls.js')` 指向本地包（默认 jsdelivr CDN，LAN 离线失败），并放宽 `provider.config.manifestLoadingTimeOut`（默认 10s 首播转码期超时→无限转圈）；样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，`DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入；**`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc | HLSSrc`），否则回退 HEAD 探测失败即报 `could not find a loader`。
+- **多 Router 页签（keep-alive）**：每页签一个独立 Router（`createMemoryHistory`），组件树常驻（`display:none` 隐藏）＝状态永不丢。**URL 唯一来源是活动页签**：`TabManager.activate` 切换页签用 `replaceState`（不产生历史），活动页签内导航由 `TabSync` 镜像 `pushState`；`popstate` 反解析 URL→页签并 `navigate({href, replace})` 对齐该页签 memory history。跨页签跳转走 `openVideo/openSeries/openLibrary`（切到 library 页签再 navigate）。**新增子路由必须归属到某个页签的 router**（`tabs/routers.ts`），并在 `tabFromPath` 补路径映射，禁止添加全局平级路由。
 - **新增依赖需用户批准**（规则 A），含 `go get` / `pnpm add`。
 
 ### 11.3 待办 / 遗留
 
-- **人工验证清单（需用户执行，浏览器体验，尚未验证）**：① 直连播放（mp4/h264 秒开、拖动流畅、续播、播完从头）；② 真 MKV/HEVC 触发 HLS 首播（60s 内首屏）并播放；③ 手机/平板局域网访问播放；④ 同名 `.srt/.vtt` 字幕出现在字幕菜单；⑤ 重启后老库自动迁移 + 触发一次「存储卷刷新/重扫」让已有视频自动归组；⑥ 单集/系列两视图、系列详情成员按位次展示（含缺失占位）；⑦ 同标题季/部自动关联、可跳转与手动增删；⑧ 首页「继续观看」随历史变化；⑨ 标签/集合增删后搜索与首页正常；⑩ 未配置 TMDB Key 时在线刮削给友好提示；⑪ 上传封面后播放页/海报墙更新。
+- **人工验证清单（需用户执行，浏览器体验，尚未验证）**：① 直连播放（mp4/h264 秒开、拖动流畅、续播、播完从头）；② 真 MKV/HEVC 触发 HLS 首播（60s 内首屏）并播放；③ 手机/平板局域网访问播放；④ 同名 `.srt/.vtt` 字幕出现在字幕菜单；⑤ 重启后老库自动迁移 + 触发一次「存储卷刷新/重扫」让已有视频自动归组；⑥ 单集/系列两视图、系列详情成员按位次展示（含缺失占位）；⑦ 同标题季/部自动关联、可跳转与手动增删；⑧ 首页「继续观看」随历史变化；⑨ 标签增删后可被搜索命中；⑩ 未配置 TMDB Key 时在线刮削给友好提示；⑪ 上传封面后播放页/海报墙更新。
+- **页签保活验证（2026-08 新架构）**：① 各页签切换后返回保持原视图（筛选/排序/分页/滚动位置/搜索词）——已由用户验证通过；② 播放中切走页签**自动暂停**，切回保持暂停（手动播放）；③ 文件管理页进行中的上传切走再回来不中断；④ 浏览器前进/后退在页签内有效、跨页签返回会切回对应页签；⑤ 刷新/深链直接恢复对应页签视图（如 `/library/video/x`）——已由用户验证通过；⑥ 点视频卡片从首页/搜索跳转到视频库页签并打开播放器——已由用户验证通过；⑦ 顶部页签 Active 高亮清晰、键盘方向键可切换页签、无 JS 错误（控制台）——已由用户验证通过。
 - 单集/系列**手动归组与编辑 UI** 未做（`PATCH /api/videos/:id` 支持 show_id/season_number/episode_number，API 已就绪）。
 - 前端无 Vitest 测试（`package.json` 无 test script）；TMDB 需配置 `scrape.tmdb_api_key`（改后重启）。
 - 设备热插拔**盘符重映射未实现**：监视仅在启动时对 enabled 卷建立，拔出/插入不会自动重扫/重映射（ADR-014 后半部分）。

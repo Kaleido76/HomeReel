@@ -54,7 +54,6 @@ func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *
 	videosRepo := store.NewVideoRepo(database)
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
-	collectionsRepo := store.NewCollectionRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
 	scannerSvc := scanner.New(
 		videosRepo,
@@ -73,7 +72,7 @@ func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *
 	scrapeSvc := scrape.New(videosRepo, showsRepo, dataDir, scrape.TMDBConfig{})
 	bus := events.New()
 	ts := httptest.NewServer(New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
-		videosRepo, showsRepo, seriesRepo, collectionsRepo, historyRepo, streamingSvc,
+		videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
 		scrapeSvc, search.NewFTS5(database, videosRepo), bus, dataDir))
 	t.Cleanup(ts.Close)
 	return ts, "", database

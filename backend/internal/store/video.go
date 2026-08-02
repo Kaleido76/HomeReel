@@ -191,10 +191,6 @@ func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.Video
 		where = append(where, `EXISTS (SELECT 1 FROM video_tags vt WHERE vt.video_id = videos.id AND vt.tag = ?)`)
 		args = append(args, q.Tag)
 	}
-	if q.Collection != "" {
-		where = append(where, `EXISTS (SELECT 1 FROM collection_videos cv WHERE cv.video_id = videos.id AND cv.collection_id = ?)`)
-		args = append(args, q.Collection)
-	}
 	whereSQL := ""
 	if len(where) > 0 {
 		whereSQL = " WHERE " + strings.Join(where, " AND ")

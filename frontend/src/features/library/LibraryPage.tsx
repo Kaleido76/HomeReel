@@ -1,16 +1,24 @@
-import { useState } from 'react'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 import { StandaloneGrid } from './VideoGrid'
 import { SeriesPage } from '../series/SeriesPage'
 
 // VideoLibraryPage is the unified library organised into two views: standalone
-// videos (单集) and series (系列). Movies/shows/collections are not separated.
+// videos (单集) and series (系列). The active view lives in the URL (?view=) so
+// it survives refresh and in-tab back/forward.
 export function LibraryPage() {
-  const [view, setView] = useState<'standalone' | 'series'>('standalone')
+  const location = useLocation()
+  const navigate = useNavigate()
+  const search = (location.search ?? {}) as { view?: string }
+  const view = search.view === 'series' ? 'series' : 'standalone'
 
   const tabs: { value: typeof view; label: string }[] = [
     { value: 'standalone', label: '单集' },
     { value: 'series', label: '系列' },
   ]
+
+  function setView(v: typeof view) {
+    navigate({ to: '/library', search: { ...search, view: v } })
+  }
 
   return (
     <div className="space-y-4">
