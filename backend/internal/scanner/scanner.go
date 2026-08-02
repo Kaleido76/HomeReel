@@ -35,6 +35,8 @@ const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 type Service struct {
 	videos      domain.VideoRepo
 	storages    domain.StorageRepo
+	shows       domain.ShowRepo
+	series      domain.SeriesRepo
 	jobs        *jobs.Service
 	files       *files.Service
 	bus         *events.Bus
@@ -49,11 +51,14 @@ type Service struct {
 }
 
 // New builds the scanner service. dataDir hosts covers/ and thumbs/ output.
-func New(videos domain.VideoRepo, storages domain.StorageRepo, jobsSvc *jobs.Service,
-	filesSvc *files.Service, bus *events.Bus, ffprobePath, ffmpegPath, dataDir string) *Service {
+func New(videos domain.VideoRepo, storages domain.StorageRepo, shows domain.ShowRepo,
+	seriesRepo domain.SeriesRepo, jobsSvc *jobs.Service, filesSvc *files.Service,
+	bus *events.Bus, ffprobePath, ffmpegPath, dataDir string) *Service {
 	return &Service{
 		videos:      videos,
 		storages:    storages,
+		shows:       shows,
+		series:      seriesRepo,
 		jobs:        jobsSvc,
 		files:       filesSvc,
 		bus:         bus,
@@ -104,6 +109,11 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 		return res, err
 	}
 
+	// Videos whose grouping may have changed are re-grouped in one pass after
+	// every candidate is indexed, so same-directory siblings are visible when
+	// deciding whether a file belongs to a series.
+	toGroup := []string{}
+
 	for _, c := range candidates {
 		if err := ctx.Err(); err != nil {
 			return res, err
@@ -114,11 +124,21 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 				if needsProbe(cur) {
 					s.enqueueProbe(ctx, cur.ID)
 				}
+				// Backfill grouping for videos indexed before the series
+				// reorganization: rows defaulted to kind=movie whose path is
+				// really a series member.
+				if cur.Kind == "movie" {
+					_, isPart := ParseMoviePart(cur.RelativePath)
+					if ParseEpisode(cur.RelativePath).HasSE || isPart {
+						toGroup = append(toGroup, cur.ID)
+					}
+				}
 				res.Unchanged++
 			} else {
 				_ = s.videos.UpdateFingerprint(ctx, cur.ID, c.path, c.rel, c.size, c.mtime, scanStart)
 				s.enqueueProbe(ctx, cur.ID)
 				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": cur.ID}})
+				toGroup = append(toGroup, cur.ID)
 				res.Updated++
 			}
 			continue
@@ -130,6 +150,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 				s.enqueueProbe(ctx, moved.ID)
 				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": moved.ID}})
 			}
+			toGroup = append(toGroup, moved.ID)
 			res.Updated++
 			continue
 		}
@@ -150,8 +171,13 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 			slog.Warn("create video", "path", c.path, "err", err)
 			continue
 		}
+		toGroup = append(toGroup, v.ID)
 		s.enqueueProbe(ctx, v.ID)
 		res.Added++
+	}
+
+	for _, id := range dedupe(toGroup) {
+		s.groupVideo(ctx, id)
 	}
 
 	missing, err := s.videos.MarkMissing(ctx, st.ID, scanStart)
@@ -192,6 +218,13 @@ func (s *Service) EnqueueThumbnail(ctx context.Context, videoID string) error {
 	return err
 }
 
+// EnqueueProbe schedules a probe job for a video (manual refresh).
+func (s *Service) EnqueueProbe(ctx context.Context, videoID string) error {
+	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
+	_, err := s.jobs.Enqueue(ctx, jobs.TypeProbe, "", string(extra))
+	return err
+}
+
 // ImportUploaded indexes a freshly assembled upload and schedules its probe.
 func (s *Service) ImportUploaded(ctx context.Context, st domain.Storage, absPath, relPath string) error {
 	info, err := os.Stat(absPath)
@@ -221,6 +254,7 @@ func (s *Service) ImportUploaded(ctx context.Context, st domain.Storage, absPath
 		slog.Warn("create imported video", "path", absPath, "err", err)
 		return s.EnqueueRescan(ctx, st.ID)
 	}
+	s.groupVideo(ctx, v.ID)
 	s.enqueueProbe(ctx, v.ID)
 	return nil
 }
@@ -305,6 +339,7 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job) error {
 	if err := s.videos.UpdateProbe(ctx, upd); err != nil {
 		return err
 	}
+	s.groupVideo(ctx, v.ID)
 	s.bus.Publish(events.Event{Type: events.VideoImported, Data: map[string]string{"video_id": v.ID}})
 	return nil
 }
@@ -356,6 +391,205 @@ func (s *Service) enqueueProbe(ctx context.Context, videoID string) {
 	if _, err := s.jobs.Enqueue(ctx, jobs.TypeProbe, "", string(extra)); err != nil {
 		slog.Warn("enqueue probe", "video_id", videoID, "err", err)
 	}
+}
+
+// groupVideo decides whether a video belongs to a series (a season of a show
+// or a part of a movie franchise) or stays standalone, and updates kind/show/
+// season/episode accordingly. Scan results default to standalone unless there
+// is a clear series relationship: an explicit Season folder, or several videos
+// in the same directory sharing a similar title (see groupCount).
+func (s *Service) groupVideo(ctx context.Context, videoID string) {
+	v, err := s.videos.Get(ctx, videoID)
+	if err != nil {
+		slog.Warn("group video", "video_id", videoID, "err", err)
+		return
+	}
+
+	var hint *EpisodeHint
+	var kind string
+	if h := ParseEpisode(v.RelativePath); h.HasSE {
+		if inSeasonDir(v.RelativePath) || s.groupCount(ctx, v) >= 2 {
+			hint = &h
+			kind = "tv"
+		}
+	} else if h, ok := ParseMoviePart(v.RelativePath); ok {
+		if s.groupCount(ctx, v) >= 2 {
+			hint = &h
+			kind = "movie"
+		}
+	}
+	if hint == nil {
+		if err := s.videos.AssignMovie(ctx, v.ID); err != nil {
+			slog.Warn("assign standalone", "video_id", v.ID, "err", err)
+		}
+		return
+	}
+
+	show, err := s.shows.FindByName(ctx, hint.Show)
+	if errors.Is(err, domain.ErrNotFound) {
+		now := s.now().UTC().Format(timeLayout)
+		show = domain.Show{
+			ID:             ulid.Make().String(),
+			Name:           hint.Show,
+			MetadataSource: "manual",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		if err := s.shows.Create(ctx, show); err != nil {
+			slog.Warn("create show", "name", hint.Show, "err", err)
+			return
+		}
+	} else if err != nil {
+		slog.Warn("find show", "name", hint.Show, "err", err)
+		return
+	}
+	if _, err := s.shows.EnsureSeason(ctx, show.ID, hint.Season, kind); err != nil {
+		slog.Warn("ensure season", "show", show.ID, "season", hint.Season, "err", err)
+		return
+	}
+	if err := s.videos.AssignEpisode(ctx, v.ID, show.ID, hint.Season, hint.Episode, titleFromPath(v.RelativePath)); err != nil {
+		slog.Warn("assign episode", "video_id", v.ID, "err", err)
+		return
+	}
+	if err := s.series.SyncShowLinks(ctx, show.ID); err != nil {
+		slog.Warn("sync series links", "show", show.ID, "err", err)
+	}
+}
+
+// groupCount returns how many videos in the same directory share this video's
+// title key (exact match or small edit distance), so a lone file with an
+// SxxEyy name stays standalone while a multi-part folder becomes a series.
+func (s *Service) groupCount(ctx context.Context, v domain.Video) int {
+	all, err := s.videos.ListByStorage(ctx, v.StorageID)
+	if err != nil {
+		return 0
+	}
+	dir := dirOf(v.RelativePath)
+	keys := []string{}
+	for _, o := range all {
+		if o.ID == v.ID || dirOf(o.RelativePath) != dir {
+			continue
+		}
+		if k := seriesKeyOf(o.RelativePath); k != "" {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return 1
+	}
+	myKey := seriesKeyOf(v.RelativePath)
+	for _, g := range clusterKeys(append(keys, myKey)) {
+		if containsString(g, myKey) {
+			return len(g)
+		}
+	}
+	return 1
+}
+
+func dirOf(rel string) string {
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		return rel[:i]
+	}
+	return ""
+}
+
+func containsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// dedupe removes duplicate entries while preserving order.
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// clusterKeys groups keys whose titles are equal (exact or edit-distance
+// similar), used to detect a multi-part series in one directory.
+func clusterKeys(keys []string) [][]string {
+	groups := [][]string{}
+	for _, k := range keys {
+		placed := false
+		for i := range groups {
+			if sameTitle(groups[i][0], k) {
+				groups[i] = append(groups[i], k)
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			groups = append(groups, []string{k})
+		}
+	}
+	return groups
+}
+
+func sameTitle(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if absInt(len([]rune(a))-len([]rune(b))) > 2 {
+		return false
+	}
+	return editDistance(a, b) <= 2
+}
+
+// editDistance is the Levenshtein distance over runes (used for fuzzy title
+// matching of loosely-similar episode files).
+func editDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) == 0 {
+		return len(rb)
+	}
+	if len(rb) == 0 {
+		return len(ra)
+	}
+	prev := make([]int, len(rb)+1)
+	cur := make([]int, len(rb)+1)
+	for j := 0; j <= len(rb); j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(cur[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(rb)]
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 type candidate struct {

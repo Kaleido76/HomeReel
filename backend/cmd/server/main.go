@@ -20,6 +20,8 @@ import (
 	"videomesh/backend/internal/files"
 	"videomesh/backend/internal/jobs"
 	"videomesh/backend/internal/scanner"
+	"videomesh/backend/internal/scrape"
+	"videomesh/backend/internal/search"
 	"videomesh/backend/internal/storage"
 	"videomesh/backend/internal/store"
 	"videomesh/backend/internal/streaming"
@@ -62,12 +64,17 @@ func run() error {
 	jobsSvc := jobs.NewService(store.NewJobRepo(database))
 	bus := events.New()
 	videosRepo := store.NewVideoRepo(database)
+	showsRepo := store.NewShowRepo(database)
+	seriesRepo := store.NewSeriesRepo(database)
+	collectionsRepo := store.NewCollectionRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
 	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir,
 		cfg.Media.FFmpegPath, cfg.Media.EnableHLS, cfg.Media.HLSPreset)
 	scannerSvc := scanner.New(
 		videosRepo,
 		store.NewStorageRepo(database),
+		showsRepo,
+		seriesRepo,
 		jobsSvc,
 		filesSvc,
 		bus,
@@ -82,6 +89,23 @@ func run() error {
 			if id := ev.Data["video_id"]; id != "" {
 				if err := scannerSvc.EnqueueThumbnail(context.Background(), id); err != nil {
 					slog.Warn("enqueue thumbnail", "video_id", id, "err", err)
+				}
+			}
+		}
+	}()
+
+	// VideoImported → apply sidecar NFO metadata (ADR-016, offline-first).
+	scrapeSvc := scrape.New(videosRepo, showsRepo, cfg.Server.DataDir,
+		scrape.TMDBConfig{APIKey: cfg.Scrape.TMDBAPIKey, Language: cfg.Scrape.Language})
+	go func() {
+		for ev := range bus.Subscribe(events.VideoImported) {
+			if id := ev.Data["video_id"]; id != "" {
+				v, err := videosRepo.Get(context.Background(), id)
+				if err != nil {
+					continue
+				}
+				if err := scrapeSvc.ApplyNFOForVideo(context.Background(), v); err != nil {
+					slog.Warn("apply nfo", "video_id", id, "err", err)
 				}
 			}
 		}
@@ -134,8 +158,10 @@ func run() error {
 	}
 
 	server := &http.Server{
-		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:           api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc, videosRepo, historyRepo, streamingSvc),
+		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Handler: api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
+			videosRepo, showsRepo, seriesRepo, collectionsRepo, historyRepo, streamingSvc,
+			scrapeSvc, search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

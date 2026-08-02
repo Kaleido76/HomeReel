@@ -29,6 +29,8 @@ func newTestScanner(t *testing.T) (*Service, *jobs.Service) {
 	svc := New(
 		store.NewVideoRepo(database),
 		store.NewStorageRepo(database),
+		store.NewShowRepo(database),
+		store.NewSeriesRepo(database),
 		jobsSvc,
 		files.NewService(t.TempDir()),
 		events.New(),

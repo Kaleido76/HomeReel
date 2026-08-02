@@ -29,11 +29,16 @@ func (s *Server) handleVideosList(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 	res, err := s.videos.List(r.Context(), domain.VideoQuery{
-		Q:        r.URL.Query().Get("q"),
-		Sort:     r.URL.Query().Get("sort"),
-		Order:    r.URL.Query().Get("order"),
-		Page:     page,
-		PageSize: pageSize,
+		Q:          r.URL.Query().Get("q"),
+		Kind:       r.URL.Query().Get("kind"),
+		Tag:        r.URL.Query().Get("tag"),
+		Collection: r.URL.Query().Get("collection"),
+		ShowID:     r.URL.Query().Get("showId"),
+		Ungrouped:  r.URL.Query().Get("ungrouped") == "1",
+		Sort:       r.URL.Query().Get("sort"),
+		Order:      r.URL.Query().Get("order"),
+		Page:       page,
+		PageSize:   pageSize,
 	})
 	if err != nil {
 		slog.Error("list videos", "err", err)
@@ -53,8 +58,23 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tags, err := s.videos.Tags(r.Context(), v.ID)
+	if err != nil {
+		slog.Error("get video tags", "video_id", v.ID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	seriesID := ""
+	if v.ShowID != "" && v.SeasonNumber > 0 {
+		seriesID, err = s.series.FindID(r.Context(), v.ShowID, v.SeasonNumber)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			slog.Warn("find video series", "video_id", v.ID, "err", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"video":           v,
+		"tags":            tags,
+		"series_id":       seriesID,
 		"direct_playable": s.streaming.DirectPlayable(*v),
 		"hls_enabled":     s.streaming.HLSEnabled(*v),
 	})

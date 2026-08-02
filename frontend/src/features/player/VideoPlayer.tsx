@@ -6,7 +6,9 @@ import {
   Track,
   useMediaProvider,
   useMediaRemote,
+  type HLSSrc,
   type MediaPlayerInstance,
+  type VideoSrc,
 } from '@vidstack/react'
 import { DefaultVideoLayout, defaultLayoutIcons } from '@vidstack/react/player/layouts/default'
 import '@vidstack/react/player/styles/base.css'
@@ -80,7 +82,12 @@ export function VideoPlayer({
   )
 
   const direct = directPlayable || !hlsEnabled
-  const src = direct ? streamUrl(video.id) : hlsUrl(video.id)
+  // /api/stream/{id} has no extension, so Vidstack cannot infer the media type
+  // and would fall back to a HEAD probe (which can fail on cancelled requests).
+  // Provide the type explicitly to select the right loader.
+  const mediaSrc: VideoSrc | HLSSrc = direct
+    ? { src: streamUrl(video.id), type: 'video/mp4' }
+    : { src: hlsUrl(video.id), type: 'application/x-mpegurl' }
 
   function onTimeUpdate(detail: { currentTime: number }) {
     posRef.current = detail.currentTime
@@ -97,7 +104,7 @@ export function VideoPlayer({
   return (
     <MediaPlayer
       ref={playerRef}
-      src={src}
+      src={mediaSrc}
       poster={coverUrl(video.id)}
       title={video.title}
       playsInline

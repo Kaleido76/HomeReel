@@ -10,9 +10,12 @@ import (
 
 	"videomesh/backend/internal/auth"
 	"videomesh/backend/internal/domain"
+	"videomesh/backend/internal/events"
 	"videomesh/backend/internal/files"
 	"videomesh/backend/internal/jobs"
 	"videomesh/backend/internal/scanner"
+	"videomesh/backend/internal/scrape"
+	"videomesh/backend/internal/search"
 	"videomesh/backend/internal/storage"
 	"videomesh/backend/internal/streaming"
 )
@@ -21,24 +24,36 @@ const sessionCookie = "videomesh_session"
 
 // Server wires routes and shared dependencies.
 type Server struct {
-	auth      *auth.Service
-	storages  *storage.Service
-	files     *files.Service
-	jobs      *jobs.Service
-	scanner   *scanner.Service
-	videos    domain.VideoRepo
-	history   domain.HistoryRepo
-	streaming *streaming.Service
+	auth        *auth.Service
+	storages    *storage.Service
+	files       *files.Service
+	jobs        *jobs.Service
+	scanner     *scanner.Service
+	videos      domain.VideoRepo
+	shows       domain.ShowRepo
+	series      domain.SeriesRepo
+	collections domain.CollectionRepo
+	history     domain.HistoryRepo
+	streaming   *streaming.Service
+	scrape      *scrape.Service
+	search      search.Provider
+	bus         *events.Bus
+	dataDir     string
 }
 
 // New builds the root handler for all /api routes.
 func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Service,
 	jobsSvc *jobs.Service, scannerSvc *scanner.Service, videosRepo domain.VideoRepo,
-	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service) http.Handler {
+	showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo, collectionsRepo domain.CollectionRepo,
+	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
+	scrapeSvc *scrape.Service, searchProvider search.Provider, bus *events.Bus,
+	dataDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, storages: storageSvc, files: filesSvc,
 		jobs: jobsSvc, scanner: scannerSvc,
-		videos: videosRepo, history: historyRepo, streaming: streamingSvc,
+		videos: videosRepo, shows: showsRepo, series: seriesRepo, collections: collectionsRepo,
+		history: historyRepo, streaming: streamingSvc,
+		scrape: scrapeSvc, search: searchProvider, bus: bus, dataDir: dataDir,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -62,8 +77,36 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("GET /api/jobs", s.requireAuth(http.HandlerFunc(s.handleJobsList)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleVideosList)))
 	mux.Handle("GET /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoDetail)))
+	mux.Handle("PATCH /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoPatch)))
+	mux.Handle("DELETE /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoDelete)))
+	mux.Handle("POST /api/videos/{id}/refresh", s.requireAuth(http.HandlerFunc(s.handleVideoRefresh)))
+	mux.Handle("POST /api/videos/{id}/scrape", s.requireAuth(http.HandlerFunc(s.handleVideoScrape)))
+	mux.Handle("POST /api/videos/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleVideoCover)))
 	mux.Handle("GET /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryGet)))
 	mux.Handle("PUT /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryPut)))
+	mux.Handle("GET /api/shows", s.requireAuth(http.HandlerFunc(s.handleShowsList)))
+	mux.Handle("GET /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowDetail)))
+	mux.Handle("PATCH /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowPatch)))
+	mux.Handle("POST /api/shows/{id}/scrape", s.requireAuth(http.HandlerFunc(s.handleShowScrape)))
+	mux.Handle("GET /api/shows/{id}/seasons/{num}/episodes", s.requireAuth(http.HandlerFunc(s.handleShowSeasonsEpisodes)))
+	mux.Handle("GET /api/shows/{id}/poster", s.requireAuth(http.HandlerFunc(s.handleShowPoster)))
+	mux.Handle("GET /api/series", s.requireAuth(http.HandlerFunc(s.handleSeriesList)))
+	mux.Handle("GET /api/series/{id}", s.requireAuth(http.HandlerFunc(s.handleSeriesDetail)))
+	mux.Handle("GET /api/series/{id}/members", s.requireAuth(http.HandlerFunc(s.handleSeriesMembers)))
+	mux.Handle("GET /api/series/{id}/links", s.requireAuth(http.HandlerFunc(s.handleSeriesLinks)))
+	mux.Handle("POST /api/series/{id}/links", s.requireAuth(http.HandlerFunc(s.handleSeriesAddLink)))
+	mux.Handle("DELETE /api/series/{id}/links/{linkedId}", s.requireAuth(http.HandlerFunc(s.handleSeriesRemoveLink)))
+	mux.Handle("GET /api/series/{id}/poster", s.requireAuth(http.HandlerFunc(s.handleSeriesPoster)))
+	mux.Handle("GET /api/tags", s.requireAuth(http.HandlerFunc(s.handleTags)))
+	mux.Handle("GET /api/collections", s.requireAuth(http.HandlerFunc(s.handleCollectionsList)))
+	mux.Handle("POST /api/collections", s.requireAuth(http.HandlerFunc(s.handleCollectionCreate)))
+	mux.Handle("PATCH /api/collections/{id}", s.requireAuth(http.HandlerFunc(s.handleCollectionPatch)))
+	mux.Handle("DELETE /api/collections/{id}", s.requireAuth(http.HandlerFunc(s.handleCollectionDelete)))
+	mux.Handle("GET /api/collections/{id}/videos", s.requireAuth(http.HandlerFunc(s.handleCollectionVideos)))
+	mux.Handle("PUT /api/collections/{id}/videos/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCollectionAddVideo)))
+	mux.Handle("DELETE /api/collections/{id}/videos/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCollectionRemoveVideo)))
+	mux.Handle("GET /api/home", s.requireAuth(http.HandlerFunc(s.handleHome)))
+	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/stream/{id}", s.requireAuth(http.HandlerFunc(s.handleStreamDirect)))
 	mux.Handle("GET /api/stream/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleStreamCover)))
 	mux.Handle("GET /api/stream/{id}/hls/master.m3u8", s.requireAuth(http.HandlerFunc(s.handleStreamMaster)))

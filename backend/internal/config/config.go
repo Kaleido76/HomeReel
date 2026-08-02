@@ -12,6 +12,7 @@ type Config struct {
 	Server ServerConfig `yaml:"server"`
 	Auth   AuthConfig   `yaml:"auth"`
 	Media  MediaConfig  `yaml:"media"`
+	Scrape ScrapeConfig `yaml:"scrape"`
 }
 
 type ServerConfig struct {
@@ -33,6 +34,15 @@ type MediaConfig struct {
 	HLSPreset        string `yaml:"hls_preset"` // ffmpeg x264 preset，如 fast
 }
 
+// ScrapeConfig configures online metadata scraping (ADR-016). An empty
+// TMDBAPIKey keeps online scraping off (NFO + manual editing still work).
+type ScrapeConfig struct {
+	Provider   string `yaml:"provider"`
+	TMDBAPIKey string `yaml:"tmdb_api_key"`
+	Language   string `yaml:"language"`
+	Auto       bool   `yaml:"auto"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -50,6 +60,10 @@ func Default() Config {
 			ProbeConcurrency: 2,
 			EnableHLS:        "auto",
 			HLSPreset:        "fast",
+		},
+		Scrape: ScrapeConfig{
+			Provider: "tmdb",
+			Language: "zh-CN",
 		},
 	}
 }

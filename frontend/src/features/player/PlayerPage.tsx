@@ -5,6 +5,7 @@ import { fetchStorages } from '../../api/storages'
 import { fetchVideo } from '../../api/videos'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { VideoPlayer } from './VideoPlayer'
+import { VideoMetaPanel } from './VideoMetaPanel'
 
 export function PlayerPage() {
   const { id } = useParams({ from: '/library/video/$id' })
@@ -61,14 +62,19 @@ export function PlayerPage() {
       )}
 
       <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3">
-        <h1 className="text-lg font-semibold text-neutral-900">{video.title}</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <VideoMetaPanel video={video} initialTags={detail.data.tags ?? []} />
+      </div>
+
+      <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3">
+        <p className="text-sm text-neutral-500">
           {video.width && video.height ? `${video.width}×${video.height} · ` : ''}
           {video.duration > 0 ? `${formatDuration(video.duration)} · ` : ''}
           {formatBytes(video.size)} · {video.container?.toUpperCase()}
-        </p>
-        <p className="mt-1 truncate text-xs text-neutral-400" title={video.relative_path}>
-          {video.relative_path}
+          {detail.data.series_id ? (
+            <Link to="/series/$id" params={{ id: detail.data.series_id }} className="ml-2 text-indigo-600 hover:underline">
+              所属系列 →
+            </Link>
+          ) : null}
         </p>
       </div>
     </div>
