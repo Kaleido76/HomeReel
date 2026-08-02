@@ -22,6 +22,7 @@ import (
 	"videomesh/backend/internal/scanner"
 	"videomesh/backend/internal/storage"
 	"videomesh/backend/internal/store"
+	"videomesh/backend/internal/streaming"
 )
 
 func main() {
@@ -60,8 +61,12 @@ func run() error {
 	filesSvc := files.NewService(filepath.Join(cfg.Server.DataDir, "uploads"))
 	jobsSvc := jobs.NewService(store.NewJobRepo(database))
 	bus := events.New()
+	videosRepo := store.NewVideoRepo(database)
+	historyRepo := store.NewHistoryRepo(database)
+	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir,
+		cfg.Media.FFmpegPath, cfg.Media.EnableHLS, cfg.Media.HLSPreset)
 	scannerSvc := scanner.New(
-		store.NewVideoRepo(database),
+		videosRepo,
 		store.NewStorageRepo(database),
 		jobsSvc,
 		filesSvc,
@@ -78,6 +83,15 @@ func run() error {
 				if err := scannerSvc.EnqueueThumbnail(context.Background(), id); err != nil {
 					slog.Warn("enqueue thumbnail", "video_id", id, "err", err)
 				}
+			}
+		}
+	}()
+
+	// VideoDeleted → drop stale HLS cache (and cancel an in-flight transcode).
+	go func() {
+		for ev := range bus.Subscribe(events.VideoDeleted) {
+			if id := ev.Data["video_id"]; id != "" {
+				streamingSvc.RemoveCache(id)
 			}
 		}
 	}()
@@ -121,7 +135,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:           api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc),
+		Handler:           api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc, videosRepo, historyRepo, streamingSvc),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

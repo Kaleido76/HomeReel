@@ -70,6 +70,69 @@ func (r *videoRepo) Get(ctx context.Context, id string) (domain.Video, error) {
 	return v, err
 }
 
+// listSort maps a user-facing sort key to a safe SQL ORDER BY expression.
+var listSort = map[string]string{
+	"title":    "title",
+	"name":     "relative_path",
+	"date":     "created_at",
+	"duration": "duration",
+}
+
+func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.VideoPage, error) {
+	page := q.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := q.PageSize
+	if pageSize < 1 {
+		pageSize = 24
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	where := ""
+	args := []any{}
+	if q.Q != "" {
+		like := "%" + q.Q + "%"
+		where = ` WHERE (title LIKE ? OR relative_path LIKE ?)`
+		args = append(args, like, like)
+	}
+
+	var total int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM videos`+where, args...).Scan(&total); err != nil {
+		return domain.VideoPage{}, err
+	}
+
+	order := "DESC"
+	if q.Order == "asc" {
+		order = "ASC"
+	}
+	sort := listSort[q.Sort]
+	if sort == "" {
+		sort = "created_at"
+	}
+	query := `SELECT ` + videoCols + ` FROM videos` + where +
+		` ORDER BY ` + sort + ` ` + order +
+		` LIMIT ? OFFSET ?`
+	args = append(args, pageSize, (page-1)*pageSize)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return domain.VideoPage{}, err
+	}
+	defer rows.Close()
+	out := make([]domain.Video, 0, pageSize)
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return domain.VideoPage{}, err
+		}
+		out = append(out, v)
+	}
+	return domain.VideoPage{Videos: out, Total: total}, rows.Err()
+}
+
 func (r *videoRepo) Create(ctx context.Context, v domain.Video) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO videos (id, storage_id, file_id, relative_path, path, size, mtime,

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Info is the subset of ffprobe output the library needs.
@@ -47,7 +48,10 @@ func Probe(ctx context.Context, ffprobePath, path string) (Info, error) {
 		return Info{}, fmt.Errorf("parse ffprobe output: %w", err)
 	}
 	var info Info
-	info.Container = raw.Format.FormatName
+	// ffprobe format_name can be a comma-separated demuxer list (e.g.
+	// "mov,mp4,m4a,3gp,3g2,mj2"); keep only the primary container so it can be
+	// matched against playability/Content-Type maps.
+	info.Container = primaryContainer(raw.Format.FormatName)
 	info.Duration, _ = strconv.ParseFloat(raw.Format.Duration, 64)
 	for _, s := range raw.Streams {
 		if s.CodecType == "video" {
@@ -58,6 +62,18 @@ func Probe(ctx context.Context, ffprobePath, path string) (Info, error) {
 		}
 	}
 	return info, nil
+}
+
+// primaryContainer returns the first token of a comma-separated container
+// name, trimming whitespace.
+func primaryContainer(name string) string {
+	for _, part := range strings.Split(name, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			return part
+		}
+	}
+	return name
 }
 
 // Thumbnail extracts a cover frame (320px wide) and a small thumb (160px)

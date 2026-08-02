@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,9 +21,18 @@ import (
 	"videomesh/backend/internal/scanner"
 	"videomesh/backend/internal/storage"
 	"videomesh/backend/internal/store"
+	"videomesh/backend/internal/streaming"
 )
 
 func newTestServer(t *testing.T, password string) (*httptest.Server, string) {
+	t.Helper()
+	ts, cookie, _ := newTestServerDB(t, password)
+	return ts, cookie
+}
+
+// newTestServerDB builds the test server and also returns the database handle
+// so tests can seed records directly.
+func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *sql.DB) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -39,8 +49,10 @@ func newTestServer(t *testing.T, password string) (*httptest.Server, string) {
 	storageSvc := storage.New(store.NewStorageRepo(database))
 	filesSvc := files.NewService(t.TempDir())
 	jobsSvc := jobs.NewService(store.NewJobRepo(database))
+	videosRepo := store.NewVideoRepo(database)
+	historyRepo := store.NewHistoryRepo(database)
 	scannerSvc := scanner.New(
-		store.NewVideoRepo(database),
+		videosRepo,
 		store.NewStorageRepo(database),
 		jobsSvc,
 		filesSvc,
@@ -49,9 +61,11 @@ func newTestServer(t *testing.T, password string) (*httptest.Server, string) {
 		"ffmpeg",
 		t.TempDir(),
 	)
-	ts := httptest.NewServer(New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc))
+	streamingSvc := streaming.New(videosRepo, t.TempDir(), "ffmpeg", "auto", "fast")
+	ts := httptest.NewServer(New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
+		videosRepo, historyRepo, streamingSvc))
 	t.Cleanup(ts.Close)
-	return ts, ""
+	return ts, "", database
 }
 
 func loginCookie(t *testing.T, ts *httptest.Server, password string) string {

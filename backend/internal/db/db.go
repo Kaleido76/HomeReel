@@ -88,6 +88,13 @@ var migrations = []string{
 		updated_at TEXT NOT NULL
 	)`,
 	`CREATE INDEX idx_jobs_status ON jobs(status)`,
+	`CREATE TABLE history (
+		video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+		user       TEXT NOT NULL DEFAULT 'local',
+		progress   REAL NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY (video_id, user)
+	)`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

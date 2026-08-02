@@ -29,6 +29,8 @@ type MediaConfig struct {
 	FFmpegPath       string `yaml:"ffmpeg_path"`
 	FFprobePath      string `yaml:"ffprobe_path"`
 	ProbeConcurrency int    `yaml:"probe_concurrency"`
+	EnableHLS        string `yaml:"enable_hls"` // auto（能力探测）| true | false
+	HLSPreset        string `yaml:"hls_preset"` // ffmpeg x264 preset，如 fast
 }
 
 func Default() Config {
@@ -46,6 +48,8 @@ func Default() Config {
 			FFmpegPath:       "ffmpeg",
 			FFprobePath:      "ffprobe",
 			ProbeConcurrency: 2,
+			EnableHLS:        "auto",
+			HLSPreset:        "fast",
 		},
 	}
 }

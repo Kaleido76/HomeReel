@@ -176,7 +176,7 @@ frontend/
 - 回复简洁、直接、可执行；避免冗长的解释性前缀。
 - 与项目文档一致，使用中文交流。
 
-## 11. 当前进度（Phase 2 起点快照）
+## 11. 当前进度（Phase 3 起点快照）
 
 > 本节是会话间交接快照。新会话开工前先读本节 + plan 对应章节。
 
@@ -188,21 +188,33 @@ frontend/
   - **M2 文件操作**：`/api/fs/{download,mkdir,rename,move,delete}`（Range 下载、批量摘要、只读卷 403）、分块上传 `/api/upload`（末片合并、幂等续传、断点重试）；前端操作 UI（上传/新建/重命名/删除/移动）
   - **M3 扫描与索引**：`events` 总线、`jobs` 队列+Worker（probe/thumbnail/rescan，崩溃恢复）、`media`（ffprobe/ffmpeg）、`scanner`（指纹 `(file_id,size,mtime)`、移动识别、删除标记、fsnotify 5s 去抖监视）、NTFS FileID（免 CGO）、缩略图（covers 320px + thumbs 160px）
   - **M4 前端 Explorer 页面**：存储卷侧边栏（在线/离线分组）+ 文件列表 + 面包屑
+- **Phase 2 播放与媒体体验**（M1→M4 代码完成，后端 `go test ./...`/`go vet`/`gofmt`（含 ffmpeg integration）与前端 `pnpm lint`/`pnpm build` 全绿；**浏览器播放体验仍待用户手动验收**）：
+  - **M1 视频库 API + 网格页**：`store.VideoRepo.List`（q/sort/order/page/pageSize，白名单排序）、`GET /api/videos`、前端 `/library` 海报网格（缩略图/时长/搜索/排序/分页/离线置灰）+ 首页「最近添加」
+  - **M2 直连播放 + 封面**：`streaming` 包（`internal/streaming/`）、`GET /api/stream/{id}`（HTTP Range + 由 container/codec 推导 Content-Type）、`GET /api/stream/{id}/cover`（含 `?thumb=1`）；前端 Vidstack 播放页 `/library/video/:id`
+  - **M3 历史与续播**：`history` 表迁移（`PRIMARY KEY(video_id, user)`，user 固定 `local`）、`GET/PUT /api/videos/{id}/history`；前端 10s 节流保存 + 进入时 seek（距片尾 20s 内不续播、播完归零）
+  - **M4 HLS 按需转码 + 侧边字幕**：能力探测 `streaming.DirectPlayable`（native container+codec 白名单，unprobed 按扩展名兜底）；`MasterM3U8` 单飞去重、后台 ffmpeg **增量 live 型** HLS 转码到 `data_dir/hls/<video_id>/`（`-hls_list_size 0` + `-hls_flags temp_file+independent_segments` + `-map 0:a:0?`，完成后写 `.done` 标记以区分崩溃残留），`master.m3u8` 读入内存快照、仅含 `#EXTINF` 才服务、`Cache-Control: no-store`；`Segment` 服务分片；`/api/stream/{id}/subtitle` 服务同目录 `.srt/.vtt/.ass`；`VideoDeleted`/`VideoUpdated` 事件触发 `RemoveCache` 失效；前端不可直连时经本地 hls.js 播 master.m3u8
+  - **Bug 修复（2026-08）**：mp4/h264 因 ffprobe `format_name` 逗号列表整串匹配失败被误判为「不可直连」→ 全部误走 HLS 转码导致卡死；已改为 `media.Probe` 归一化首个 token + `DirectPlayable`/`contentType` 按逗号分词匹配（兼容旧行）。同时加固 HLS：原子写（temp_file）、内存快照服务、hls.js 放宽 manifest 超时（60s）+ `liveDurationInfinity`。新增 `TestMasterM3U8ServesGrowingPlaylist`/`TestSegmentsServableDuringTranscode` 集成测试证明转码中清单与分片始终可服务。
 
 ### 关键约定（新会话必须遵守）
 
-- **时间戳统一固定宽度纳秒 RFC3339**（`2006-01-02T15:04:05.000000000Z07:00`），保证字符串字典序=时间序（扫描 recency 比较依赖）。`store.util.nowRFC3339` / `scanner.timeLayout`。
+- **时间戳统一固定宽度纳秒 RFC3339**（`2006-01-02T15:04:05.000000000Z07:00`），保证字符串字典序=时间序（扫描 recency 比较依赖）。`store.util.nowRFC3339` / `scanner.timeLayout` / `api.timeLayout`。
 - **SQLite 单写者**：`SetMaxOpenConns(1)`；写操作收敛到 store 层。
 - **扫描安全**：外接卷根路径不可达时中止扫描、绝不误删元数据（ADR-014）；无 probe 元数据（`duration==0 && codec==""`）的视频即使指纹未变也会强制重 probe（自愈）。
 - **上传清理**：合并完成/已完成即删 staging 目录；启动时 + 每小时清理超 24h 的孤儿分片。
 - **ffprobe/ffmpeg**：服务进程 PATH 找不到时必须在 `config.yaml` 的 `media.ffmpeg_path`/`media.ffprobe_path` 显式配置（YAML 双引号 `\\` 转义），改后重启。
-- **新增依赖需用户批准**（规则 A），包括 `go get`。
+- **容器（container）判定**：ffprobe `format_name` 是逗号分隔的解复用器列表（如 `mov,mp4,m4a,3gp,3g2,mj2`）。`media.Probe` 归一化为首个 token 入库；`streaming.DirectPlayable`/`contentType` 按逗号分词匹配（兼容旧数据行），**禁止用整串查映射**（否则 mp4/h264 会被误判为不可直连而错误走 HLS 转码）。
+- **HLS 转码**：单飞（in-flight 去重）+ 后台进程；转码命令见 `streaming/transcode.go`（`-hls_list_size 0` 保留全部分片、`-hls_flags temp_file+independent_segments` 原子写避免读到半截文件、`-map 0:a:0?` 音频可选）；`master.m3u8` 由 `MasterM3U8` **读入内存快照**服务（ffmpeg 原地重写文件，直接 ServeContent 会读到截断内容），仅当含 `#EXTINF` 段行才对外服务，响应必须 `Cache-Control: no-store`（避免 304 卡死 hls.js）；`.done` 标记区分「完成缓存」与「崩溃残留」，残留整目录重建；转码结束从 `s.active` 移除；HLS 缓存随 `VideoDeleted`/`VideoUpdated` 失效。
+- **能力探测唯一来源**：直连/HLS 判定由后端 `streaming.DirectPlayable`/`HLSEnabled` 计算，`GET /api/videos/{id}` 返回 `direct_playable`/`hls_enabled` 字段，前端不重复实现判定逻辑。
+- **Vidstack**：前端用 `@vidstack/react`（v1.15+，自带核心，**不要装废弃的 `@vidstack/player`**）；HLS 必须通过 `useMediaProvider` 把 `provider.library = () => import('hls.js')` 指向本地包（默认走 jsdelivr CDN，LAN 离线会失败），并放宽 `provider.config.manifestLoadingTimeOut`（默认 10s 会在首播转码期间超时→无限转圈）；样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，布局组件 `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。
+- **新增依赖需用户批准**（规则 A），包括 `go get` / `pnpm add`。
 
-### 待办 / 遗留（Phase 2 及以后）
+### 待办 / 遗留（Phase 3 及以后）
 
-- **下一步：Phase 2 播放与媒体体验**（plan 10 章）：视频库网格页、Vidpack→Vidstack 直连播放、HLS 按需转码、续播、字幕。前端已有 `features/library` 目录预留，但 `videos` 相关 API 尚未暴露（仅 DB/`/api/jobs` 层面）。
+- **人工验证清单（Phase 2 浏览器体验，需用户执行）**：① mp4/h264 走直连 Range 秒开、拖动流畅；② 播一半退出再进入能续播、播完从头；③ 真 MKV/HEVC 触发 HLS 首播（可等 60s 内首屏）并播放；④ 手机/平板局域网访问播放；⑤ 同名 `.srt/.vtt` 侧边字幕出现在字幕菜单。
+- **下一步：Phase 3 媒体库体验**（plan 10 章）：`videos` 表补 `kind/show/description/year/rating/genre/overview/search_text` 等列 + 新增 `shows/seasons/video_tags/collections/collection_videos` 表（plan 4.2）；scanner 剧集分组器（目录/文件名规则识别 Show/Season/Episode，ADR-015）；元数据刮削（NFO/手动/可选 TMDB，ADR-016）；电影/剧集海报墙与详情页；首页行（继续观看/最近添加/集合）；标签与集合 CRUD；FTS5 搜索（ADR-009）。
 - `docs/decisions.md` 尚未创建（plan 附录 A 建议 Phase 0 建）；ADR 修订已留痕于 plan 0.4 与各章回填。
 - 实际脚手架为 **React 19**（plan 1.1 写 React 18，未回填，待用户拍板）。
 - 设备热插拔盘符重映射未实现：监视仅在启动时对 enabled 卷建立，拔出/插入不会自动重扫/重映射（ADR-014 的后半部分）。
-- `delete_mode: trash` 未实现（当前永久删除）；前端断点续传 UI 未实现；`/api/stream` 播放接口未实现。
+- `delete_mode: trash` 未实现（当前永久删除）；前端断点续传 UI 未实现。
+- HLS 只做了单一路码率（`-hls_time 10`，无自适应多码率）；嵌入字幕轨道抽取未实现（仅侧边字幕文件）。
 - 尚未执行首个 `git commit`（仓库已 `git init`，未提交）。

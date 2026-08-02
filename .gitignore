@@ -24,3 +24,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+*.md
+!AGENTS.md

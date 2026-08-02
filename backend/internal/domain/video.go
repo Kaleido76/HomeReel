@@ -25,9 +25,27 @@ type Video struct {
 	LastScannedAt string  `json:"last_scanned_at"`
 }
 
+// VideoQuery filters and paginates the video library.
+type VideoQuery struct {
+	Q        string // matches title or relative path
+	Sort     string // title | date | duration | name
+	Order    string // asc | desc
+	Page     int    // 1-based
+	PageSize int
+}
+
+// VideoPage is one page of library results with the total match count.
+type VideoPage struct {
+	Videos []Video
+	Total  int
+}
+
 // VideoRepo persists video records.
 type VideoRepo interface {
 	Get(ctx context.Context, id string) (Video, error)
+	// List returns one page of library videos matching q, newest first by
+	// default (used by GET /api/videos).
+	List(ctx context.Context, q VideoQuery) (VideoPage, error)
 	Create(ctx context.Context, v Video) error
 	// UpdateFingerprint refreshes the on-disk location/size/mtime of a video
 	// (used for moves and in-place changes) and marks it as scanned.

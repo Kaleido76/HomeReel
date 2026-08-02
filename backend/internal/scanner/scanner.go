@@ -118,6 +118,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 			} else {
 				_ = s.videos.UpdateFingerprint(ctx, cur.ID, c.path, c.rel, c.size, c.mtime, scanStart)
 				s.enqueueProbe(ctx, cur.ID)
+				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": cur.ID}})
 				res.Updated++
 			}
 			continue
@@ -127,6 +128,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 			_ = s.videos.UpdateFingerprint(ctx, moved.ID, c.path, c.rel, c.size, c.mtime, scanStart)
 			if moved.Size != c.size || moved.MTime != c.mtime || needsProbe(moved) {
 				s.enqueueProbe(ctx, moved.ID)
+				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": moved.ID}})
 			}
 			res.Updated++
 			continue

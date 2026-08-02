@@ -134,3 +134,84 @@ func TestVideoUniquePath(t *testing.T) {
 		t.Fatalf("duplicate path should fail")
 	}
 }
+
+func TestVideoListPaginationAndFilter(t *testing.T) {
+	repo, storages := newVideoTestRepo(t)
+	ctx := context.Background()
+	st := domain.Storage{ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "t"}
+	_ = storages.Create(ctx, st)
+
+	base := func(id, rel, title string, dur float64) domain.Video {
+		return domain.Video{
+			ID: id, StorageID: "s1", FileID: id, RelativePath: rel, Path: "p",
+			Size: 1, MTime: 1, Title: title, Duration: dur,
+			Codec: "h264", Container: "mp4",
+			CreatedAt:     "2026-01-0" + id[1:] + "T00:00:00.000000000Z",
+			UpdatedAt:     "2026-01-0" + id[1:] + "T00:00:00.000000000Z",
+			LastScannedAt: "2026-01-0" + id[1:] + "T00:00:00.000000000Z",
+		}
+	}
+	_ = repo.Create(ctx, base("v1", "a/alpha.mp4", "Alpha", 100))
+	_ = repo.Create(ctx, base("v2", "b/beta.mp4", "Beta", 200))
+	_ = repo.Create(ctx, base("v3", "c/gamma.mp4", "Gamma", 300))
+	// Create only stores the fingerprint columns; duration/codec come from
+	// UpdateProbe, so persist them the way the scanner would.
+	durations := map[string]float64{"v1": 100, "v2": 200, "v3": 300}
+	for id, dur := range durations {
+		v, _ := repo.Get(ctx, id)
+		upd := v
+		upd.Duration = dur
+		upd.Codec = "h264"
+		upd.Container = "mp4"
+		if err := repo.UpdateProbe(ctx, upd); err != nil {
+			t.Fatalf("probe %s: %v", id, err)
+		}
+	}
+
+	t.Run("default newest first", func(t *testing.T) {
+		page, err := repo.List(ctx, domain.VideoQuery{Page: 1, PageSize: 2})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if page.Total != 3 || len(page.Videos) != 2 {
+			t.Fatalf("page = %d/%d", page.Total, len(page.Videos))
+		}
+		if page.Videos[0].ID != "v3" || page.Videos[1].ID != "v2" {
+			t.Fatalf("order = %s,%s", page.Videos[0].ID, page.Videos[1].ID)
+		}
+		page2, _ := repo.List(ctx, domain.VideoQuery{Page: 2, PageSize: 2})
+		if len(page2.Videos) != 1 || page2.Videos[0].ID != "v1" {
+			t.Fatalf("second page = %+v", page2.Videos)
+		}
+	})
+
+	t.Run("title search", func(t *testing.T) {
+		page, err := repo.List(ctx, domain.VideoQuery{Q: "be", Page: 1, PageSize: 10})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if page.Total != 1 || page.Videos[0].ID != "v2" {
+			t.Fatalf("search = %d %+v", page.Total, page.Videos)
+		}
+	})
+
+	t.Run("sort by title ascending", func(t *testing.T) {
+		page, err := repo.List(ctx, domain.VideoQuery{Sort: "title", Order: "asc", Page: 1, PageSize: 10})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if page.Videos[0].ID != "v1" || page.Videos[2].ID != "v3" {
+			t.Fatalf("title sort = %+v", page.Videos)
+		}
+	})
+
+	t.Run("sort by duration", func(t *testing.T) {
+		page, err := repo.List(ctx, domain.VideoQuery{Sort: "duration", Order: "asc", Page: 1, PageSize: 10})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if page.Videos[0].Duration != 100 || page.Videos[2].Duration != 300 {
+			t.Fatalf("duration sort = %+v", page.Videos)
+		}
+	})
+}

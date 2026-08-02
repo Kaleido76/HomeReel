@@ -1,5 +1,5 @@
 import { Link, Outlet } from '@tanstack/react-router'
-import { FolderOpen, Home, LogOut, Video } from 'lucide-react'
+import { Film, FolderOpen, Home, LogOut, Video } from 'lucide-react'
 import { useAuth } from '../features/auth/auth'
 
 const linkBase = 'rounded-lg px-3 py-1.5 text-sm transition-colors'
@@ -27,6 +27,16 @@ export function AppShell() {
               >
                 <span className="flex items-center gap-1.5">
                   <Home className="size-4" /> 首页
+                </span>
+              </Link>
+              <Link
+                to="/library"
+                className={linkBase}
+                activeProps={{ className: linkActive }}
+                inactiveProps={{ className: linkInactive }}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Film className="size-4" /> 视频库
                 </span>
               </Link>
               <Link

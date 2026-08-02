@@ -14,23 +14,32 @@ import (
 	"videomesh/backend/internal/jobs"
 	"videomesh/backend/internal/scanner"
 	"videomesh/backend/internal/storage"
+	"videomesh/backend/internal/streaming"
 )
 
 const sessionCookie = "videomesh_session"
 
 // Server wires routes and shared dependencies.
 type Server struct {
-	auth     *auth.Service
-	storages *storage.Service
-	files    *files.Service
-	jobs     *jobs.Service
-	scanner  *scanner.Service
+	auth      *auth.Service
+	storages  *storage.Service
+	files     *files.Service
+	jobs      *jobs.Service
+	scanner   *scanner.Service
+	videos    domain.VideoRepo
+	history   domain.HistoryRepo
+	streaming *streaming.Service
 }
 
 // New builds the root handler for all /api routes.
 func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Service,
-	jobsSvc *jobs.Service, scannerSvc *scanner.Service) http.Handler {
-	s := &Server{auth: authSvc, storages: storageSvc, files: filesSvc, jobs: jobsSvc, scanner: scannerSvc}
+	jobsSvc *jobs.Service, scannerSvc *scanner.Service, videosRepo domain.VideoRepo,
+	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service) http.Handler {
+	s := &Server{
+		auth: authSvc, storages: storageSvc, files: filesSvc,
+		jobs: jobsSvc, scanner: scannerSvc,
+		videos: videosRepo, history: historyRepo, streaming: streamingSvc,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/auth/status", s.handleStatus)
@@ -51,6 +60,15 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("POST /api/fs/scan", s.requireAuth(http.HandlerFunc(s.handleFsScan)))
 	mux.Handle("POST /api/upload", s.requireAuth(http.HandlerFunc(s.handleUpload)))
 	mux.Handle("GET /api/jobs", s.requireAuth(http.HandlerFunc(s.handleJobsList)))
+	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleVideosList)))
+	mux.Handle("GET /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoDetail)))
+	mux.Handle("GET /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryGet)))
+	mux.Handle("PUT /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryPut)))
+	mux.Handle("GET /api/stream/{id}", s.requireAuth(http.HandlerFunc(s.handleStreamDirect)))
+	mux.Handle("GET /api/stream/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleStreamCover)))
+	mux.Handle("GET /api/stream/{id}/hls/master.m3u8", s.requireAuth(http.HandlerFunc(s.handleStreamMaster)))
+	mux.Handle("GET /api/stream/{id}/hls/{segment}", s.requireAuth(http.HandlerFunc(s.handleStreamSegment)))
+	mux.Handle("GET /api/stream/{id}/subtitle", s.requireAuth(http.HandlerFunc(s.handleStreamSubtitle)))
 	return s.withMiddleware(mux)
 }
 
