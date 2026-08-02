@@ -1,5 +1,5 @@
 import { routers } from './routers'
-import { TAB_ROOTS, tabFromPath, type TabId } from './config'
+import { tabFromPath, type TabId } from './config'
 
 // Module-level tab store shared by every tab router. `activeTab` changes are
 // broadcast to React via useSyncExternalStore; routers stay mounted so switching
@@ -53,12 +53,6 @@ export function openSeries(id: string) {
 export function openLibrary() {
   setActive('library')
   void routers.library.navigate({ to: '/library', search: {} })
-}
-
-// backToHome returns the tab to its root view (the "回到页签主页" button).
-export function backToHome(tab: TabId) {
-  setActive(tab)
-  void routers[tab].navigate({ to: TAB_ROOTS[tab], search: {} })
 }
 
 // initTabSync wires the browser history to the per-tab memory histories:

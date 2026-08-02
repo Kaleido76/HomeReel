@@ -3,8 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import { FolderOpen } from 'lucide-react'
 import { fetchStorages } from '../../api/storages'
 import { Breadcrumb } from './Breadcrumb'
+import { ColumnBrowser } from './ColumnBrowser'
 import { FileList } from './FileList'
 import { StorageSidebar } from './StorageSidebar'
+import { useMediaQuery } from '../../lib/useMediaQuery'
 
 interface ExplorerSearch {
   storageId: string
@@ -18,20 +20,21 @@ export function ExplorerPage() {
 
   const storages = useQuery({ queryKey: ['storages'], queryFn: fetchStorages })
   const selected = (storages.data?.storages ?? []).find((s) => s.id === storageId)
+  const wide = useMediaQuery('(min-width: 1024px)')
 
   function go(storageId: string, path: string) {
     navigate({ to: '/explorer', search: { storageId, path } })
   }
 
   return (
-    <div className="flex h-full gap-4">
+    <div className="flex h-full flex-col gap-3 py-6 lg:flex-row lg:gap-4">
       <StorageSidebar
         storages={storages.data?.storages ?? []}
         isLoading={storages.isLoading}
         selectedId={storageId}
         onSelect={(id) => go(id, '')}
       />
-      <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-neutral-200 bg-white">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border border-neutral-200 bg-white">
         {!storageId ? (
           <div className="flex h-full items-center justify-center text-neutral-400">
             <div className="text-center">
@@ -45,7 +48,11 @@ export function ExplorerPage() {
               <Breadcrumb storage={selected} path={path} onNavigate={(p) => go(storageId, p)} />
             </div>
             <div className="min-h-0 flex-1">
-              <FileList storageId={storageId} path={path} onOpen={(p) => go(storageId, p)} />
+              {wide ? (
+                <ColumnBrowser storageId={storageId} path={path} onOpen={(p) => go(storageId, p)} />
+              ) : (
+                <FileList storageId={storageId} path={path} onOpen={(p) => go(storageId, p)} />
+              )}
             </div>
           </>
         )}

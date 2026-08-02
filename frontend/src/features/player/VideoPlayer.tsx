@@ -50,10 +50,12 @@ export function VideoPlayer({
   video,
   directPlayable,
   hlsEnabled,
+  onEnded,
 }: {
   video: Video
   directPlayable: boolean
   hlsEnabled: boolean
+  onEnded?: () => void
 }) {
   const playerRef = useRef<MediaPlayerInstance>(null)
   const remote = useMediaRemote(playerRef)
@@ -122,6 +124,8 @@ export function VideoPlayer({
       poster={coverUrl(video.id)}
       title={video.title}
       playsInline
+      className="h-full w-full bg-black"
+      style={{ aspectRatio: 'auto' }}
       onCanPlay={() => {
         if (resumeAt > 0) {
           remote.seek(resumeAt)
@@ -132,6 +136,7 @@ export function VideoPlayer({
       onEnded={() => {
         posRef.current = 0
         void putHistory(video.id, 0).catch(() => {})
+        onEnded?.()
       }}
     >
       <HlsLibConfig />

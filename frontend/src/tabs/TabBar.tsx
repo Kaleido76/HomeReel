@@ -50,8 +50,8 @@ export function TabBar() {
             {def.label}
             <span
               aria-hidden="true"
-              className={`absolute inset-x-2 bottom-0 h-0.5 rounded-full transition-colors ${
-                active ? 'bg-indigo-600' : 'bg-transparent'
+              className={`absolute inset-x-2 bottom-0 h-0.5 transition-colors ${
+                active ? 'bg-blue-600' : 'bg-transparent'
               }`}
             />
           </button>

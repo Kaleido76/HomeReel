@@ -1,9 +1,45 @@
 @import "tailwindcss";
 
+@theme {
+  /* 特大屏（电视 / 2K / 4K）自定义断点，高于 Tailwind 默认 2xl(1536px) */
+  --breakpoint-3xl: 120rem;
+
+  /* UI.md「Geometry」：锐利几何，圆角默认 0px、极少 2px、最大 4px。
+     统一覆盖 radius tokens，使全站 rounded-* 落到 0–4px（rounded-full 保留圆形语义）。 */
+  --radius-xs: 0rem;
+  --radius-sm: 0rem;
+  --radius-md: 0.125rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.25rem;
+  --radius-2xl: 0.25rem;
+  --radius-3xl: 0.25rem;
+  --radius-4xl: 0.25rem;
+  --radius: 0.25rem;
+}
+
 html,
 body,
 #root {
   height: 100%;
+}
+
+body {
+  overflow-y: scroll;
+}
+
+/* 薄滚动条：多列浏览/抽屉面板等内部滚动区更清爽 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme(--color-neutral-300) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 body {

@@ -1,41 +1,30 @@
 import { Suspense, useEffect, useSyncExternalStore, useState } from 'react'
 import { RouterProvider } from '@tanstack/react-router'
-import { Home } from 'lucide-react'
-import { TAB_DEFS, TAB_ROOTS, type TabId } from './config'
+import { TAB_DEFS, type TabId } from './config'
 import { routers } from './routers'
-import { backToHome, getActiveTab, subscribeTabs } from './manager'
+import { getActiveTab, subscribeTabs } from './manager'
 import { TabSync } from './TabSync'
 
 function PaneLoader() {
   return (
     <div className="flex h-64 items-center justify-center text-neutral-400">
-      <div className="size-6 animate-spin rounded-full border-2 border-neutral-300 border-t-indigo-600" />
+      <div className="size-6 animate-spin rounded-full border-2 border-neutral-300 border-t-blue-600" />
     </div>
   )
 }
 
-// TabHomeButton returns the tab to its root view; shown only when the tab is on
-// a deep page (player, series detail) so users can always get back "home".
-function TabHomeButton({ tab }: { tab: TabId }) {
-  const pathname = useSyncExternalStore(
-    (cb) => routers[tab].subscribe('onResolved', cb),
-    () => routers[tab].state.location.pathname,
-  )
-  if (pathname === TAB_ROOTS[tab]) return null
-  const def = TAB_DEFS.find((d) => d.id === tab)!
-  return (
-    <button
-      onClick={() => backToHome(tab)}
-      className="mb-4 flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
-    >
-      <Home className="size-4" /> 回到{def.label}首页
-    </button>
-  )
-}
+// Panes that manage their own full-height internal scrolling (library uses a
+// grid + right drawer split, explorer uses columns + sidebar) opt out of the
+// shared scroll wrapper so nested scroll regions work on wide screens.
+const selfScrolling: ReadonlySet<TabId> = new Set(['library', 'explorer'])
 
-// TabHost renders every mounted tab router in its own scroll pane. Tabs stay
-// mounted once visited (keep-alive); only the active pane is visible. Explorer
-// manages its own two-column internal scrolling, the other panes scroll as one.
+// TabHost renders every mounted tab router in its own pane. Tabs stay mounted
+// once visited (keep-alive); only the active pane is visible. Home/search use
+// the shared page-level scroll; library/explorer manage their own layout.
+//
+// The library tab is full-bleed on wide screens: its three-column layout is
+// sized in viewport units (50vw per column) so it must not be capped by a
+// max-width or padded — side whitespace would defeat the panel-style UI.
 export function TabHost() {
   const activeTab = useSyncExternalStore(subscribeTabs, getActiveTab)
   const [mounted, setMounted] = useState<Set<TabId>>(() => new Set([activeTab]))
@@ -51,7 +40,7 @@ export function TabHost() {
       <TabSync />
       {TAB_DEFS.map((def) => {
         if (!mounted.has(def.id)) return null
-        const explorer = def.id === 'explorer'
+        const inner = selfScrolling.has(def.id) ? 'h-full' : 'h-full overflow-y-auto'
         return (
           <div
             key={def.id}
@@ -59,10 +48,19 @@ export function TabHost() {
             role="tabpanel"
             aria-labelledby={`tab-${def.id}`}
             hidden={def.id !== activeTab}
-            className={`h-full ${explorer ? '' : 'overflow-y-auto'}`}
+            className={inner}
           >
-            <div className={`mx-auto w-full max-w-6xl ${explorer ? 'h-full px-4 py-6' : 'px-4 py-6'}`}>
-              {!explorer && <TabHomeButton tab={def.id} />}
+            <div
+              className={
+                def.id === 'library'
+                  ? 'h-full w-full'
+                  : `mx-auto w-full px-4 sm:px-6 xl:px-8 ${
+                      selfScrolling.has(def.id)
+                        ? 'h-full max-w-[1920px]'
+                        : 'max-w-[1600px] py-6'
+                    }`
+              }
+            >
               <Suspense fallback={<PaneLoader />}>
                 <RouterProvider router={routers[def.id]} />
               </Suspense>

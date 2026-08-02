@@ -36,6 +36,16 @@ func newTestServer(t *testing.T, password string) (*httptest.Server, string) {
 // so tests can seed records directly.
 func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *sql.DB) {
 	t.Helper()
+	handler, database := newTestHandler(t, password, "")
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts, "", database
+}
+
+// newTestHandler wires the full dependency graph and returns the root handler,
+// optionally hosting a frontend static dir (static-serving tests pass one).
+func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sql.DB) {
+	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -71,11 +81,10 @@ func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *
 	dataDir := t.TempDir()
 	scrapeSvc := scrape.New(videosRepo, showsRepo, dataDir, scrape.TMDBConfig{})
 	bus := events.New()
-	ts := httptest.NewServer(New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
+	handler := New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
 		videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
-		scrapeSvc, search.NewFTS5(database, videosRepo), bus, dataDir))
-	t.Cleanup(ts.Close)
-	return ts, "", database
+		scrapeSvc, search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)
+	return handler, database
 }
 
 func loginCookie(t *testing.T, ts *httptest.Server, password string) string {

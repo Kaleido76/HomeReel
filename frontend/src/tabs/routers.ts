@@ -13,11 +13,7 @@ type AnyRouter = ReturnType<typeof createRouter>
 // Lazy page components: each tab's page chunks are loaded on first visit only
 // ("懒加载"), then kept alive by the tab host.
 const HomePage = lazy(() => import('../features/home/HomePage').then((m) => ({ default: m.HomePage })))
-const LibraryPage = lazy(() => import('../features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })))
-const PlayerPage = lazy(() => import('../features/player/PlayerPage').then((m) => ({ default: m.PlayerPage })))
-const SeriesDetailPage = lazy(() =>
-  import('../features/series/SeriesDetailPage').then((m) => ({ default: m.SeriesDetailPage })),
-)
+const LibraryLayout = lazy(() => import('../features/library/LibraryLayout').then((m) => ({ default: m.LibraryLayout })))
 const SearchPage = lazy(() => import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })))
 const ExplorerPage = lazy(() => import('../features/explorer/ExplorerPage').then((m) => ({ default: m.ExplorerPage })))
 
@@ -47,28 +43,50 @@ export const homeRouter = createRouter({
   defaultPreload: 'intent',
 })
 
-// ---- library tab (library / player / series) ----
-const libraryRoot = createRootRoute()
+// ---- library tab (library / video detail / player / series detail) ----
+// The root route carries LibraryLayout, which is the single source of truth
+// for the wide-screen three-column browser (browse | detail | player). The
+// child routes below only exist so the URL stays parseable and deep links /
+// back-forward resolve; their components are never rendered via <Outlet/> —
+// LibraryLayout parses location.pathname itself and renders the matching panes
+// directly (the natural route IDs are preserved so tabFromPath keeps working).
+const libraryRoot = createRootRoute({ component: LibraryLayout })
 const libraryIndex = createRoute({
   getParentRoute: () => libraryRoot,
   path: '/library',
-  component: LibraryPage,
-  validateSearch: (search) => ({
-    view: search.view === 'series' ? 'series' : 'standalone',
-    q: typeof search.q === 'string' ? search.q : '',
-    sort: typeof search.sort === 'string' ? search.sort : 'date',
-    page: typeof search.page === 'string' && /^\d+$/.test(search.page) ? Number(search.page) : 1,
-  }),
+  component: () => null,
 })
-const libraryPlayer = createRoute({
+const libraryVideo = createRoute({
   getParentRoute: () => libraryRoot,
   path: '/library/video/$id',
-  component: PlayerPage,
+  component: () => null,
+})
+// /play is a child of the video route so that /library/video/:id/play keeps the
+// parent match in the tree — useParams({ from: '/library/video/$id' }) resolves
+// in both the detail and the playing state.
+const libraryPlay = createRoute({
+  getParentRoute: () => libraryVideo,
+  path: 'play',
+  component: () => null,
 })
 const librarySeries = createRoute({
   getParentRoute: () => libraryRoot,
   path: '/series/$id',
-  component: SeriesDetailPage,
+  component: () => null,
+})
+// /video and /play are children of the series route so that
+// /series/:id/video/:videoId (episode detail inside a series) and
+// /series/:id/play/:videoId (playing an episode inside a series) keep the
+// parent match — LibraryLayout parses the pathname into its column stack itself.
+const librarySeriesVideo = createRoute({
+  getParentRoute: () => librarySeries,
+  path: 'video/$videoId',
+  component: () => null,
+})
+const librarySeriesPlay = createRoute({
+  getParentRoute: () => librarySeries,
+  path: 'play/$videoId',
+  component: () => null,
 })
 const libraryNotFound = createRoute({
   getParentRoute: () => libraryRoot,
@@ -78,8 +96,8 @@ const libraryNotFound = createRoute({
 })
 const libraryTree = libraryRoot.addChildren([
   libraryIndex,
-  libraryPlayer,
-  librarySeries,
+  libraryVideo.addChildren([libraryPlay]),
+  librarySeries.addChildren([librarySeriesVideo, librarySeriesPlay]),
   libraryNotFound,
 ])
 export const libraryRouter = createRouter({

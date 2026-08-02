@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { HardDrive, Loader2, Network, Plus, RefreshCw, Trash2, Usb, X } from 'lucide-react'
+import { ChevronsLeft, ChevronsRight, HardDrive, Loader2, Network, Plus, RefreshCw, Trash2, Usb, X } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
   createStorage,
@@ -22,6 +22,10 @@ const typeIcons: Record<StorageType, typeof HardDrive> = {
   network: Network,
 }
 
+// StorageSidebar is collapsible: on wide screens it defaults to a slim icon rail
+// (volumes change rarely, so they need not occupy a large area) and expands to
+// the full management panel on click; the toggle persists per session. The rail
+// itself is a horizontal chip strip on narrow screens.
 export function StorageSidebar({
   storages,
   isLoading,
@@ -32,6 +36,107 @@ export function StorageSidebar({
   isLoading: boolean
   selectedId: string
   onSelect: (id: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <>
+      {/* Narrow: horizontal chip strip */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:hidden">
+        {storages.map((s) => {
+          const Icon = typeIcons[s.type]
+          return (
+            <button
+              key={s.id}
+              onClick={() => onSelect(s.id)}
+              className={`flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                s.id === selectedId
+                  ? 'border-blue-600 bg-blue-50 text-blue-700'
+                  : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50'
+              }`}
+            >
+              <Icon className="size-4 shrink-0" />
+              <span className="max-w-32 truncate">{s.name}</span>
+              <span
+                title={s.available ? `${typeLabels[s.type]} · 在线` : `${typeLabels[s.type]} · 离线`}
+                className={`size-2 shrink-0 rounded-full ${s.available ? 'bg-emerald-500' : 'bg-neutral-300'}`}
+              />
+            </button>
+          )
+        })}
+        {storages.length === 0 && (
+          <p className="shrink-0 text-sm text-neutral-400">暂无存储卷，请先添加</p>
+        )}
+      </div>
+
+      {/* Wide: collapsible rail / panel */}
+      <div className="hidden h-full lg:block">
+        {expanded ? (
+          <StoragePanel
+            storages={storages}
+            isLoading={isLoading}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onCollapse={() => setExpanded(false)}
+          />
+        ) : (
+          <aside className="flex h-full w-14 shrink-0 flex-col items-center rounded-xl border border-neutral-200 bg-white py-2">
+            <button
+              onClick={() => setExpanded(true)}
+              title="展开存储卷列表"
+              className="mb-1 rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+            >
+              <ChevronsRight className="size-4" />
+            </button>
+            {isLoading ? (
+              <div className="flex justify-center py-6 text-neutral-400">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col items-center gap-2 overflow-y-auto">
+                {storages.map((s) => {
+                  const Icon = typeIcons[s.type]
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => onSelect(s.id)}
+                      title={`${s.name} · ${s.available ? '在线' : '离线'}`}
+                      className={`relative rounded-lg p-2 transition-colors ${
+                        s.id === selectedId ? 'bg-blue-50 text-blue-600' : 'text-neutral-500 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <Icon className="size-5" />
+                      <span
+                        className={`absolute right-1 top-1 size-2 rounded-full ${
+                          s.available ? 'bg-emerald-500' : 'bg-neutral-300'
+                        }`}
+                      />
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </aside>
+        )}
+      </div>
+    </>
+  )
+}
+
+// StoragePanel is the expanded management sidebar (wide screens only): grouped
+// volume list with refresh/remove actions and the create-volume form.
+function StoragePanel({
+  storages,
+  isLoading,
+  selectedId,
+  onSelect,
+  onCollapse,
+}: {
+  storages: Storage[]
+  isLoading: boolean
+  selectedId: string
+  onSelect: (id: string) => void
+  onCollapse: () => void
 }) {
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
@@ -80,7 +185,7 @@ export function StorageSidebar({
               key={s.id}
               onClick={() => onSelect(s.id)}
               className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors ${
-                s.id === selectedId ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-700 hover:bg-neutral-100'
+                s.id === selectedId ? 'bg-blue-50 text-blue-700' : 'text-neutral-700 hover:bg-neutral-100'
               }`}
             >
               <Icon className="size-4 shrink-0" />
@@ -119,16 +224,25 @@ export function StorageSidebar({
   }
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col rounded-xl border border-neutral-200 bg-white">
+    <aside className="flex h-full w-60 shrink-0 flex-col rounded-xl border border-neutral-200 bg-white">
       <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2.5">
         <p className="text-sm font-medium text-neutral-900">存储卷</p>
-        <button
-          onClick={() => setAdding((v) => !v)}
-          title="添加存储卷"
-          className="rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
-        >
-          {adding ? <X className="size-4" /> : <Plus className="size-4" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setAdding((v) => !v)}
+            title="添加存储卷"
+            className="rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            {adding ? <X className="size-4" /> : <Plus className="size-4" />}
+          </button>
+          <button
+            onClick={onCollapse}
+            title="收起"
+            className="rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            <ChevronsLeft className="size-4" />
+          </button>
+        </div>
       </div>
       <div className="flex-1 space-y-4 overflow-y-auto p-2">
         {adding && (
@@ -143,19 +257,19 @@ export function StorageSidebar({
                 device_id: form.type === 'external' ? form.device_id : undefined,
               })
             }}
-            className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2 text-sm"
+            className="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 text-sm"
           >
             <input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="名称（如：电影）"
               required
-              className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 outline-none focus:border-indigo-400"
+              className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 outline-none focus:border-blue-600"
             />
             <select
               value={form.type}
               onChange={(e) => setForm({ ...form, type: e.target.value as StorageType })}
-              className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 outline-none focus:border-indigo-400"
+              className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 outline-none focus:border-blue-600"
             >
               <option value="internal">内置</option>
               <option value="external">外接</option>
@@ -166,7 +280,7 @@ export function StorageSidebar({
               onChange={(e) => setForm({ ...form, root_path: e.target.value })}
               placeholder="根路径，如 D:\Videos"
               required
-              className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 outline-none focus:border-indigo-400"
+              className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 outline-none focus:border-blue-600"
             />
             {form.type === 'external' && (
               <input
@@ -174,14 +288,14 @@ export function StorageSidebar({
                 onChange={(e) => setForm({ ...form, device_id: e.target.value })}
                 placeholder="卷序列号（外接必填）"
                 required
-                className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 outline-none focus:border-indigo-400"
+                className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 outline-none focus:border-blue-600"
               />
             )}
             {formError && <p className="text-xs text-red-500">{formError}</p>}
             <button
               type="submit"
               disabled={createMut.isPending}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-indigo-600 px-2 py-1.5 font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-blue-600 px-2 py-1.5 font-medium text-white hover:bg-blue-700 disabled:opacity-60"
             >
               {createMut.isPending && <Loader2 className="size-3.5 animate-spin" />}
               添加

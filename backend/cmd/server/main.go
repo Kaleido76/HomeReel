@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/files"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/netutil"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/scrape"
 	"homereel/backend/internal/search"
@@ -160,15 +162,27 @@ func run() error {
 		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler: api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
 			videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
-			scrapeSvc, search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir),
+			scrapeSvc, search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
+			config.ResolveStaticDir(cfg.Server.StaticDir)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	if staticDir := config.ResolveStaticDir(cfg.Server.StaticDir); staticDir != "" {
+		slog.Info("serving frontend", "static_dir", staticDir)
+	}
+
+	// Bind explicitly so a port conflict fails startup immediately, and only
+	// then announce the reachable URLs (config host is usually 0.0.0.0, so the
+	// LAN IPs are resolved here instead of forcing the operator to look them up).
+	ln, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", server.Addr, err)
+	}
+	slog.Info("HomeReel server listening", "addr", server.Addr, "urls", netutil.URLs(cfg.Server.Host, cfg.Server.Port))
 
 	go func() {
-		slog.Info("HomeReel server listening", "addr", server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("listen", "err", err)
+		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("serve", "err", err)
 			stop()
 		}
 	}()

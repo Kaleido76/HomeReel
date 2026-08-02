@@ -8,6 +8,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// StaticDirCandidates are probed in order when static_dir is not configured:
+// the deploy layout (static/ next to the exe) and the repo dev layout
+// (frontend/dist when running from backend/).
+var StaticDirCandidates = []string{"static", filepath.Join("..", "frontend", "dist")}
+
 type Config struct {
 	Server ServerConfig `yaml:"server"`
 	Auth   AuthConfig   `yaml:"auth"`
@@ -16,9 +21,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host    string `yaml:"host"`
-	Port    int    `yaml:"port"`
-	DataDir string `yaml:"data_dir"`
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port"`
+	DataDir   string `yaml:"data_dir"`
+	StaticDir string `yaml:"static_dir"`
 }
 
 type AuthConfig struct {
@@ -66,6 +72,21 @@ func Default() Config {
 			Language: "zh-CN",
 		},
 	}
+}
+
+// ResolveStaticDir returns the directory that hosts the built frontend (SPA).
+// An explicit static_dir wins; otherwise candidates are auto-detected (see
+// StaticDirCandidates). Empty means the backend serves the API only.
+func ResolveStaticDir(cfg string) string {
+	if cfg != "" {
+		return cfg
+	}
+	for _, cand := range StaticDirCandidates {
+		if info, err := os.Stat(cand); err == nil && info.IsDir() {
+			return cand
+		}
+	}
+	return ""
 }
 
 // Load reads the YAML config at path. When the file does not exist it writes a

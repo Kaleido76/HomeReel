@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"homereel/backend/internal/auth"
@@ -40,13 +43,17 @@ type Server struct {
 	dataDir     string
 }
 
-// New builds the root handler for all /api routes.
+// New builds the root handler for all /api routes. When staticDir is
+// non-empty it also hosts the built frontend there (single-service layout):
+// GET requests that match no /api route are served from disk, with
+// extension-less paths falling back to index.html so SPA deep links survive a
+// refresh.
 func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Service,
 	jobsSvc *jobs.Service, scannerSvc *scanner.Service, videosRepo domain.VideoRepo,
 	showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
 	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
 	scrapeSvc *scrape.Service, searchProvider search.Provider, bus *events.Bus,
-	dataDir string) http.Handler {
+	dataDir string, staticDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, storages: storageSvc, files: filesSvc,
 		jobs: jobsSvc, scanner: scannerSvc,
@@ -104,7 +111,32 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("GET /api/stream/{id}/hls/master.m3u8", s.requireAuth(http.HandlerFunc(s.handleStreamMaster)))
 	mux.Handle("GET /api/stream/{id}/hls/{segment}", s.requireAuth(http.HandlerFunc(s.handleStreamSegment)))
 	mux.Handle("GET /api/stream/{id}/subtitle", s.requireAuth(http.HandlerFunc(s.handleStreamSubtitle)))
+	if staticDir != "" {
+		mux.Handle("GET /", staticHandler(staticDir))
+	}
 	return s.withMiddleware(mux)
+}
+
+// staticHandler serves the built frontend. It only sees GET requests that
+// matched no /api route, so unknown API paths must stay JSON.
+func staticHandler(staticDir string) http.Handler {
+	index := filepath.Join(staticDir, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+			writeError(w, http.StatusNotFound, "not_found", "接口不存在")
+			return
+		}
+		full := filepath.Join(staticDir, filepath.FromSlash(path.Clean("/"+r.URL.Path)))
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, full)
+			return
+		}
+		if filepath.Ext(r.URL.Path) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, index)
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

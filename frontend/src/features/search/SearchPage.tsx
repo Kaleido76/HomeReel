@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import { Loader2, Search } from 'lucide-react'
@@ -6,7 +6,7 @@ import type { Storage } from '../../api/storages'
 import { fetchStorages } from '../../api/storages'
 import { searchVideos } from '../../api/videos'
 import { VideoCard } from '../library/VideoCard'
-import { useMemo } from 'react'
+import { MediaGrid } from '../library/MediaGrid'
 
 // The search query lives in the URL (?q=) so the submitted term and its results
 // survive refresh and in-tab back/forward.
@@ -56,7 +56,7 @@ export function SearchPage() {
         <button
           type="submit"
           disabled={!input.trim()}
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-40"
+          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
         >
           搜索
         </button>
@@ -81,11 +81,11 @@ export function SearchPage() {
               没有找到与「{submitted}」匹配的视频
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+            <MediaGrid>
               {results.data?.videos.map((v) => (
                 <VideoCard key={v.id} video={v} storage={storageById.get(v.storage_id)} />
               ))}
-            </div>
+            </MediaGrid>
           )}
         </>
       )}

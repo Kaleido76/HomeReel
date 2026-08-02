@@ -23,11 +23,8 @@ import {
   fsMkdir,
   fsMove,
   fsRename,
-  uploadChunk,
 } from '../../api/storages'
-
-const CHUNK_SIZE = 8 * 1024 * 1024
-const CHUNK_RETRIES = 3
+import { uploadChunked } from './upload'
 
 const btnCls =
   'flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50'
@@ -112,13 +109,7 @@ export function FileList({
       for (const file of targets) {
         setUploadName(file.name)
         setUploadProgress(0)
-        const uploadId = newUploadId()
-        const total = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
-        for (let i = 0; i < total; i++) {
-          const blob = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-          await uploadChunkWithRetry(storageId, path, uploadId, file.name, i, total, blob)
-          setUploadProgress((i + 1) / total)
-        }
+        await uploadChunked(storageId, path, file, (ratio) => setUploadProgress(ratio))
       }
       invalidate()
     } catch (err) {
@@ -171,7 +162,7 @@ export function FileList({
               disabled={busy || uploading}
               className={btnCls}
             >
-              <Upload className="size-4" /> 上传
+              <Upload className="size-4" /> <span className="hidden sm:inline">上传</span>
             </button>
             <button
               onClick={() => {
@@ -181,7 +172,7 @@ export function FileList({
               disabled={busy}
               className={btnCls}
             >
-              <FolderPlus className="size-4" /> 新建文件夹
+              <FolderPlus className="size-4" /> <span className="hidden sm:inline">新建文件夹</span>
             </button>
           </>
         )}
@@ -195,7 +186,7 @@ export function FileList({
               disabled={busy}
               className={btnCls}
             >
-              <Folder className="size-4" /> 移动到
+              <Folder className="size-4" /> <span className="hidden sm:inline">移动到</span>
             </button>
             <button
               onClick={() => {
@@ -206,7 +197,7 @@ export function FileList({
               disabled={busy}
               className="flex items-center gap-1.5 rounded-lg border border-red-200 px-2.5 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
-              <Trash2 className="size-4" /> 删除
+              <Trash2 className="size-4" /> <span className="hidden sm:inline">删除</span>
             </button>
           </>
         )}
@@ -232,7 +223,7 @@ export function FileList({
             onChange={(e) => setDirName(e.target.value)}
             placeholder="文件夹名称"
             autoFocus
-            className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-400"
+            className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-600"
           />
           <button type="submit" disabled={busy || !dirName.trim()} className={btnCls}>
             <Check className="size-4" /> 创建
@@ -263,7 +254,7 @@ export function FileList({
             onChange={(e) => setMoveDest(e.target.value)}
             placeholder="目标目录（相对存储卷根，需已存在）"
             autoFocus
-            className="flex-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-400"
+            className="flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-600"
           />
           <button type="submit" disabled={busy} className={btnCls}>
             移动
@@ -275,12 +266,12 @@ export function FileList({
       )}
 
       {uploading && (
-        <div className="flex items-center gap-3 border-b border-neutral-100 bg-indigo-50/40 px-3 py-2 text-sm">
-          <Loader2 className="size-4 animate-spin text-indigo-500" />
+        <div className="flex items-center gap-3 border-b border-neutral-100 bg-neutral-50 px-3 py-2 text-sm">
+          <Loader2 className="size-4 animate-spin text-blue-600" />
           <span className="truncate text-neutral-700">{uploadName}</span>
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-neutral-200">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-sm bg-neutral-200">
             <div
-              className="h-full rounded-full bg-indigo-500 transition-all"
+              className="h-full rounded-sm bg-blue-600 transition-all"
               style={{ width: `${Math.round(uploadProgress * 100)}%` }}
             />
           </div>
@@ -296,8 +287,8 @@ export function FileList({
             <tr className="border-b border-neutral-100">
               {!readonly && <th className="w-8 px-2 py-2" />}
               <th className="px-4 py-2 font-medium">名称</th>
-              <th className="w-28 px-4 py-2 font-medium">大小</th>
-              <th className="w-44 px-4 py-2 font-medium">修改时间</th>
+              <th className="hidden w-28 px-4 py-2 font-medium md:table-cell">大小</th>
+              <th className="hidden w-44 px-4 py-2 font-medium lg:table-cell">修改时间</th>
               <th className="w-28 px-4 py-2 font-medium" />
             </tr>
           </thead>
@@ -324,7 +315,7 @@ export function FileList({
                       checked={selected.has(e.path)}
                       onChange={() => toggle(e.path)}
                       onClick={(ev) => ev.stopPropagation()}
-                      className="accent-indigo-600"
+                      className="accent-blue-600"
                     />
                   </td>
                 )}
@@ -341,7 +332,7 @@ export function FileList({
                         value={renameValue}
                         onChange={(ev) => setRenameValue(ev.target.value)}
                         autoFocus
-                        className="rounded-md border border-neutral-200 px-1.5 py-0.5 text-sm outline-none focus:border-indigo-400"
+                        className="rounded-md border border-neutral-300 px-1.5 py-0.5 text-sm outline-none focus:border-blue-600"
                       />
                       <button type="submit" disabled={busy || !renameValue.trim()} title="确认">
                         <Check className="size-4 text-emerald-600" />
@@ -353,9 +344,9 @@ export function FileList({
                   ) : (
                     <span className="flex items-center gap-2 text-neutral-800">
                       {e.is_dir ? (
-                        <Folder className="size-4 shrink-0 text-amber-500" />
+                        <Folder className="size-4 shrink-0 text-neutral-400" />
                       ) : e.is_video ? (
-                        <FileVideo className="size-4 shrink-0 text-indigo-500" />
+                        <FileVideo className="size-4 shrink-0 text-blue-600" />
                       ) : (
                         <File className="size-4 shrink-0 text-neutral-400" />
                       )}
@@ -363,8 +354,12 @@ export function FileList({
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-2 text-neutral-500">{e.is_dir ? '—' : formatBytes(e.size)}</td>
-                <td className="px-4 py-2 text-neutral-500">{e.mtime ? formatTime(e.mtime) : ''}</td>
+                <td className="hidden px-4 py-2 text-neutral-500 md:table-cell">
+                  {e.is_dir ? '—' : formatBytes(e.size)}
+                </td>
+                <td className="hidden px-4 py-2 text-neutral-500 lg:table-cell">
+                  {e.mtime ? formatTime(e.mtime) : ''}
+                </td>
                 <td className="px-2 py-2 text-right">
                   {renaming !== e.path && (
                     <span className="flex items-center justify-end gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
@@ -438,38 +433,4 @@ function formatBytes(n: number): string {
 
 function formatTime(sec: number): string {
   return new Date(sec * 1000).toLocaleString()
-}
-
-function newUploadId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
-}
-
-// uploadChunkWithRetry retries a chunk on transient connection failures.
-// Chunks are idempotent on the server (parts are overwritten), so retrying is
-// safe; the backend tolerates a retried final chunk after a lost response.
-async function uploadChunkWithRetry(
-  storageId: string,
-  path: string,
-  uploadId: string,
-  filename: string,
-  index: number,
-  total: number,
-  blob: Blob,
-): Promise<void> {
-  let lastErr: unknown
-  for (let attempt = 0; attempt < CHUNK_RETRIES; attempt++) {
-    try {
-      await uploadChunk(storageId, path, uploadId, filename, index, total, blob)
-      return
-    } catch (err) {
-      lastErr = err
-      if (attempt < CHUNK_RETRIES - 1) {
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
-      }
-    }
-  }
-  throw lastErr
 }

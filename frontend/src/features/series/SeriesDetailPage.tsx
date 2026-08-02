@@ -1,12 +1,15 @@
 import { useState } from 'react'
-import { Link, useParams } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Calendar, Layers, Loader2, Play, Plus, Star, X } from 'lucide-react'
+import { Calendar, Layers, Loader2, Play, Plus, Star, X } from 'lucide-react'
 import { addSeriesLink, fetchSeries, fetchSeriesDetail, removeSeriesLink, seriesPosterUrl } from '../../api/series'
 import { formatDuration } from '../../lib/format'
 
-export function SeriesDetailPage() {
-  const { id } = useParams({ from: '/series/$id' })
+// SeriesDetailPage renders the series detail for the middle column of the
+// wide-screen library. It receives the id as a prop (the route is matched by
+// LibraryLayout, not rendered through <Outlet/>), so useParams is unnecessary.
+export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
+  const id = seriesId
   const queryClient = useQueryClient()
   const detail = useQuery({ queryKey: ['series', id], queryFn: () => fetchSeriesDetail(id) })
   const allSeries = useQuery({ queryKey: ['series'], queryFn: fetchSeries })
@@ -36,13 +39,8 @@ export function SeriesDetailPage() {
 
   if (detail.isError || !detail.data) {
     return (
-      <div className="space-y-4">
-        <Link to="/library" className="flex items-center gap-1.5 text-sm text-neutral-500 hover:text-neutral-900">
-          <ArrowLeft className="size-4" /> 返回视频库
-        </Link>
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-8 text-center text-sm text-red-600">
-          {detail.error?.message}
-        </div>
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-8 text-center text-sm text-red-600">
+        {detail.error?.message}
       </div>
     )
   }
@@ -58,11 +56,7 @@ export function SeriesDetailPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <Link to="/library" className="flex items-center gap-1.5 text-sm text-neutral-500 hover:text-neutral-900">
-        <ArrowLeft className="size-4" /> 返回视频库
-      </Link>
-
+    <div className="space-y-4 p-4 sm:p-5">
       <div className="relative overflow-hidden rounded-xl border border-neutral-200">
         <div className="relative flex gap-5 bg-white p-5">
           <img
@@ -72,7 +66,7 @@ export function SeriesDetailPage() {
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+              <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
                 {series.kind === 'movie' ? '电影部' : '剧集季'}
               </span>
               <span className="flex items-center gap-1 text-xs text-neutral-400">
@@ -83,7 +77,7 @@ export function SeriesDetailPage() {
             <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-500">
               {series.rating ? (
                 <span className="flex items-center gap-1">
-                  <Star className="size-4 fill-amber-400 text-amber-400" /> {series.rating.toFixed(1)}
+                  <Star className="size-4 fill-neutral-300 text-neutral-400" /> {series.rating.toFixed(1)}
                 </span>
               ) : null}
               {series.year ? (
@@ -109,16 +103,16 @@ export function SeriesDetailPage() {
           {rows.map(({ ep, member }) =>
             member ? (
               <div key={member.video_id} className="flex items-center gap-3 py-2.5">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-sm font-medium text-neutral-500">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-500">
                   {ep}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
-                  <p className="mt-0.5 text-xs text-neutral-400">{member.relative_path}</p>
+                  <p className="mt-0.5 truncate font-mono text-xs text-neutral-400">{member.relative_path}</p>
                   {member.duration > 0 && member.progress > 0 && member.progress < member.duration - 20 && (
-                    <div className="mt-1.5 h-1 w-full max-w-xs overflow-hidden rounded-full bg-neutral-100">
+                    <div className="mt-1.5 h-1 w-full max-w-xs overflow-hidden rounded-sm bg-neutral-100">
                       <div
-                        className="h-full rounded-full bg-indigo-500"
+                        className="h-full rounded-sm bg-blue-600"
                         style={{ width: `${Math.min(100, (member.progress / member.duration) * 100)}%` }}
                       />
                     </div>
@@ -127,13 +121,22 @@ export function SeriesDetailPage() {
                 <span className="shrink-0 text-xs text-neutral-400">
                   {member.duration > 0 ? formatDuration(member.duration) : ''}
                 </span>
-                <Link
-                  to="/library/video/$id"
-                  params={{ id: member.video_id }}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"
-                >
-                  <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
-                </Link>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link
+                    to="/series/$id/play/$videoId"
+                    params={{ id: seriesId, videoId: member.video_id }}
+                    className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+                  >
+                    <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
+                  </Link>
+                  <Link
+                    to="/series/$id/video/$videoId"
+                    params={{ id: seriesId, videoId: member.video_id }}
+                    className="flex shrink-0 items-center gap-1.5 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
+                  >
+                    详情
+                  </Link>
+                </div>
               </div>
             ) : (
               <div key={`gap-${ep}`} className="flex items-center gap-3 py-2.5 opacity-50">
@@ -155,14 +158,14 @@ export function SeriesDetailPage() {
         {links.length === 0 && <p className="mb-3 text-sm text-neutral-400">暂无关联。同一标题下的季/部会自动关联，也可手动添加。</p>}
         <div className="flex flex-wrap gap-2">
           {links.map((l) => (
-            <div key={l.linked_id} className="flex items-center gap-1.5 rounded-full border border-neutral-200 py-1 pl-3 pr-1.5">
-              <Link to="/series/$id" params={{ id: l.linked_id }} className="text-sm font-medium text-neutral-700 hover:text-indigo-600">
+            <div key={l.linked_id} className="flex items-center gap-1.5 rounded-md border border-neutral-200 py-1 pl-3 pr-1.5">
+              <Link to="/series/$id" params={{ id: l.linked_id }} className="text-sm font-medium text-neutral-700 hover:text-blue-600">
                 {l.linked_name}
               </Link>
               <button
                 onClick={() => removeLink.mutate(l.linked_id)}
                 disabled={removeLink.isPending}
-                className="rounded-full p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                className="rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                 title="移除关联"
               >
                 <X className="size-3.5" />
@@ -175,7 +178,7 @@ export function SeriesDetailPage() {
             <select
               value={pick}
               onChange={(e) => setPick(e.target.value)}
-              className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-sm text-neutral-700 outline-none focus:border-indigo-400"
+              className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm text-neutral-700 outline-none focus:border-blue-600"
             >
               <option value="">添加关联…</option>
               {candidates.map((c) => (
@@ -187,7 +190,7 @@ export function SeriesDetailPage() {
             <button
               onClick={() => addLink.mutate(pick)}
               disabled={!pick || addLink.isPending}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
             >
               <Plus className="size-4" /> 关联
             </button>

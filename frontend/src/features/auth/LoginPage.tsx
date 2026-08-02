@@ -23,11 +23,11 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-950 px-4">
-      <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-900 p-6 shadow-xl">
+    <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
+      <div className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6">
         <div className="mb-6 text-center">
-          <h1 className="text-xl font-semibold text-neutral-50">HomeReel</h1>
-          <p className="mt-1 text-sm text-neutral-400">请输入访问口令</p>
+          <h1 className="text-xl font-semibold text-neutral-900">HomeReel</h1>
+          <p className="mt-1 text-sm text-neutral-500">请输入访问口令</p>
         </div>
         <form onSubmit={onSubmit} className="space-y-4">
           <input
@@ -37,13 +37,13 @@ export function LoginPage() {
             placeholder="访问口令"
             autoFocus
             required
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-500"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-neutral-900 placeholder-neutral-400 outline-none focus:border-blue-600"
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-red-600">{error}</p>}
           <button
             type="submit"
             disabled={submitting}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting && <Loader2 className="size-4 animate-spin" />}
             登录
