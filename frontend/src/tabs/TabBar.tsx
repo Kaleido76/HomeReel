@@ -29,7 +29,7 @@ export function TabBar() {
       role="tablist"
       aria-label="主导航"
       onKeyDown={onKeyDown}
-      className="flex min-w-0 items-stretch gap-1 overflow-x-auto"
+      className="flex min-w-0 items-center gap-1 overflow-x-auto"
     >
       {TAB_DEFS.map((def) => {
         const active = def.id === activeTab
@@ -42,18 +42,14 @@ export function TabBar() {
             aria-controls={`panel-${def.id}`}
             tabIndex={active ? 0 : -1}
             onClick={() => activate(def.id)}
-            className={`relative flex h-full shrink-0 items-center gap-1.5 px-3 text-sm transition-colors ${
-              active ? 'text-neutral-900' : 'text-neutral-500 hover:text-neutral-800'
+            className={`flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              active
+                ? 'bg-neutral-900 text-white'
+                : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
             }`}
           >
             <def.icon className="size-4" />
-            {def.label}
-            <span
-              aria-hidden="true"
-              className={`absolute inset-x-2 bottom-0 h-0.5 transition-colors ${
-                active ? 'bg-blue-600' : 'bg-transparent'
-              }`}
-            />
+            <span className="hidden sm:inline">{def.label}</span>
           </button>
         )
       })}

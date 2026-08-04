@@ -91,15 +91,6 @@ export interface VideoPatch {
   tags?: string[]
 }
 
-export interface ScrapeCandidate {
-  id: number
-  title: string
-  year: string
-  overview: string
-  poster: string
-  media_type: string
-}
-
 export interface TagCount {
   tag: string
   count: number
@@ -139,14 +130,6 @@ export function deleteVideo(id: string, deleteFile = false): Promise<{ deleted: 
 
 export function refreshVideo(id: string): Promise<{ queued: boolean }> {
   return api<{ queued: boolean }>(`/api/videos/${id}/refresh`, { method: 'POST' })
-}
-
-// scrapeVideo searches TMDB (no tmdbId) or applies a chosen candidate.
-export function scrapeVideo(id: string, tmdbId?: number): Promise<{ candidates?: ScrapeCandidate[]; video?: Video }> {
-  return api<{ candidates?: ScrapeCandidate[]; video?: Video }>(`/api/videos/${id}/scrape`, {
-    method: 'POST',
-    body: JSON.stringify({ tmdb_id: tmdbId ?? 0 }),
-  })
 }
 
 export function uploadVideoCover(id: string, file: File): Promise<{ cover_path: string }> {

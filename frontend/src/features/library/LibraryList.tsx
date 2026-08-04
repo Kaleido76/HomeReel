@@ -97,7 +97,7 @@ export function LibraryList({
         </div>
       ) : (
         <>
-          <ul className="min-h-0 flex-1 overflow-y-auto">
+          <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-3 py-3">
           {showSeries &&
             seriesItems.map((s) => {
               const active = selection?.type === 'series' && selection.id === s.id
@@ -105,11 +105,13 @@ export function LibraryList({
                 <li key={s.id}>
                   <button
                     onClick={() => onSelect({ type: 'series', id: s.id })}
-                    className={`flex w-full items-center gap-4 border-b border-neutral-100 px-4 py-3 text-left transition-colors ${
-                      active ? 'bg-blue-50' : 'hover:bg-neutral-50'
+                    className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200 hover:z-10 ${
+                      active
+                        ? 'border-blue-500 bg-blue-50 shadow-sm ring-1 ring-blue-500/30'
+                        : 'border-neutral-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-blue-400/60 hover:bg-blue-50/40 hover:shadow-md'
                     }`}
                   >
-                    <div className="h-20 w-36 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+                    <div className="relative h-20 w-36 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
                       {s.member_count > 0 ? (
                         <img src={seriesPosterUrl(s.id)} alt={s.name} loading="lazy" className="h-full w-full object-cover" />
                       ) : (
@@ -117,13 +119,18 @@ export function LibraryList({
                           <Layers className="size-6" />
                         </div>
                       )}
+                      {s.total_duration > 0 && (
+                        <span className="absolute bottom-1 right-1 rounded bg-neutral-900/80 px-1 py-0.5 text-[10px] text-white">
+                          {formatDuration(s.total_duration)}
+                        </span>
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="line-clamp-1 text-sm font-medium text-neutral-800" title={s.name}>
                         {s.name}
                       </p>
                       <p className="mt-1 truncate text-xs text-neutral-400">
-                        {s.kind === 'movie' ? '电影部' : '剧集季'} · {s.member_count} 个成员
+                        {s.kind === 'movie' ? '电影部' : '系列剧集'} · {s.member_count} 个成员
                         {s.link_count > 0 ? ` · ${s.link_count} 个关联` : ''}
                       </p>
                     </div>
@@ -146,8 +153,10 @@ export function LibraryList({
                 <li key={v.id}>
                   <button
                     onClick={() => onSelect({ type: 'video', id: v.id })}
-                    className={`flex w-full items-center gap-4 border-b border-neutral-100 px-4 py-3 text-left transition-colors ${
-                      active ? 'bg-blue-50' : 'hover:bg-neutral-50'
+                    className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200 hover:z-10 ${
+                      active
+                        ? 'border-blue-500 bg-blue-50 shadow-sm ring-1 ring-blue-500/30'
+                        : 'border-neutral-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-blue-400/60 hover:bg-blue-50/40 hover:shadow-md'
                     }`}
                   >
                     <div className="relative h-20 w-36 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">

@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Calendar, Check, ImageUp, Pencil, Star, Wand2, X } from 'lucide-react'
-import type { ScrapeCandidate, Video } from '../../api/videos'
-import { scrapeVideo, updateVideo, uploadVideoCover } from '../../api/videos'
+import { Calendar, Check, ImageUp, Pencil, Star, X } from 'lucide-react'
+import type { Video } from '../../api/videos'
+import { updateVideo, uploadVideoCover } from '../../api/videos'
 import { fetchSeries } from '../../api/series'
 
 export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTags: string[] }) {
   const queryClient = useQueryClient()
   const [tags, setTags] = useState(initialTags)
   const [tagInput, setTagInput] = useState('')
-  const [candidates, setCandidates] = useState<ScrapeCandidate[] | null>(null)
-  const [scrapeError, setScrapeError] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleInput, setTitleInput] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
@@ -48,23 +46,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
     if (!t || t === title) return
     save.mutate({ title: t })
   }
-
-  const scrape = useMutation({
-    mutationFn: (tmdbId?: number) => scrapeVideo(video.id, tmdbId),
-    onSuccess: (res) => {
-      if (res.candidates) {
-        setCandidates(res.candidates)
-        setScrapeError('')
-      } else {
-        setCandidates(null)
-        invalidate()
-      }
-    },
-    onError: (err: Error) => {
-      setCandidates(null)
-      setScrapeError(err.message)
-    },
-  })
 
   const uploadCover = useMutation({
     mutationFn: (file: File) => uploadVideoCover(video.id, file),
@@ -120,11 +101,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
               </button>
             </div>
           )}
-          {video.metadata_source !== 'manual' && (
-            <span className="mt-1 inline-block rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500">
-              元数据来源：{video.metadata_source}
-            </span>
-          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <input
@@ -145,13 +121,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
             title="上传封面"
           >
             <ImageUp className="size-4" /> 封面
-          </button>
-          <button
-            onClick={() => scrape.mutate(undefined)}
-            disabled={scrape.isPending}
-            className="flex items-center gap-1.5 rounded border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100 disabled:opacity-40"
-          >
-            <Wand2 className="size-4" /> {scrape.isPending ? '搜索中…' : '刮削'}
           </button>
         </div>
       </div>
@@ -177,31 +146,7 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
       {video.overview ? (
         <p className="text-sm leading-relaxed text-neutral-600">{video.overview}</p>
       ) : (
-        <p className="text-sm text-neutral-400">
-          暂无简介。点击「刮削」可从 TMDB 获取，或在文件管理里放置同名 .nfo 文件。
-        </p>
-      )}
-
-      {scrapeError && <p className="text-sm text-red-600">{scrapeError}</p>}
-
-      {candidates && (
-        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
-          <p className="mb-2 text-sm font-medium text-neutral-700">选择匹配条目</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {candidates.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => scrape.mutate(c.id)}
-                disabled={scrape.isPending}
-                className="rounded-md border border-neutral-200 bg-white p-2 text-left text-sm hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40"
-              >
-                <span className="font-medium text-neutral-800">{c.title}</span>
-                {c.year ? <span className="ml-1 text-neutral-400">({c.year})</span> : null}
-                {c.overview ? <span className="mt-0.5 block line-clamp-1 text-xs text-neutral-500">{c.overview}</span> : null}
-              </button>
-            ))}
-          </div>
-        </div>
+        <p className="text-sm text-neutral-400">暂无简介。</p>
       )}
 
       <div className="flex flex-wrap items-center gap-1.5">

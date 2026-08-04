@@ -21,6 +21,7 @@ type Series struct {
 	MetadataSource string  `json:"metadata_source"`
 	MemberCount    int     `json:"member_count"`
 	LinkCount      int     `json:"link_count"`
+	TotalDuration  float64 `json:"total_duration"` // 成员时长合计（秒），供封面时长徽标
 }
 
 // SeriesMember is one video inside a series, with playback progress.

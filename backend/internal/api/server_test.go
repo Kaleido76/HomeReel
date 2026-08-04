@@ -19,7 +19,6 @@ import (
 	"homereel/backend/internal/files"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/scanner"
-	"homereel/backend/internal/scrape"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/storage"
 	"homereel/backend/internal/store"
@@ -79,11 +78,10 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	)
 	streamingSvc := streaming.New(videosRepo, t.TempDir(), "ffmpeg", "auto", "fast")
 	dataDir := t.TempDir()
-	scrapeSvc := scrape.New(videosRepo, showsRepo, dataDir, scrape.TMDBConfig{})
 	bus := events.New()
 	handler := New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
 		videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
-		scrapeSvc, search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)
+		search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)
 	return handler, database
 }
 

@@ -236,20 +236,6 @@ func TestSearchAndVideoPatch(t *testing.T) {
 	}
 }
 
-func TestScrapeRequiresTMDB(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
-	seedLibrary(t, database)
-	cookie := loginCookie(t, ts, "secret")
-
-	resp, body := doJSON(t, "POST", ts.URL+"/api/videos/m1/scrape", `{}`, cookie)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("scrape without key = %d, want 400 (body %s)", resp.StatusCode, body)
-	}
-	if !strings.Contains(body, "TMDB") {
-		t.Errorf("scrape error should mention TMDB: %s", body)
-	}
-}
-
 func TestVideoDeleteCleansShow(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	seedLibrary(t, database)

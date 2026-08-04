@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,11 +12,10 @@ import (
 
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
-	"homereel/backend/internal/scrape"
 	"homereel/backend/internal/search"
 )
 
-// ---- Videos: PATCH / DELETE / refresh / scrape / cover ----
+// ---- Videos: PATCH / DELETE / refresh / cover ----
 
 func (s *Server) handleVideoPatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -129,47 +127,6 @@ func (s *Server) handleVideoRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = v
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
-}
-
-func (s *Server) handleVideoScrape(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if _, ok := s.videoOrError(w, r, id); !ok {
-		return
-	}
-	if s.scrape == nil {
-		writeError(w, http.StatusBadRequest, "no_provider", "未配置在线刮削（需 TMDB API Key）")
-		return
-	}
-	var body struct {
-		TMDBID int `json:"tmdb_id"`
-	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-	}
-	if body.TMDBID == 0 {
-		v, err := s.videos.Get(r.Context(), id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-			return
-		}
-		cands, err := s.scrape.SearchMovie(r.Context(), v.Title, v.Year)
-		if err != nil {
-			s.scrapeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"candidates": cands})
-		return
-	}
-	if err := s.scrape.ApplyMovieDetail(r.Context(), id, body.TMDBID); err != nil {
-		s.scrapeError(w, err)
-		return
-	}
-	v, err := s.videos.Get(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"video": v})
 }
 
 func (s *Server) handleVideoCover(w http.ResponseWriter, r *http.Request) {
@@ -301,47 +258,6 @@ func (s *Server) handleShowPatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"show": updated})
 }
 
-func (s *Server) handleShowScrape(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if _, ok := s.showOrError(w, r, id); !ok {
-		return
-	}
-	if s.scrape == nil {
-		writeError(w, http.StatusBadRequest, "no_provider", "未配置在线刮削（需 TMDB API Key）")
-		return
-	}
-	var body struct {
-		TMDBID int `json:"tmdb_id"`
-	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-	}
-	if body.TMDBID == 0 {
-		show, err := s.shows.Get(r.Context(), id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-			return
-		}
-		cands, err := s.scrape.SearchTV(r.Context(), show.Name)
-		if err != nil {
-			s.scrapeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"candidates": cands})
-		return
-	}
-	if err := s.scrape.ApplyTVDetail(r.Context(), id, body.TMDBID); err != nil {
-		s.scrapeError(w, err)
-		return
-	}
-	show, err := s.shows.Get(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"show": show})
-}
-
 func (s *Server) handleShowSeasonsEpisodes(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, ok := s.showOrError(w, r, id); !ok {
@@ -446,15 +362,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers ----
-
-func (s *Server) scrapeError(w http.ResponseWriter, err error) {
-	if scrape.IsNoTMDB(err) {
-		writeError(w, http.StatusBadRequest, "no_provider", "未配置在线刮削（需 TMDB API Key）")
-		return
-	}
-	slog.Error("scrape", "err", err)
-	writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-}
 
 // serveDataFile serves a file relative to data_dir, guarding against path
 // traversal. It returns true when the file was served.

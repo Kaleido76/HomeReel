@@ -22,7 +22,6 @@ import (
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/netutil"
 	"homereel/backend/internal/scanner"
-	"homereel/backend/internal/scrape"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/storage"
 	"homereel/backend/internal/store"
@@ -95,23 +94,6 @@ func run() error {
 		}
 	}()
 
-	// VideoImported → apply sidecar NFO metadata (ADR-016, offline-first).
-	scrapeSvc := scrape.New(videosRepo, showsRepo, cfg.Server.DataDir,
-		scrape.TMDBConfig{APIKey: cfg.Scrape.TMDBAPIKey, Language: cfg.Scrape.Language})
-	go func() {
-		for ev := range bus.Subscribe(events.VideoImported) {
-			if id := ev.Data["video_id"]; id != "" {
-				v, err := videosRepo.Get(context.Background(), id)
-				if err != nil {
-					continue
-				}
-				if err := scrapeSvc.ApplyNFOForVideo(context.Background(), v); err != nil {
-					slog.Warn("apply nfo", "video_id", id, "err", err)
-				}
-			}
-		}
-	}()
-
 	// VideoDeleted → drop stale HLS cache (and cancel an in-flight transcode).
 	go func() {
 		for ev := range bus.Subscribe(events.VideoDeleted) {
@@ -162,7 +144,7 @@ func run() error {
 		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler: api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
 			videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
-			scrapeSvc, search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
+			search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
 			config.ResolveStaticDir(cfg.Server.StaticDir)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,

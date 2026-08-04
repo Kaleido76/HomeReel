@@ -67,7 +67,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                {series.kind === 'movie' ? '电影部' : '剧集季'}
+                {series.kind === 'movie' ? '电影部' : '系列剧集'}
               </span>
               <span className="flex items-center gap-1 text-xs text-neutral-400">
                 <Layers className="size-3.5" /> {series.member_count} 个成员
@@ -94,7 +94,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
       <div className="rounded-xl border border-neutral-200 bg-white p-4">
         <h3 className="mb-3 text-sm font-medium text-neutral-700">
-          {series.kind === 'movie' ? '本部分集' : '本季剧集'}
+          {series.kind === 'movie' ? '本部分集' : '本系列剧集'}
           <span className="ml-2 text-xs font-normal text-neutral-400">
             {members.length} 集{maxEp > members.length ? `（编号到第 ${maxEp} 集，存在缺失）` : ''}
           </span>

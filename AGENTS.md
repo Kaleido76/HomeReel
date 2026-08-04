@@ -56,9 +56,9 @@ PC 上，通过局域网 Web 界面供所有设备（PC / 手机 / 平板 / TV�
   （ADR-007）
 - **多数据源**：`storages` 抽象（type: internal/external/network），外接卷热插拔、盘符重映射、
   离线不删元数据（ADR-011 / ADR-014）
-- **系列组织 + 刮削**：视频库统一为「单集 + 系列」（一季/一部一个系列，`seasons.kind`=tv/movie，
-  成员按位次排序允许缺失）；系列间弱关联 `series_links`；目录/文件名规则识别；元数据离线优先
-  （NFO → 手动 → 可选 TMDB）（ADR-015 / ADR-016）
+- **系列组织**：视频库统一为「单集 + 系列」（一季/一部一个系列，`seasons.kind`=tv/movie，
+  成员按位次排序允许缺失）；系列间弱关联 `series_links`；目录/文件名规则识别（ADR-015）。
+  元数据刮削（ADR-016，TMDB 在线 + NFO 侧边文件）已整体移除（2026-08），仅剩手动编辑。
 - **AI 解耦**：事件总线（`VideoImported` 等），AI/OCR/转写作为 Listener（ADR-010）
 - **搜索隔离**：`SearchProvider` 接口，当前 FTS5，Meilisearch 后续替换（ADR-009）
 - **前端形态**：Explorer 与 Library 是两个共享 API/播放器/元数据的 App（ADR-013）
@@ -191,9 +191,11 @@ frontend/
 - **历史续播**：`history` 表（user=`local`）；前端 10s 节流保存、进入 seek（距片尾 20s 内不续播、播完归零）。
 - **媒体库（单集/系列）**：统一「单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个系列，`kind`=tv/movie）」；成员位次排序允许缺失；`series_links` 弱关联（同 show 相邻季自动关联 + 手动增删）；首页行（继续观看/最近添加）。集合子系统已整体移除（2026-08）。
 - **搜索**：FTS5（`videos_fts` external content + 触发器，bm25 排序），`search_text` 由 store 层维护。
-- **刮削**（ADR-016）：NFO（Kodi 新旧 rating）/ 手动 PATCH / 可选 TMDB；封面落盘 `covers|posters|backdrops`。
-- **前端（多 Router 页签架构）**：顶部 4 个页签（首页/视频库/搜索/文件），每页签一个独立 TanStack Router 实例（`tabs/`），组件树常驻不卸载 = 类浏览器 keep-alive（滚动/筛选/播放器/上传状态切页签不丢）；URL 与活动页签双向同步（`TabManager` + `TabSync`）；页面组件 `React.lazy` 分包懒加载；ARIA tablist 语义 + 方向键切换；深链/刷新按 URL 恢复对应页签视图。库的视图状态（`view/q/sort/page`）与搜索词 `q` 存在 URL 参数中。视频卡片任意页签点击 → 切到视频库页签打开播放器。**播放器切走自动暂停**（`VideoPlayer` 订阅页签 store，非 library 页签即 `remote.pause()`，切回保持暂停由用户手动播放）。
+- **元数据（手动）**：ffprobe 自动填充技术字段（时长/编码/分辨率）；标题/简介/评分/标签等由手动 PATCH 编辑；封面 `POST /api/videos/{id}/cover` 落盘 `covers|posters|backdrops`。**刮削子系统（TMDB 在线 + NFO 侧边文件）已整体移除（2026-08）**。
+- **前端（多 Router 页签架构）**：顶部 4 个页签（首页/视频库/搜索/文件），每页签一个独立 TanStack Router 实例（`tabs/`），组件树常驻不卸载 = 类浏览器 keep-alive（滚动/筛选/播放器/上传状态切页签不丢）；URL 与活动页签双向同步（`TabManager` + `TabSync`）；页面组件 `React.lazy` 分包懒加载；ARIA tablist 语义 + 方向键切换；深链/刷新按 URL 恢复对应页签视图。**header 风格（2026-08 重设计）**：两侧顶格（无 `max-w` 居中约束，`px-3 sm:px-6` 响应式内边距）；页签为独立圆角胶囊按钮（`rounded-md px-3 py-1.5`），激活态 `bg-neutral-900 text-white` 深色胶囊、非激活 `text-neutral-600 hover:bg-neutral-100`，**不使用蓝色下划线**；页签文字标签 `<sm` 断点隐藏仅留图标（`hidden sm:inline`），窄屏页签列表 `overflow-x-auto`。Logo 与「退出登录」保持原样。库的视图状态（`view/q/sort/page`）与搜索词 `q` 存在 URL 参数中。视频卡片任意页签点击 → 切到视频库页签打开播放器。**播放器切走自动暂停**（`VideoPlayer` 订阅页签 store，非 library 页签即 `remote.pause()`，切回保持暂停由用户手动播放）。
 - **响应式 UI（2026-08 重排）**：横跨手机/平板/笔记本/电视(2K/4K)。`index.css` 增加 `3xl(1920px)` 断点；容器宽度自适应（页签宿主 `max-w-[1600px]`、文件页 `max-w-[1920px]`），大屏高密度。**视频库（宽屏 ≥lg）栏位栈布局（2026-09）**：`LibraryLayout` 是 library 页签 root 的唯一编排者——自行解析 `location.pathname` 还原成**栏位栈**（`parseStack`，`LibraryLayout.tsx`），子路由 component 均为空（URL 仅供匹配/深链，不渲染 `<Outlet/>`）。栏位栈：浏览永远是栈底，选择视频/系列 push 详情栏、播放 push 播放栏；每栏占 `50vw`，视口一次只见**栈顶两栏**（位移 `translateX = -(栈深-2)*50vw`，栈深≤2 为 0），更早的栏位被挤到屏左外（keep-alive 仍在 DOM，选中高亮随栈第 2 栏保留）。**URL 即栈**：`/library`=`[浏览]`、`/library/video/:id`=`[浏览][单集详情]`、`/library/video/:id/play`=`[浏览][单集详情][播放]`、`/series/:id`=`[浏览][系列详情]`、`/series/:id/video/:videoId`=`[浏览][系列详情][单集详情]`、`/series/:id/play/:videoId`=`[浏览][系列详情][播放]`。**过滤器是浏览栏的一部分**（`全部/单集/系列` tab + 搜索 + 排序，位于浏览栏顶部，随浏览栏一起被挤出屏幕；窄屏仅浏览视图显示）。系列详情成员行有**播放/续播 + 详情**两按钮：播放直达播放栏（左侧保留系列详情，不再插入单集详情）；详情打开单集详情栏（该栏行为与播放栏一致，把浏览挤出屏外，顶部有「返回系列」条）；从系列内单集详情点播放时**单集详情栏被替换成播放栏**（仅系列剧集用替换逻辑：`/series/:id/video/:v` → `/series/:id/play/:v`）。单集从浏览栏打开的行为不变（`[浏览][单集详情]` → 播放 → `[单集详情][播放]`）。退出播放 = 出栈回父栏（系列上下文回系列详情、单集上下文回单集详情）。**导航目标由栏位栈父栏决定**（`LibraryLayout` 依栈计算 `playHref`/`exitHref`/`goHref` 传入 `VideoDetailPane`/`PlayerPane`，**不依赖视频的 `series_id` 属性**）：单集详情栏在系列内 → 播放跳 `/series/:id/play/:videoId`（详情被替换成播放栏），在浏览栏上 → `/library/video/:id/play`；播放栏退出 → 父栏路径，上下集/接下来播放 → 系列上下文走 `/series/:id/play/:v`、否则 `/library/video/:v/play`。播放栏=`PlayerPane`（**顶部退出播放条** + 播放器 + 简略元信息 + 系列内上下集/自动连播 + **「接下来播放」列表**——当前集后的至多 3 个成员，小缩略图低调展示）。**播放器填满播放栏高度**：`MediaPlayer` 设 `aspect-ratio: auto` + `h-full w-full`（覆盖 Vidstack 默认 16:9），视频 `object-fit: contain` 居中——底部黑边容纳控制条，进度条不再压住字幕（WebVTT 字幕按 overlay 90% 定位在画面内）。`TabHost` 对 library 页签**全宽无 max-w/无 padding**（vw 单位布局，留白会破坏面板感）；文件页仍 `max-w-[1920px]`。**窄屏（<lg）**退化为单栏全页（浏览→详情→播放，`NarrowBack` 返回条），复用同一批组件。网格筛选状态（`view/q/sort/page`）存于 `LibraryLayout` 组件 state（`features/library/types.ts`），仅 `/library` 页写回 URL。**卡片/网格**：`VideoCard` 横版 16:9（row-span-2）、`MediaGrid` dense 混排仅用于首页/搜索；库内列表不再用卡片网格（`LibraryGrid`/`SeriesCard` 已删除）。**文件页**：存储卷改可折叠侧边栏（宽屏默认收成窄图标轨 `w-14`，展开为管理面板；窄屏为顶部横向 chips 条）；宽屏（≥lg）Finder 多列浏览（`ColumnBrowser`，每级目录一列，点文件夹右侧开新列、点列头回退），窄屏回退单列表（`FileList`）；`useMediaQuery`（`lib/useMediaQuery.ts`）选择布局。**播放器/系列详情**：`PlayerPane`/`SeriesDetailPage` 只渲染内容（返回由三栏动画 / 窄屏 `NarrowBack` 承担）。
+
+- **视频库小项（2026-08）**：浏览栏系列封面显示**总时长徽标**（`/api/series` 返回 `total_duration`，成员时长合计）；系列类型文案统一为「**系列剧集**」/「电影部」（非「剧集季」）；浏览栏**悬浮卡片**（每行一张 `border-neutral-200 bg-white rounded-lg shadow-sm` 卡片，行间 `gap-1.5` 留白；hover `-translate-y-0.5` 上浮 + `border-blue-400/60` 描边变蓝 + `bg-blue-50/40` + `shadow-md`，`transition-all duration-200`；选中 `border-blue-500 bg-blue-50 ring-1 ring-blue-500/30`；封面无缩放动画）；过滤器排序下拉在「系列」视图**禁用而非隐藏**（高度一致）。刮削功能已移除。
 
 ### 11.2 关键约定（后续开发必须遵守）
 
@@ -202,7 +204,7 @@ frontend/
 - **迁移机制**：`db.go` migrations 数组尾部追加；一条迁移可含多语句，`splitStatements` 感知字符串字面量与 `BEGIN…END` 块（触发器内分号不会误切分）。
 - **剧集/系列组织**：库 = 单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个，`kind`=tv/movie）。分组唯一来源 `scanner.ParseEpisode`（`SxxEyy`/`第x集`/`Season N` 目录/中文数字）与 `scanner.ParseMoviePart`（`Part N`/`第N部`/数字后缀）；**默认单集**，仅当位于 `Season N` 目录、或同目录 ≥2 个标题键相同/编辑距离 ≤2（`scanner.editDistance`）才归系列；`groupVideo` 在 **Scan 结束时统一对 `toGroup` 执行**（同目录兄弟可见），也用于 ImportUploaded/probe/手动归组；老库数据在 unchanged 分支回填。`series_links` 无名称、`sort_index` 排序，同 show 相邻季 `SyncShowLinks` 自动关联，`/api/series/{id}/links` 手动增删。`videos_bd` 触发器删光某 show 最后一集时删空 show；删空 season 由扫描/后续兜底。
 - **FTS5（search_text）**：`videos_fts` external content + `ai/ad/au` 触发器；写入侧统一 `rebuildSearchText`（Create/UpdateProbe/UpdateMetadata/AssignEpisode/AssignMovie/SetTags/show 改名）；新增影响搜索内容的写路径都要重建。
-- **刮削**：`scrape.ParseNFO`（Kodi 新旧 rating）；`VideoImported` listener 自动应用侧边 `.nfo`/`tvshow.nfo`；TMDB 需 `scrape.tmdb_api_key`（空则 400 `no_provider`），改后重启；手动封面 `POST /api/videos/{id}/cover` 落盘 `covers/<id>.<ext>`；`UpdateCovers` 空串=该列不动。
+- **封面**：手动上传 `POST /api/videos/{id}/cover` 落盘 `covers/<id>.<ext>`；`UpdateCovers` 空串=该列不动。元数据刮削（TMDB + NFO）已移除：无 `scrape` 包、无 `scrape.*` 配置项、无 `/scrape` API。
 - **扫描安全**：卷根不可达中止扫描、绝不误删元数据（ADR-014）；无 probe 元数据（`duration==0 && codec==""`）强制重 probe（自愈）。
 - **上传清理**：合并完成即删 staging；启动时 + 每小时清理超 24h 孤儿分片。
 - **ffprobe/ffmpeg**：进程 PATH 找不到时在 `config.yaml` 显式配置 `media.ffmpeg_path`/`media.ffprobe_path`（YAML `\\` 转义），改后重启。
@@ -223,8 +225,8 @@ frontend/
 - **UI 重排验证（2026-08，需用户手动，浏览器体验）**：① 视频库「全部」视图单集/系列混排、2/3/4/5/6/7/8 列随宽度变化；② 点击视频/系列卡在宽屏右侧抽屉打开（网格缩小不覆盖）、窄屏全页，抽屉「返回」恢复网格筛选；③ 卡片长标题两行换行、剧集卡显示 SxxEyy；④ 首页/搜索沿用新卡片与网格；⑤ 文件页宽屏 Finder 多列（点文件夹右开新列、点列头回退、根目录列）与窄屏单列表+顶部存储 chips；⑥ 存储卷侧边栏折叠（图标轨⇄管理面板）与窄屏 chips 条、添加/删除/刷新正常；⑦ 手机/平板各页签（首页/视频库/搜索/文件）无挤压无横向滚动、按钮不过度拥挤；⑧ 大屏（2K/4K）留白少、密度适中。
 - **栏位栈视频库验证（2026-09，需用户手动，浏览器体验）**：① 宽屏（≥lg）视频库满幅无两侧留白，过滤器在浏览栏顶部（浏览被挤出后过滤器不可见）；② 初始 `[浏览][空详情提示]`，点系列/单集条目详情栏填充；③ 单集从浏览栏：点详情 `[浏览][单集详情]` → 点播放左移过渡、终态 `[单集详情][播放]`、浏览被挤出；退出播放回推 `[浏览][单集详情]`；④ 系列详情成员行「播放/续播 + 详情」两按钮：点播放直达 `[系列详情][播放]`（不插单集详情），点详情进 `[系列详情][单集详情]`（顶部「返回系列」条，返回后回 `[浏览][系列详情]`）；⑤ 系列内单集详情点播放 → 单集详情被替换为播放栏（`[系列详情][播放]`），退出播放回 `[浏览][系列详情]`；⑥ 播放栏上下集/自动连播/「接下来播放」按系列成员顺序、且均留在系列内；⑦ 深链刷新 `/library/video/x`、`/library/video/x/play`、`/series/x`、`/series/x/video/v`、`/series/x/play/v` 恢复到对应栏位栈；⑧ 窄屏（<lg）单栏全页：浏览→系列详情→（播放直达播放页 | 详情进单集详情页），返回条逐级出栈正确；⑨ 首页/搜索点卡片跳 library 页签进详情栏。
 - **播放页验证（2026-09，需用户手动，浏览器体验）**：① 播放栏顶部「退出播放」按钮可返回详情态（宽屏回推/窄屏返回）；② 播放器填满播放栏高度，上下黑边减少，底部进度条不再遮挡 WebVTT 字幕；③ 底部「接下来播放」列表显示当前集后至多 3 个成员（小缩略图+标题+集号+时长），点击直接续播下一集；④ 上下集/自动连播按钮按系列成员顺序工作。
-- 单集/系列**手动归组 UI** 已做：`VideoMetaPanel` 的 `SeriesAssign`（选系列/集号，PATCH `show_id`/`season_number`/`episode_number`，空串移出系列）；系列关联增删在 `SeriesDetailPage`。`scrape` 需配置 `scrape.tmdb_api_key`。
-- 前端无 Vitest 测试（`package.json` 无 test script）；TMDB 需配置 `scrape.tmdb_api_key`（改后重启）。
+- 单集/系列**手动归组 UI** 已做：`VideoMetaPanel` 的 `SeriesAssign`（选系列/集号，PATCH `show_id`/`season_number`/`episode_number`，空串移出系列）；系列关联增删在 `SeriesDetailPage`。
+- 前端无 Vitest 测试（`package.json` 无 test script）。
 - 设备热插拔**盘符重映射未实现**：监视仅在启动时对 enabled 卷建立，拔出/插入不会自动重扫/重映射（ADR-014 后半部分）。
 - `delete_mode: trash` 未实现（当前永久删除）；前端断点续传 UI 未做。
 - HLS 仅单一路码率（`-hls_time 10`，无自适应多码率）；嵌入字幕轨道抽取未做（仅侧边字幕文件）。

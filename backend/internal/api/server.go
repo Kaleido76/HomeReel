@@ -17,7 +17,6 @@ import (
 	"homereel/backend/internal/files"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/scanner"
-	"homereel/backend/internal/scrape"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/storage"
 	"homereel/backend/internal/streaming"
@@ -37,7 +36,6 @@ type Server struct {
 	series      domain.SeriesRepo
 	history     domain.HistoryRepo
 	streaming   *streaming.Service
-	scrape      *scrape.Service
 	search      search.Provider
 	bus         *events.Bus
 	dataDir     string
@@ -52,14 +50,14 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	jobsSvc *jobs.Service, scannerSvc *scanner.Service, videosRepo domain.VideoRepo,
 	showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
 	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
-	scrapeSvc *scrape.Service, searchProvider search.Provider, bus *events.Bus,
+	searchProvider search.Provider, bus *events.Bus,
 	dataDir string, staticDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, storages: storageSvc, files: filesSvc,
 		jobs: jobsSvc, scanner: scannerSvc,
 		videos: videosRepo, shows: showsRepo, series: seriesRepo,
 		history: historyRepo, streaming: streamingSvc,
-		scrape: scrapeSvc, search: searchProvider, bus: bus, dataDir: dataDir,
+		search: searchProvider, bus: bus, dataDir: dataDir,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -86,14 +84,12 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("PATCH /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoPatch)))
 	mux.Handle("DELETE /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoDelete)))
 	mux.Handle("POST /api/videos/{id}/refresh", s.requireAuth(http.HandlerFunc(s.handleVideoRefresh)))
-	mux.Handle("POST /api/videos/{id}/scrape", s.requireAuth(http.HandlerFunc(s.handleVideoScrape)))
 	mux.Handle("POST /api/videos/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleVideoCover)))
 	mux.Handle("GET /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryGet)))
 	mux.Handle("PUT /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryPut)))
 	mux.Handle("GET /api/shows", s.requireAuth(http.HandlerFunc(s.handleShowsList)))
 	mux.Handle("GET /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowDetail)))
 	mux.Handle("PATCH /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowPatch)))
-	mux.Handle("POST /api/shows/{id}/scrape", s.requireAuth(http.HandlerFunc(s.handleShowScrape)))
 	mux.Handle("GET /api/shows/{id}/seasons/{num}/episodes", s.requireAuth(http.HandlerFunc(s.handleShowSeasonsEpisodes)))
 	mux.Handle("GET /api/shows/{id}/poster", s.requireAuth(http.HandlerFunc(s.handleShowPoster)))
 	mux.Handle("GET /api/series", s.requireAuth(http.HandlerFunc(s.handleSeriesList)))

@@ -25,20 +25,21 @@ const seriesCols = `se.id, se.show_id, s.name AS title, se.number AS season_numb
 
 func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 	var (
-		overview    sql.NullString
-		year        sql.NullInt64
-		rating      sql.NullFloat64
-		genre       sql.NullString
-		poster      sql.NullString
-		backdrop    sql.NullString
-		createdAt   string
-		updatedAt   string
-		memberCount int
-		linkCount   int
+		overview      sql.NullString
+		year          sql.NullInt64
+		rating        sql.NullFloat64
+		genre         sql.NullString
+		poster        sql.NullString
+		backdrop      sql.NullString
+		createdAt     string
+		updatedAt     string
+		memberCount   int
+		linkCount     int
+		totalDuration sql.NullFloat64
 	)
 	if err := row.Scan(&series.ID, &series.ShowID, &series.Title, &series.SeasonNumber, &series.Kind,
 		&overview, &year, &rating, &genre, &poster, &backdrop, &series.MetadataSource,
-		&createdAt, &updatedAt, &memberCount, &linkCount); err != nil {
+		&createdAt, &updatedAt, &memberCount, &linkCount, &totalDuration); err != nil {
 		return domain.Series{}, err
 	}
 	if overview.Valid {
@@ -61,6 +62,9 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 	}
 	series.MemberCount = memberCount
 	series.LinkCount = linkCount
+	if totalDuration.Valid {
+		series.TotalDuration = totalDuration.Float64
+	}
 	series.Name = seriesDisplayName(series.Title, series.SeasonNumber, series.Kind)
 	return series, nil
 }
@@ -78,7 +82,9 @@ func (r *seriesRepo) List(ctx context.Context) ([]domain.Series, error) {
 			(SELECT COUNT(*) FROM videos v
 				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode') AS member_count,
 			(SELECT COUNT(*) FROM series_links sl
-				WHERE sl.series_id = se.id OR sl.linked_series_id = se.id) AS link_count
+				WHERE sl.series_id = se.id OR sl.linked_series_id = se.id) AS link_count,
+			COALESCE((SELECT SUM(v.duration) FROM videos v
+				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode'), 0) AS total_duration
 		FROM seasons se JOIN shows s ON s.id = se.show_id
 		ORDER BY s.name, se.number`)
 	if err != nil {
@@ -102,7 +108,9 @@ func (r *seriesRepo) Get(ctx context.Context, id string) (domain.Series, error) 
 			(SELECT COUNT(*) FROM videos v
 				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode') AS member_count,
 			(SELECT COUNT(*) FROM series_links sl
-				WHERE sl.series_id = se.id OR sl.linked_series_id = se.id) AS link_count
+				WHERE sl.series_id = se.id OR sl.linked_series_id = se.id) AS link_count,
+			COALESCE((SELECT SUM(v.duration) FROM videos v
+				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode'), 0) AS total_duration
 		FROM seasons se JOIN shows s ON s.id = se.show_id
 		WHERE se.id = ?`, id)
 	series, err := scanSeries(row, domain.Series{})

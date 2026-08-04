@@ -158,19 +158,19 @@ export function LibraryLayout() {
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
         />
       </form>
-      {grid.view !== 'series' && (
-        <select
-          value={grid.sort}
-          onChange={(e) => update({ sort: e.target.value as GridState['sort'] })}
-          className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-700 outline-none focus:border-blue-600"
-        >
-          {sortOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      )}
+      <select
+        value={grid.sort}
+        onChange={(e) => update({ sort: e.target.value as GridState['sort'] })}
+        disabled={grid.view === 'series'}
+        title={grid.view === 'series' ? '系列视图不支持排序' : undefined}
+        className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-700 outline-none focus:border-blue-600 disabled:opacity-50"
+      >
+        {sortOptions.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
     </div>
   )
 

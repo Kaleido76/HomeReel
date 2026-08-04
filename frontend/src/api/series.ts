@@ -16,6 +16,7 @@ export interface Series {
   metadata_source: string
   member_count: number
   link_count: number
+  total_duration: number
 }
 
 export interface SeriesMember {
