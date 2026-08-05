@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,13 +45,14 @@ type Service struct {
 	ffmpegPath  string
 	coversDir   string
 	thumbsDir   string
+	remuxDir    string
 	debounce    time.Duration
 	probe       ProbeFn
 	thumbnail   ThumbnailFn
 	now         func() time.Time
 }
 
-// New builds the scanner service. dataDir hosts covers/ and thumbs/ output.
+// New builds the scanner service. dataDir hosts covers/, thumbs/ and remux/ output.
 func New(videos domain.VideoRepo, storages domain.StorageRepo, shows domain.ShowRepo,
 	seriesRepo domain.SeriesRepo, jobsSvc *jobs.Service, filesSvc *files.Service,
 	bus *events.Bus, ffprobePath, ffmpegPath, dataDir string) *Service {
@@ -66,6 +68,7 @@ func New(videos domain.VideoRepo, storages domain.StorageRepo, shows domain.Show
 		ffmpegPath:  ffmpegPath,
 		coversDir:   filepath.Join(dataDir, "covers"),
 		thumbsDir:   filepath.Join(dataDir, "thumbs"),
+		remuxDir:    filepath.Join(dataDir, "remux"),
 		debounce:    5 * time.Second,
 		probe:       media.Probe,
 		thumbnail:   media.Thumbnail,
@@ -191,7 +194,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 	return res, nil
 }
 
-// HandleJob is the jobs.Worker handler for probe/thumbnail/rescan jobs.
+// HandleJob is the jobs.Worker handler for probe/thumbnail/rescan/remux jobs.
 func (s *Service) HandleJob(ctx context.Context, j jobs.Job) error {
 	switch j.Type {
 	case jobs.TypeProbe:
@@ -200,6 +203,8 @@ func (s *Service) HandleJob(ctx context.Context, j jobs.Job) error {
 		return s.handleThumbnail(ctx, j)
 	case jobs.TypeRescan:
 		return s.handleRescan(ctx, j)
+	case jobs.TypeRemux:
+		return s.handleRemux(ctx, j)
 	}
 	return fmt.Errorf("unknown job type %q", j.Type)
 }
@@ -223,6 +228,67 @@ func (s *Service) EnqueueProbe(ctx context.Context, videoID string) error {
 	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
 	_, err := s.jobs.Enqueue(ctx, jobs.TypeProbe, "", string(extra))
 	return err
+}
+
+// EnqueueRemux schedules a remux job that re-wraps a segmented MP4 into a
+// standard faststart MP4 (user-requested, ADR-007 cache dir remux/).
+func (s *Service) EnqueueRemux(ctx context.Context, videoID string) error {
+	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
+	_, err := s.jobs.Enqueue(ctx, jobs.TypeRemux, "", string(extra))
+	return err
+}
+
+// handleRemux re-wraps a segmented MP4 source into a single-mdat faststart MP4
+// using stream copy (-c copy: no re-encode, only container rewrite). The output
+// lives in data/remux/<id>.mp4 and is what the streaming service serves for
+// direct playback, turning a slow Chrome whole-file download into normal
+// progressive playback.
+func (s *Service) handleRemux(ctx context.Context, j jobs.Job) error {
+	var meta struct {
+		VideoID string `json:"video_id"`
+	}
+	if err := json.Unmarshal([]byte(j.Extra), &meta); err != nil || meta.VideoID == "" {
+		return errors.New("remux job missing video_id")
+	}
+	v, err := s.videos.Get(ctx, meta.VideoID)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(v.Path); err != nil {
+		return fmt.Errorf("source missing: %w", err)
+	}
+	if err := os.MkdirAll(s.remuxDir, 0o755); err != nil {
+		return err
+	}
+	out := filepath.Join(s.remuxDir, v.ID+".mp4")
+	tmp := out + ".tmp"
+	cmd := exec.CommandContext(ctx, s.ffmpegPath,
+		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", v.Path,
+		"-map", "0",
+		"-c", "copy",
+		"-movflags", "+faststart",
+		tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("remux failed", "video_id", v.ID, "err", err, "output", truncate(string(out), 500))
+		}
+		_ = os.Remove(tmp)
+		return fmt.Errorf("ffmpeg remux: %w", err)
+	}
+	// Atomic rename so the streaming service never serves a half-written file.
+	if err := os.Rename(tmp, out); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // ImportUploaded indexes a freshly assembled upload and schedules its probe.
@@ -334,6 +400,7 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job) error {
 	upd.Duration = info.Duration
 	upd.Codec = info.Codec
 	upd.Container = info.Container
+	upd.Segmented = info.Segmented
 	upd.Width = info.Width
 	upd.Height = info.Height
 	if err := s.videos.UpdateProbe(ctx, upd); err != nil {

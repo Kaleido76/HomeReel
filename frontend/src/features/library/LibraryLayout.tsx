@@ -193,10 +193,7 @@ export function LibraryLayout() {
               <SeriesDetailPage seriesId={top.id} />
             </>
           ) : top.type === 'player' ? (
-            <>
-              <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
-              <PlayerPane videoId={top.id} exitHref={top.parent} goHref={playerGo(top.parent)} />
-            </>
+            <PlayerPane videoId={top.id} exitHref={top.parent} goHref={playerGo(top.parent)} />
           ) : (
             <div className="h-full py-4">
               <LibraryList state={grid} onUpdate={update} selection={selection} onSelect={onSelect} />

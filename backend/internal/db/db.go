@@ -191,6 +191,9 @@ var migrations = []string{
 	// 旧库已建表，这里物理删除；新库从未创建。
 	`DROP TABLE IF EXISTS collection_videos;
 	DROP TABLE IF EXISTS collections`,
+	// 分段 MP4（多个 mdat 盒子 / moof 分片，hls.js 拼接文件）：Chrome 直连
+	// 会整文件下载，探测时标记 segmented，能力探测据此走 HLS。
+	`ALTER TABLE videos ADD COLUMN segmented INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

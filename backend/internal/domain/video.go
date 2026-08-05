@@ -19,6 +19,7 @@ type Video struct {
 	Codec          string  `json:"codec"`
 	AudioCodec     string  `json:"audio_codec,omitempty"`
 	Container      string  `json:"container"`
+	Segmented      bool    `json:"segmented,omitempty"`
 	Width          int     `json:"width"`
 	Height         int     `json:"height"`
 	FPS            float64 `json:"fps,omitempty"`
@@ -114,6 +115,9 @@ type VideoRepo interface {
 	AllTags(ctx context.Context) ([]TagCount, error)
 	// ListByStorage returns all videos of one storage.
 	ListByStorage(ctx context.Context, storageID string) ([]Video, error)
+	// ListSegmented returns all videos flagged as segmented (hls.js-assembled
+	// MP4), used by the remux management API.
+	ListSegmented(ctx context.Context) ([]Video, error)
 	// ContinueWatching returns videos with in-progress playback, most recently
 	// active first (used by the home rows).
 	ContinueWatching(ctx context.Context, limit int) ([]Video, error)

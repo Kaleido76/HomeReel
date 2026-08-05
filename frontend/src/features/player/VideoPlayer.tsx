@@ -29,6 +29,14 @@ const SAVE_INTERVAL = 10
 // CDN load (LAN-only deployment) and relaxes the manifest timeout so the
 // player survives the on-demand transcode's first-play latency instead of
 // aborting at the 10s hls.js default and spinning forever.
+//
+// Buffering is capped tightly: during the incremental transcode the playlist
+// has no ENDLIST, so hls.js treats it as a live stream and races toward the
+// "live edge" — with a fast transcode the edge advances far ahead of playback
+// and hls.js would otherwise download dozens of segments up front. A ~1-segment
+// forward buffer (maxBufferLength) plus a short back buffer keep the download
+// to a little-ahead preload; maxBufferSize 0 disables the byte cap so the time
+// cap is the single binding limit.
 function HlsLibConfig() {
   const provider = useMediaProvider()
   useEffect(() => {
@@ -40,6 +48,10 @@ function HlsLibConfig() {
         manifestLoadingRetryDelay: 2000,
         liveDurationInfinity: true,
         liveSyncDurationCount: 1,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 10,
+        maxBufferSize: 0,
+        backBufferLength: 30,
       }
     }
   }, [provider])

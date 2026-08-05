@@ -21,6 +21,7 @@ func TestDirectPlayable(t *testing.T) {
 		{"h264 mp4", domain.Video{Container: "mp4", Codec: "h264"}, true},
 		{"comma list mp4", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Codec: "h264"}, true},
 		{"comma list mov", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Codec: "h264"}, true},
+		{"segmented mp4", domain.Video{Container: "mp4", Codec: "h264", Segmented: true}, true},
 		{"hevc mp4", domain.Video{Container: "mp4", Codec: "hevc"}, false},
 		{"h264 mkv", domain.Video{Container: "matroska", Codec: "h264"}, false},
 		{"h264 mov", domain.Video{Container: "mov", Codec: "h264"}, true},
@@ -44,9 +45,11 @@ func TestContentType(t *testing.T) {
 		want string
 	}{
 		{"mp4", domain.Video{Container: "mp4", Path: "a.mp4"}, "video/mp4"},
-		{"comma mp4 list", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Path: "a.mp4"}, "video/quicktime"},
+		{"comma mp4 list", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Path: "a.mp4"}, "video/mp4"},
+		{"mov extension", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Path: "a.mov"}, "video/quicktime"},
 		{"matroska", domain.Video{Container: "matroska", Path: "a.mkv"}, "video/x-matroska"},
 		{"empty falls back to ext", domain.Video{Path: "a.webm"}, "video/webm"},
+		{"container fallback", domain.Video{Container: "matroska", Path: "a.bin"}, "video/x-matroska"},
 		{"unknown", domain.Video{Path: "a.xyz"}, "application/octet-stream"},
 	}
 	for _, c := range cases {
@@ -103,6 +106,48 @@ func TestDirectServesRange(t *testing.T) {
 	}
 	if ct := res.Header.Get("Content-Type"); ct != "video/mp4" {
 		t.Fatalf("content-type = %q, want video/mp4", ct)
+	}
+}
+
+// TestDirectServesRemuxed verifies a segmented video is served from its
+// remuxed faststart copy when one exists, and from the raw source otherwise.
+func TestDirectServesRemuxed(t *testing.T) {
+	dataDir := t.TempDir()
+	s := &Service{dataDir: dataDir, remuxDir: filepath.Join(dataDir, "remux")}
+	if err := os.MkdirAll(s.remuxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srcPath := filepath.Join(dataDir, "src.mp4")
+	remuxPath := filepath.Join(s.remuxDir, "v1.mp4")
+	if err := os.WriteFile(srcPath, []byte("SOURCE-BYTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remuxPath, []byte("REMUXED-BYTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	serve := func(v domain.Video) string {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/stream/v", nil)
+		if err := s.Direct(rec, req, v); err != nil {
+			t.Fatalf("direct: %v", err)
+		}
+		raw, _ := io.ReadAll(rec.Result().Body)
+		return string(raw)
+	}
+
+	segmented := domain.Video{ID: "v1", Path: srcPath, Container: "mp4", Codec: "h264", Segmented: true}
+	if got := serve(segmented); got != "REMUXED-BYTES" {
+		t.Errorf("segmented with remux copy = %q, want REMUXED-BYTES", got)
+	}
+
+	_ = os.Remove(remuxPath)
+	if got := serve(segmented); got != "SOURCE-BYTES" {
+		t.Errorf("segmented without remux copy = %q, want SOURCE-BYTES", got)
+	}
+
+	if s.Remuxed("v1") {
+		t.Error("Remuxed(v1) = true after removal, want false")
 	}
 }
 

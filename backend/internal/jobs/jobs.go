@@ -15,6 +15,7 @@ const (
 	TypeProbe     = "probe"
 	TypeThumbnail = "thumbnail"
 	TypeRescan    = "rescan"
+	TypeRemux     = "remux"
 )
 
 // Job statuses.

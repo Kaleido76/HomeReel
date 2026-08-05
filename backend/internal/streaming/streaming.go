@@ -35,12 +35,14 @@ type Service struct {
 	enableHLS  string // auto | true | false
 	hlsPreset  string
 	hlsDir     string
+	remuxDir   string
 
 	mu     sync.Mutex
 	active map[string]*transcode
 }
 
-// New builds the streaming service. dataDir hosts covers/ and the hls/ cache.
+// New builds the streaming service. dataDir hosts covers/ and the hls/ and
+// remux/ caches.
 func New(videos domain.VideoRepo, dataDir, ffmpegPath, enableHLS, hlsPreset string) *Service {
 	return &Service{
 		videos:     videos,
@@ -49,6 +51,7 @@ func New(videos domain.VideoRepo, dataDir, ffmpegPath, enableHLS, hlsPreset stri
 		enableHLS:  enableHLS,
 		hlsPreset:  hlsPreset,
 		hlsDir:     filepath.Join(dataDir, "hls"),
+		remuxDir:   filepath.Join(dataDir, "remux"),
 		active:     make(map[string]*transcode),
 	}
 }
@@ -86,9 +89,19 @@ func (s *Service) HLSEnabled(v domain.Video) bool {
 	}
 }
 
-// Direct serves the source file with HTTP Range support.
+// Direct serves the source file with HTTP Range support. Segmented MP4 files
+// (hls.js-assembled, detected at probe time) are served from their remuxed
+// faststart copy when one has been produced — otherwise the raw source is
+// served and the browser may download it in full before playing (acceptable as
+// a fallback; the user can request a remux to fix it).
 func (s *Service) Direct(w http.ResponseWriter, r *http.Request, v domain.Video) error {
-	f, err := os.Open(v.Path)
+	path := v.Path
+	if v.Segmented {
+		if remuxed, err := s.remuxed(v.ID); err == nil {
+			path = remuxed
+		}
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrUnavailable
@@ -101,8 +114,24 @@ func (s *Service) Direct(w http.ResponseWriter, r *http.Request, v domain.Video)
 		return err
 	}
 	w.Header().Set("Content-Type", contentType(v))
-	http.ServeContent(w, r, filepath.Base(v.Path), info.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
 	return nil
+}
+
+// remuxed returns the remuxed faststart copy path for a video when it exists.
+func (s *Service) remuxed(videoID string) (string, error) {
+	p := filepath.Join(s.remuxDir, videoID+".mp4")
+	if _, err := os.Stat(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// Remuxed reports whether a remuxed copy is available for a video (used by the
+// remux management API to show per-file state).
+func (s *Service) Remuxed(videoID string) bool {
+	_, err := s.remuxed(videoID)
+	return err == nil
 }
 
 // Cover serves the generated cover or thumb image from data_dir.
@@ -243,8 +272,8 @@ func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Vide
 	return ErrNotFound
 }
 
-// RemoveCache deletes a video's HLS transcode (called when the video is
-// deleted or its file changes so stale segments are never served).
+// RemoveCache deletes a video's HLS transcode and remuxed copy (called when the
+// video is deleted or its file changes so stale caches are never served).
 func (s *Service) RemoveCache(videoID string) {
 	s.mu.Lock()
 	if tr, ok := s.active[videoID]; ok {
@@ -253,6 +282,8 @@ func (s *Service) RemoveCache(videoID string) {
 	}
 	s.mu.Unlock()
 	_ = os.RemoveAll(filepath.Join(s.hlsDir, videoID))
+	_ = os.Remove(filepath.Join(s.remuxDir, videoID+".mp4"))
+	_ = os.Remove(filepath.Join(s.remuxDir, videoID+".mp4.tmp"))
 }
 
 type transcode struct {
@@ -339,16 +370,13 @@ var (
 	}
 )
 
-// contentType maps the probed container to a Content-Type for Range serving.
-// Container may be a comma-separated demuxer list from older probe rows; the
-// first recognized token wins.
+// contentType maps a video to the Content-Type used for Range serving. The file
+// extension wins because ffprobe reports the whole MP4 family as "mov,mp4,..."
+// (the MOV demuxer handles MP4), so demuxer-token matching first would mislabel
+// real .mp4 files as video/quicktime — desktop browsers then refuse to treat the
+// media as MP4 and stall buffering. The probed container is only a fallback for
+// files whose extension is unrecognized.
 func contentType(v domain.Video) string {
-	for _, c := range strings.Split(strings.ToLower(v.Container), ",") {
-		c = strings.TrimSpace(c)
-		if t, ok := containerTypes[c]; ok {
-			return t
-		}
-	}
 	switch strings.ToLower(filepath.Ext(v.Path)) {
 	case ".mp4", ".m4v":
 		return "video/mp4"
@@ -358,6 +386,12 @@ func contentType(v domain.Video) string {
 		return "video/webm"
 	case ".mov":
 		return "video/quicktime"
+	}
+	for _, c := range strings.Split(strings.ToLower(v.Container), ",") {
+		c = strings.TrimSpace(c)
+		if t, ok := containerTypes[c]; ok {
+			return t
+		}
 	}
 	return "application/octet-stream"
 }

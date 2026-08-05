@@ -16,6 +16,7 @@ const HomePage = lazy(() => import('../features/home/HomePage').then((m) => ({ d
 const LibraryLayout = lazy(() => import('../features/library/LibraryLayout').then((m) => ({ default: m.LibraryLayout })))
 const SearchPage = lazy(() => import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })))
 const ExplorerPage = lazy(() => import('../features/explorer/ExplorerPage').then((m) => ({ default: m.ExplorerPage })))
+const RemuxPage = lazy(() => import('../features/remux/RemuxPage').then((m) => ({ default: m.RemuxPage })))
 
 // initialEntry seeds each tab's memory history. The tab matching the current URL
 // starts at that URL (refresh / deep-link support); every other tab starts at its
@@ -151,6 +152,26 @@ export const explorerRouter = createRouter({
   defaultPreload: 'intent',
 })
 
+// ---- remux tab (segmented-MP4 remux management) ----
+const remuxRoot = createRootRoute()
+const remuxIndex = createRoute({
+  getParentRoute: () => remuxRoot,
+  path: '/remux',
+  component: RemuxPage,
+})
+const remuxNotFound = createRoute({
+  getParentRoute: () => remuxRoot,
+  path: '*',
+  beforeLoad: () => redirect({ to: '/remux' }),
+  component: () => null,
+})
+const remuxTree = remuxRoot.addChildren([remuxIndex, remuxNotFound])
+export const remuxRouter = createRouter({
+  routeTree: remuxTree,
+  history: createMemoryHistory({ initialEntries: [initialEntry('remux')] }),
+  defaultPreload: 'intent',
+})
+
 // Routers are typed with distinct route trees; Router's generics are invariant
 // (the `update` method), so unify to a common AnyRouter at this single boundary.
 export const routers: Record<TabId, AnyRouter> = {
@@ -158,4 +179,5 @@ export const routers: Record<TabId, AnyRouter> = {
   library: libraryRouter as unknown as AnyRouter,
   search: searchRouter as unknown as AnyRouter,
   explorer: explorerRouter as unknown as AnyRouter,
+  remux: remuxRouter as unknown as AnyRouter,
 }

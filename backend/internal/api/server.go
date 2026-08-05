@@ -102,6 +102,9 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("GET /api/tags", s.requireAuth(http.HandlerFunc(s.handleTags)))
 	mux.Handle("GET /api/home", s.requireAuth(http.HandlerFunc(s.handleHome)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
+	mux.Handle("GET /api/remux/status", s.requireAuth(http.HandlerFunc(s.handleRemuxStatus)))
+	mux.Handle("POST /api/fs/remux", s.requireAuth(http.HandlerFunc(s.handleFsRemux)))
+	mux.Handle("POST /api/videos/{id}/remux", s.requireAuth(http.HandlerFunc(s.handleVideoRemux)))
 	mux.Handle("GET /api/stream/{id}", s.requireAuth(http.HandlerFunc(s.handleStreamDirect)))
 	mux.Handle("GET /api/stream/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleStreamCover)))
 	mux.Handle("GET /api/stream/{id}/hls/master.m3u8", s.requireAuth(http.HandlerFunc(s.handleStreamMaster)))
@@ -372,7 +375,9 @@ func (s *Server) logger(next http.Handler) http.Handler {
 		slog.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,
+			"range", r.Header.Get("Range"),
 			"status", rec.status,
+			"bytes", rec.bytes,
 			"duration", time.Since(start).Round(time.Millisecond).String(),
 		)
 	})
@@ -393,11 +398,18 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+	bytes  int64
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(p []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(p)
+	r.bytes += int64(n)
+	return n, err
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

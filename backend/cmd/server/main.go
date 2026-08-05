@@ -94,9 +94,10 @@ func run() error {
 		}
 	}()
 
-	// VideoDeleted → drop stale HLS cache (and cancel an in-flight transcode).
+	// VideoDeleted/VideoUpdated → drop stale HLS/remux caches (and cancel an
+	// in-flight transcode) so a deleted or replaced file is never served stale.
 	go func() {
-		for ev := range bus.Subscribe(events.VideoDeleted) {
+		for ev := range bus.Subscribe(events.VideoDeleted, events.VideoUpdated) {
 			if id := ev.Data["video_id"]; id != "" {
 				streamingSvc.RemoveCache(id)
 			}

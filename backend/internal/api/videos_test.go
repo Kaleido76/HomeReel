@@ -149,3 +149,57 @@ func TestStreamDirectAndCover(t *testing.T) {
 		t.Fatalf("missing cover = %d (body %s)", resp.StatusCode, body)
 	}
 }
+
+func TestRemuxEndpoints(t *testing.T) {
+	ts, _, database := newTestServerDB(t, "secret")
+	cookie := loginCookie(t, ts, "secret")
+	root := t.TempDir()
+	resp, body := doJSON(t, "POST", ts.URL+"/api/storages",
+		`{"name":"root","type":"internal","root_path":`+strconv.Quote(root)+`}`, cookie)
+	var created struct {
+		Storage struct {
+			ID string `json:"id"`
+		} `json:"storage"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	storageID := created.Storage.ID
+
+	// One segmented video under a subfolder and one normal video outside it.
+	seedVideo(t, database, storageID, "v1", "shows/ep1.mp4", "shows/ep1.mp4", "Seg", 10)
+	seedVideo(t, database, storageID, "v2", "other.mp4", "other.mp4", "Plain", 10)
+	repo := store.NewVideoRepo(database)
+	if err := repo.UpdateProbe(context.Background(), domain.Video{
+		ID: "v1", Title: "Seg", Codec: "h264", Container: "mp4", Segmented: true,
+	}); err != nil {
+		t.Fatalf("mark segmented: %v", err)
+	}
+
+	// Status lists only the segmented video, not remuxed (no cache in test).
+	resp, body = doJSON(t, "GET", ts.URL+"/api/remux/status", "", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("remux status = %d (body %s)", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `"v1"`) || strings.Contains(body, `"v2"`) {
+		t.Fatalf("remux status body unexpected: %s", body)
+	}
+	if !strings.Contains(body, `"remuxed":false`) {
+		t.Fatalf("remux status should report not remuxed: %s", body)
+	}
+
+	// Single-video remux accepts.
+	resp, body = doJSON(t, "POST", ts.URL+"/api/videos/v1/remux", "", cookie)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("single remux = %d (body %s)", resp.StatusCode, body)
+	}
+
+	// Folder remux targets only the segmented video under that folder.
+	resp, body = doJSON(t, "POST", ts.URL+"/api/fs/remux", `{"storageId":"`+storageID+`","path":"shows"}`, cookie)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("folder remux = %d (body %s)", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `"accepted":1`) {
+		t.Fatalf("folder remux accepted count unexpected: %s", body)
+	}
+}

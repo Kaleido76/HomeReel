@@ -19,7 +19,7 @@ func NewVideoRepo(database *sql.DB) domain.VideoRepo {
 }
 
 const videoCols = `id, storage_id, file_id, relative_path, path, size, mtime, title,
-	kind, description, duration, codec, audio_codec, container, width, height, fps, file_size,
+	kind, description, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
 	cover_path, thumb_path, backdrop_path, show_id, season_number, episode_number, episode_title,
 	year, rating, genre, overview, studio, cast_text, metadata_source,
 	created_at, updated_at, last_scanned_at`
@@ -42,6 +42,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 		codec         sql.NullString
 		audioCodec    sql.NullString
 		container     sql.NullString
+		segmented     sql.NullInt64
 		width         sql.NullInt64
 		height        sql.NullInt64
 		fps           sql.NullFloat64
@@ -62,7 +63,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 	)
 	if err := row.Scan(&v.ID, &v.StorageID, &v.FileID, &v.RelativePath, &v.Path,
 		&v.Size, &v.MTime, &v.Title, &v.Kind, &v.Description, &duration, &codec,
-		&audioCodec, &container, &width, &height, &fps, &fileSize,
+		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
 		&year, &rating, &genre, &overview, &studio, &castText, &v.MetadataSource,
 		&v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt); err != nil {
@@ -79,6 +80,9 @@ func scanVideo(row scanner) (domain.Video, error) {
 	}
 	if container.Valid {
 		v.Container = container.String
+	}
+	if segmented.Valid {
+		v.Segmented = segmented.Int64 != 0
 	}
 	if width.Valid {
 		v.Width = int(width.Int64)
@@ -276,14 +280,21 @@ func (r *videoRepo) Delete(ctx context.Context, id string) error {
 func (r *videoRepo) UpdateProbe(ctx context.Context, v domain.Video) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE videos SET title = ?, duration = ?, codec = ?, container = ?,
-			width = ?, height = ?, updated_at = ?
+			segmented = ?, width = ?, height = ?, updated_at = ?
 		WHERE id = ?`,
 		v.Title, v.Duration, nullString(v.Codec), nullString(v.Container),
-		v.Width, v.Height, nowRFC3339(), v.ID)
+		segmentedInt(v.Segmented), v.Width, v.Height, nowRFC3339(), v.ID)
 	if err != nil {
 		return err
 	}
 	return rebuildSearchText(ctx, r.db, v.ID)
+}
+
+func segmentedInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (r *videoRepo) UpdateCovers(ctx context.Context, id, coverPath, thumbPath string) error {
@@ -473,6 +484,24 @@ func (r *videoRepo) AllTags(ctx context.Context) ([]domain.TagCount, error) {
 func (r *videoRepo) ListByStorage(ctx context.Context, storageID string) ([]domain.Video, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+videoCols+` FROM videos WHERE storage_id = ? ORDER BY relative_path`, storageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Video, 0)
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (r *videoRepo) ListSegmented(ctx context.Context) ([]domain.Video, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+videoCols+` FROM videos WHERE segmented = 1 ORDER BY title`)
 	if err != nil {
 		return nil, err
 	}

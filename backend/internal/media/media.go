@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,6 +19,11 @@ type Info struct {
 	Codec     string
 	Width     int
 	Height    int
+	// Segmented marks MP4-family files whose media data is split across
+	// multiple top-level mdat boxes or uses moof fragments (hls.js-downloaded
+	// files, fragmented MP4). Chrome's <video src> demuxer downloads such files
+	// in full before playing, so they are routed to HLS instead of direct play.
+	Segmented bool
 }
 
 // Probe runs ffprobe on path and returns media metadata.
@@ -61,6 +67,7 @@ func Probe(ctx context.Context, ffprobePath, path string) (Info, error) {
 			break
 		}
 	}
+	info.Segmented = mp4Family(info.Container) && isSegmented(path)
 	return info, nil
 }
 
@@ -74,6 +81,70 @@ func primaryContainer(name string) string {
 		}
 	}
 	return name
+}
+
+// mp4Family reports whether a primary container token belongs to the
+// MP4/MOV box family, i.e. a file parsed by walking top-level boxes
+// (mdat/moof counting applies only here).
+func mp4Family(container string) bool {
+	switch strings.ToLower(strings.TrimSpace(container)) {
+	case "mov", "mp4", "m4v", "qt", "3gp", "3g2":
+		return true
+	}
+	return false
+}
+
+// isSegmented walks the top-level boxes of an MP4-family file and reports a
+// "segmented" layout: more than one mdat box, or any moof fragment box. These
+// arise from hls.js download tools (one mdat per HLS segment) and fragmented
+// MP4; desktop Chrome's <video src> demuxer downloads such files in full
+// before playback, so they must go through HLS instead.
+//
+// The walk reads only each box header (8 or 16 bytes) and seeks past the box,
+// so a normal file (ftyp/moov/single mdat) is resolved in a handful of reads
+// and a segmented one exits as soon as the second mdat is seen.
+func isSegmented(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	var hdr [16]byte
+	mdat := 0
+	for offset := int64(0); offset < info.Size(); {
+		if _, err := f.ReadAt(hdr[:8], offset); err != nil {
+			return false
+		}
+		size := int64(binary.BigEndian.Uint32(hdr[0:4]))
+		typ := string(hdr[4:8])
+		switch size {
+		case 1: // 64-bit largesize follows the header
+			if _, err := f.ReadAt(hdr[8:16], offset+8); err != nil {
+				return false
+			}
+			size = int64(binary.BigEndian.Uint64(hdr[8:16]))
+		case 0: // box extends to end of file
+			size = info.Size() - offset
+		}
+		if size < 8 {
+			return false
+		}
+		switch typ {
+		case "mdat":
+			mdat++
+			if mdat > 1 {
+				return true
+			}
+		case "moof":
+			return true
+		}
+		offset += size
+	}
+	return false
 }
 
 // Thumbnail extracts a cover frame (320px wide) and a small thumb (160px)
