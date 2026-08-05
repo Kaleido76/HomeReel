@@ -26,4 +26,5 @@ Thumbs.db
 *.log
 
 *.md
+!docs/*
 !AGENTS.md
