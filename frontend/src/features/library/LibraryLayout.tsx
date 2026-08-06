@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ArrowLeft, Search } from 'lucide-react'
 import { useLocation, useNavigate } from '@tanstack/react-router'
+import { AdvancedFilter } from './AdvancedFilter'
 import { LibraryList } from './LibraryList'
 import { SeriesDetailPage } from '../series/SeriesDetailPage'
 import { VideoDetailPane } from '../player/VideoDetailPane'
@@ -16,11 +17,16 @@ const isSort = (v: string): v is GridState['sort'] =>
 function parseGridSearch(search: Record<string, unknown>): GridState {
   const view = search.view === 'series' ? 'series' : search.view === 'standalone' ? 'standalone' : 'all'
   const rawPage = typeof search.page === 'string' ? Number(search.page) : Number.NaN
+  const tags = typeof search.tags === 'string' ? search.tags.split(',').filter(Boolean) : []
   return {
     view,
     q: typeof search.q === 'string' ? search.q : '',
     sort: typeof search.sort === 'string' && isSort(search.sort) ? search.sort : 'date',
     page: Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1,
+    tags,
+    desc: typeof search.desc === 'string' ? search.desc : '',
+    genre: typeof search.genre === 'string' ? search.genre : '',
+    year: typeof search.year === 'string' ? search.year : '',
   }
 }
 
@@ -109,15 +115,18 @@ export function LibraryLayout() {
     const merged = { ...grid, ...next }
     setGrid(merged)
     if (onGridRoute) {
-      void navigate({ to: '/library', search: { ...merged } })
+      const { tags, ...rest } = merged
+      void navigate({ to: '/library', search: { ...rest, tags: tags.join(',') } })
     }
   }
 
   // goPath is the stack-aware "pop to parent": returning to the browse root
   // carries the current grid state so the filter/search/page survive the trip.
   function goPath(href: string) {
-    if (href === '/library') void navigate({ to: '/library', search: { ...grid } })
-    else void navigate({ href })
+    if (href === '/library') {
+      const { tags, ...rest } = grid
+      void navigate({ to: '/library', search: { ...rest, tags: tags.join(',') } })
+    } else void navigate({ href })
   }
 
   function onSelect(sel: NonNullable<ListSelection>) {
@@ -158,19 +167,7 @@ export function LibraryLayout() {
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
         />
       </form>
-      <select
-        value={grid.sort}
-        onChange={(e) => update({ sort: e.target.value as GridState['sort'] })}
-        disabled={grid.view === 'series'}
-        title={grid.view === 'series' ? '系列视图不支持排序' : undefined}
-        className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-700 outline-none focus:border-blue-600 disabled:opacity-50"
-      >
-        {sortOptions.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      <AdvancedFilter filters={grid} onApply={(f) => update({ ...f, page: 1 })} />
     </div>
   )
 

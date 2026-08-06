@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,6 +54,42 @@ func TestVideosList(t *testing.T) {
 	resp, _ = doJSON(t, "GET", ts.URL+"/api/videos", "", "")
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("videos without session = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestVideosListAdvancedFilter(t *testing.T) {
+	ts, _, database := newTestServerDB(t, "secret")
+	cookie := loginCookie(t, ts, "secret")
+	storageID, _ := newTestStorage(t, ts, cookie)
+	seedVideo(t, database, storageID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
+	seedVideo(t, database, storageID, "v2", "b.mp4", "b.mp4", "Beta", 200)
+	ctx := context.Background()
+	repo := store.NewVideoRepo(database)
+	desc, genre, year := "太空冒险", "科幻", 2001
+	if err := repo.UpdateMetadata(ctx, "v1", domain.VideoPatch{
+		Description: &desc, Genre: &genre, Year: &year,
+	}); err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if err := repo.SetTags(ctx, "v1", []string{"科幻"}); err != nil {
+		t.Fatalf("tags: %v", err)
+	}
+
+	resp, body := doJSON(t, "GET", ts.URL+"/api/videos?desc="+url.QueryEscape("冒险"), "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) || strings.Contains(body, `"Beta"`) {
+		t.Fatalf("desc filter = %d %s", resp.StatusCode, body)
+	}
+	resp, body = doJSON(t, "GET", ts.URL+"/api/videos?genre="+url.QueryEscape("科幻"), "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) {
+		t.Fatalf("genre filter = %d %s", resp.StatusCode, body)
+	}
+	resp, body = doJSON(t, "GET", ts.URL+"/api/videos?year=2001", "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) || strings.Contains(body, `"Beta"`) {
+		t.Fatalf("year filter = %d %s", resp.StatusCode, body)
+	}
+	resp, body = doJSON(t, "GET", ts.URL+"/api/videos?tag="+url.QueryEscape("科幻")+"&tag="+url.QueryEscape("太空"), "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"total":0`) {
+		t.Fatalf("conflicting multi tag should match none = %d %s", resp.StatusCode, body)
 	}
 }
 

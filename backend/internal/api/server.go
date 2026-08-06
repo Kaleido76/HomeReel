@@ -26,19 +26,19 @@ const sessionCookie = "homereel_session"
 
 // Server wires routes and shared dependencies.
 type Server struct {
-	auth        *auth.Service
-	storages    *storage.Service
-	files       *files.Service
-	jobs        *jobs.Service
-	scanner     *scanner.Service
-	videos      domain.VideoRepo
-	shows       domain.ShowRepo
-	series      domain.SeriesRepo
-	history     domain.HistoryRepo
-	streaming   *streaming.Service
-	search      search.Provider
-	bus         *events.Bus
-	dataDir     string
+	auth      *auth.Service
+	storages  *storage.Service
+	files     *files.Service
+	jobs      *jobs.Service
+	scanner   *scanner.Service
+	videos    domain.VideoRepo
+	shows     domain.ShowRepo
+	series    domain.SeriesRepo
+	history   domain.HistoryRepo
+	streaming *streaming.Service
+	search    search.Provider
+	bus       *events.Bus
+	dataDir   string
 }
 
 // New builds the root handler for all /api routes. When staticDir is
@@ -203,6 +203,10 @@ func (s *Server) handleStoragesList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
+	for i := range list {
+		busy, _ := s.jobs.HasActive(r.Context(), jobs.TypeRescan, list[i].ID)
+		list[i].Busy = busy
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"storages": list})
 }
 
@@ -240,6 +244,9 @@ func (s *Server) handleStorageCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStoragePatch(w http.ResponseWriter, r *http.Request) {
+	if !s.storageBusyOrError(w, r, r.PathValue("id")) {
+		return
+	}
 	var req struct {
 		Name     *string `json:"name"`
 		Type     *string `json:"type"`
@@ -279,6 +286,9 @@ func (s *Server) handleStoragePatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStorageDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.storageBusyOrError(w, r, r.PathValue("id")) {
+		return
+	}
 	if err := s.storages.Delete(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "存储卷不存在")
@@ -292,6 +302,9 @@ func (s *Server) handleStorageDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStorageRefresh(w http.ResponseWriter, r *http.Request) {
+	if !s.storageBusyOrError(w, r, r.PathValue("id")) {
+		return
+	}
 	st, err := s.storages.Refresh(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -341,6 +354,8 @@ func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
+	busy, _ := s.jobs.HasActive(r.Context(), jobs.TypeRescan, st.ID)
+	st.Busy = busy
 	writeJSON(w, http.StatusOK, map[string]any{"storage": st, "path": rel, "entries": entries})
 }
 

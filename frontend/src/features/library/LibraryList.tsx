@@ -32,10 +32,14 @@ export function LibraryList({
   const showSeries = state.view !== 'standalone'
 
   const videos = useQuery({
-    queryKey: ['videos', 'library', q, state.sort, state.page],
+    queryKey: ['videos', 'library', q, state.tags, state.desc, state.genre, state.year, state.sort, state.page],
     queryFn: () =>
       fetchVideos({
         q: q || undefined,
+        desc: state.desc || undefined,
+        genre: state.genre || undefined,
+        year: state.year ? Number(state.year) : undefined,
+        tags: state.tags,
         ungrouped: true,
         sort: state.sort,
         order: 'desc',
@@ -47,8 +51,14 @@ export function LibraryList({
   })
 
   const series = useQuery({
-    queryKey: ['series', q],
-    queryFn: fetchSeries,
+    queryKey: ['series', q, state.tags, state.desc, state.genre, state.year],
+    queryFn: () =>
+      fetchSeries({
+        q: state.desc || undefined,
+        genre: state.genre || undefined,
+        year: state.year ? Number(state.year) : undefined,
+        tags: state.tags,
+      }),
     enabled: showSeries,
   })
 
@@ -77,7 +87,7 @@ export function LibraryList({
   const showPageControls = showVideos && pageCount > 1
 
   function emptyHint(): string {
-    if (q) return '没有匹配的视频或系列'
+    if (q || state.tags.length > 0 || state.desc || state.genre || state.year) return '没有匹配的视频或系列'
     if (state.view === 'series') return '暂无系列。同一目录下多个相近命名的视频（如 S01E01、S01E02 或「第1部」「第2部」）会被自动归为一季/一部的系列。'
     if (state.view === 'standalone') return '暂无单集视频。归入系列的视频会显示在「系列」中。'
     return '暂无视频。请先在「文件管理」配置存储卷并触发扫描。'

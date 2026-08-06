@@ -28,16 +28,20 @@ func (s *Server) videoOrError(w http.ResponseWriter, r *http.Request, id string)
 func (s *Server) handleVideosList(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
 	res, err := s.videos.List(r.Context(), domain.VideoQuery{
-		Q:          r.URL.Query().Get("q"),
-		Kind:       r.URL.Query().Get("kind"),
-		Tag:        r.URL.Query().Get("tag"),
-		ShowID:     r.URL.Query().Get("showId"),
-		Ungrouped:  r.URL.Query().Get("ungrouped") == "1",
-		Sort:       r.URL.Query().Get("sort"),
-		Order:      r.URL.Query().Get("order"),
-		Page:       page,
-		PageSize:   pageSize,
+		Q:         r.URL.Query().Get("q"),
+		Desc:      r.URL.Query().Get("desc"),
+		Genre:     r.URL.Query().Get("genre"),
+		Year:      year,
+		Kind:      r.URL.Query().Get("kind"),
+		Tags:      r.URL.Query()["tag"],
+		ShowID:    r.URL.Query().Get("showId"),
+		Ungrouped: r.URL.Query().Get("ungrouped") == "1",
+		Sort:      r.URL.Query().Get("sort"),
+		Order:     r.URL.Query().Get("order"),
+		Page:      page,
+		PageSize:  pageSize,
 	})
 	if err != nil {
 		slog.Error("list videos", "err", err)

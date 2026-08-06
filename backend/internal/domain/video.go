@@ -65,9 +65,12 @@ type VideoPatch struct {
 
 // VideoQuery filters and paginates the video library.
 type VideoQuery struct {
-	Q         string // matches title or relative path
-	Kind      string // movie | episode
-	Tag       string
+	Q         string   // matches title or relative path
+	Desc      string   // matches description
+	Genre     string   // matches genre (substring)
+	Year      int      // matches year exactly
+	Kind      string   // movie | episode
+	Tags      []string // all tags must be present (AND)
 	ShowID    string
 	Ungrouped bool   // standalone videos only (not part of a series)
 	Sort      string // title | date | duration | name | rating

@@ -180,6 +180,20 @@ func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.Video
 		where = append(where, `(title LIKE ? OR relative_path LIKE ?)`)
 		args = append(args, like, like)
 	}
+	if q.Desc != "" {
+		like := "%" + q.Desc + "%"
+		where = append(where, `description LIKE ?`)
+		args = append(args, like)
+	}
+	if q.Genre != "" {
+		like := "%" + q.Genre + "%"
+		where = append(where, `genre LIKE ?`)
+		args = append(args, like)
+	}
+	if q.Year > 0 {
+		where = append(where, `year = ?`)
+		args = append(args, q.Year)
+	}
 	if q.Kind != "" {
 		where = append(where, `kind = ?`)
 		args = append(args, q.Kind)
@@ -191,9 +205,9 @@ func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.Video
 	if q.Ungrouped {
 		where = append(where, `show_id IS NULL`)
 	}
-	if q.Tag != "" {
+	for _, tag := range q.Tags {
 		where = append(where, `EXISTS (SELECT 1 FROM video_tags vt WHERE vt.video_id = videos.id AND vt.tag = ?)`)
-		args = append(args, q.Tag)
+		args = append(args, tag)
 	}
 	whereSQL := ""
 	if len(where) > 0 {

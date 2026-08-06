@@ -26,49 +26,122 @@ const (
 	StatusFailed  = "failed"
 )
 
-// Job is a persisted unit of work in the queue.
+// Job is a persisted unit of work in the queue. Progress is a fraction in
+// [0,1]; a negative value means the job's end is unknown. Subtask and
+// SubtaskProgress describe the current serial sub-task and are transient live
+// state filled by Service.AttachLive, not persisted columns.
 type Job struct {
-	ID        string  `json:"id"`
-	Type      string  `json:"type"`
-	Target    string  `json:"target"`
-	Extra     string  `json:"extra"`
-	Status    string  `json:"status"`
-	Progress  float64 `json:"progress"`
-	Error     string  `json:"error"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID              string  `json:"id"`
+	Type            string  `json:"type"`
+	Name            string  `json:"name"`
+	Target          string  `json:"target"`
+	Extra           string  `json:"extra"`
+	Status          string  `json:"status"`
+	Progress        float64 `json:"progress"`
+	Error           string  `json:"error"`
+	Internal        bool    `json:"internal"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+	Subtask         string  `json:"subtask,omitempty"`
+	SubtaskProgress float64 `json:"subtask_progress,omitempty"`
 }
 
 // Repo persists jobs (SQLite implementation lives in the store package).
 type Repo interface {
 	Enqueue(ctx context.Context, j Job) error
 	ClaimNext(ctx context.Context) (Job, bool, error)
+	MarkProgress(ctx context.Context, id string, progress float64) error
 	MarkDone(ctx context.Context, id string) error
 	MarkFailed(ctx context.Context, id, errMsg string) error
 	List(ctx context.Context, limit int) ([]Job, error)
+	HasActive(ctx context.Context, typ, target string) (bool, error)
 	ResetRunning(ctx context.Context) error
+}
+
+// LiveStatus holds transient per-job state that is not worth persisting, such
+// as the current serial sub-task line of a running long task. It is shared by
+// the Service (read via AttachLive) and the Worker (written by each job's
+// reporter).
+type LiveStatus struct {
+	mu sync.Mutex
+	m  map[string]subtaskState
+}
+
+type subtaskState struct {
+	text string
+	pct  float64 // -1 = unknown
+}
+
+// NewLiveStatus builds an empty live-status registry.
+func NewLiveStatus() *LiveStatus { return &LiveStatus{m: map[string]subtaskState{}} }
+
+// SetSubtask replaces the current sub-task line of a running job.
+func (l *LiveStatus) SetSubtask(id, text string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cur, ok := l.m[id]
+	if !ok {
+		cur.pct = -1
+	}
+	cur.text = text
+	l.m[id] = cur
+}
+
+// SetSubtaskProgress sets the current sub-task's percentage in [0,100].
+func (l *LiveStatus) SetSubtaskProgress(id string, pct float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cur := l.m[id]
+	cur.pct = pct
+	l.m[id] = cur
+}
+
+// Get returns the current sub-task line (text) and percentage (-1 unknown).
+func (l *LiveStatus) Get(id string) (text string, pct float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	s := l.m[id]
+	return s.text, s.pct
+}
+
+// Remove drops the live state of a finished job.
+func (l *LiveStatus) Remove(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.m, id)
 }
 
 // Service is the enqueue/list half of the queue.
 type Service struct {
 	repo Repo
+	live *LiveStatus
 }
 
 // NewService builds the queue service.
-func NewService(repo Repo) *Service { return &Service{repo: repo} }
+func NewService(repo Repo, live *LiveStatus) *Service {
+	return &Service{repo: repo, live: live}
+}
 
-// Enqueue appends a job in queued state.
-func (s *Service) Enqueue(ctx context.Context, typ, target, extra string) (string, error) {
+// Enqueue appends a user-facing long-running job in queued state. Name is the
+// human-readable title shown in the task panel (e.g. "扫描视频库 · 电影").
+func (s *Service) Enqueue(ctx context.Context, typ, target, name, extra string) (string, error) {
+	return s.enqueue(ctx, Job{Type: typ, Target: target, Name: name, Extra: extra})
+}
+
+// EnqueueInternal appends an internal job (short, maintenance-like work such as
+// probe/thumbnail). Internal jobs are hidden from the task panel and never
+// surface lifecycle notifications.
+func (s *Service) EnqueueInternal(ctx context.Context, typ, target, extra string) (string, error) {
+	return s.enqueue(ctx, Job{Type: typ, Target: target, Extra: extra, Internal: true})
+}
+
+func (s *Service) enqueue(ctx context.Context, j Job) (string, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	j := Job{
-		ID:        ulid.Make().String(),
-		Type:      typ,
-		Target:    target,
-		Extra:     extra,
-		Status:    StatusQueued,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
+	j.ID = ulid.Make().String()
+	j.Status = StatusQueued
+	j.Progress = -1
+	j.CreatedAt = now
+	j.UpdatedAt = now
 	if err := s.repo.Enqueue(ctx, j); err != nil {
 		return "", err
 	}
@@ -80,8 +153,39 @@ func (s *Service) List(ctx context.Context, limit int) ([]Job, error) {
 	return s.repo.List(ctx, limit)
 }
 
-// Handler executes a job.
-type Handler func(ctx context.Context, j Job) error
+// AttachLive merges the transient sub-task state onto a job list so handlers
+// can expose the current serial sub-task line alongside each running job.
+func (s *Service) AttachLive(list []Job) {
+	for i := range list {
+		text, pct := s.live.Get(list[i].ID)
+		list[i].Subtask = text
+		list[i].SubtaskProgress = pct
+	}
+}
+
+// HasActive reports whether a job of typ targeting resource target is queued
+// or running. Callers use it to refuse conflicting operations while a long
+// task owns a resource — e.g. a rescan locks its storage volume until the
+// scan result is persisted.
+func (s *Service) HasActive(ctx context.Context, typ, target string) (bool, error) {
+	return s.repo.HasActive(ctx, typ, target)
+}
+
+// Reporter is the live-status channel of a running job. Progress is persisted
+// (overall bar, crash recovery); the sub-task line is transient in-memory
+// state that is replaced in place as a long task serially steps through its
+// child work.
+type Reporter interface {
+	// Progress sets the job's overall progress in [0,1].
+	Progress(fraction float64)
+	// Subtask replaces the current sub-task status line.
+	Subtask(text string)
+	// SubtaskProgress sets the current sub-task's percentage in [0,100].
+	SubtaskProgress(pct float64)
+}
+
+// Handler executes a job and may report progress through report.
+type Handler func(ctx context.Context, j Job, report Reporter) error
 
 // Worker pulls queued jobs and runs them through the handler with bounded
 // concurrency. Running jobs left over from a previous process are requeued on
@@ -90,14 +194,24 @@ type Worker struct {
 	repo        Repo
 	handler     Handler
 	concurrency int
+	live        *LiveStatus
+	notify      func(ctx context.Context, j Job, err error)
 }
 
 // NewWorker builds a worker pool.
-func NewWorker(repo Repo, handler Handler, concurrency int) *Worker {
+func NewWorker(repo Repo, handler Handler, concurrency int, live *LiveStatus) *Worker {
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	return &Worker{repo: repo, handler: handler, concurrency: concurrency}
+	return &Worker{repo: repo, handler: handler, concurrency: concurrency, live: live}
+}
+
+// SetNotify installs a lifecycle callback invoked with the finished job and a
+// nil error on success, or the failure reason otherwise. It runs after the job
+// row is persisted, so listeners always observe the final status. Internal
+// jobs are not reported.
+func (w *Worker) SetNotify(fn func(ctx context.Context, j Job, err error)) {
+	w.notify = fn
 }
 
 // Run processes jobs until ctx is cancelled. The goroutine dispatcher loop
@@ -138,17 +252,101 @@ func (w *Worker) Run(ctx context.Context) {
 		go func(j Job) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			var runErr error
 			defer func() {
 				if p := recover(); p != nil {
-					_ = w.repo.MarkFailed(ctx, j.ID, fmt.Sprintf("panic: %v", p))
+					runErr = fmt.Errorf("panic: %v", p)
+				}
+				final := j
+				if runErr != nil {
+					slog.Warn("job failed", "id", j.ID, "type", j.Type, "err", runErr)
+					_ = w.repo.MarkFailed(ctx, j.ID, runErr.Error())
+					final.Status = StatusFailed
+					final.Error = runErr.Error()
+				} else {
+					_ = w.repo.MarkDone(ctx, j.ID)
+					final.Status = StatusDone
+				}
+				if w.live != nil {
+					w.live.Remove(j.ID)
+				}
+				if w.notify != nil && !j.Internal {
+					w.notify(ctx, final, runErr)
 				}
 			}()
-			if err := w.handler(ctx, j); err != nil {
-				slog.Warn("job failed", "id", j.ID, "type", j.Type, "err", err)
-				_ = w.repo.MarkFailed(ctx, j.ID, err.Error())
-				return
-			}
-			_ = w.repo.MarkDone(ctx, j.ID)
+			report := newJobReporter(ctx, w.repo, j.ID, w.live)
+			runErr = w.handler(ctx, j, report)
+			report.flush()
 		}(job)
 	}
+}
+
+// jobReporter implements Reporter for one running job: overall progress is
+// persisted with throttling so a long scan doesn't hammer SQLite, and the
+// sub-task line lives in the shared in-memory LiveStatus.
+type jobReporter struct {
+	ctx      context.Context
+	repo     Repo
+	id       string
+	live     *LiveStatus
+	mu       sync.Mutex
+	last     float64
+	lastTime time.Time
+}
+
+const (
+	progressInterval = 250 * time.Millisecond
+	progressMinDelta = 0.01
+)
+
+func newJobReporter(ctx context.Context, repo Repo, id string, live *LiveStatus) *jobReporter {
+	return &jobReporter{ctx: ctx, repo: repo, id: id, live: live, last: -1}
+}
+
+// Progress records a new overall value, persisting it if it is far enough
+// from the last written value. Values outside [0,1] are ignored.
+func (r *jobReporter) Progress(fraction float64) {
+	if fraction < 0 || fraction > 1 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if r.last >= 0 && now.Sub(r.lastTime) < progressInterval && absFloat(fraction-r.last) < progressMinDelta {
+		return
+	}
+	r.last = fraction
+	r.lastTime = now
+	_ = r.repo.MarkProgress(r.ctx, r.id, fraction)
+}
+
+// flush persists the most recent value, covering a progress report that was
+// skipped by throttling right before the handler returned.
+func (r *jobReporter) flush() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.last >= 0 {
+		_ = r.repo.MarkProgress(r.ctx, r.id, r.last)
+	}
+}
+
+// Subtask replaces the current sub-task status line (in-memory only).
+func (r *jobReporter) Subtask(text string) {
+	if r.live != nil {
+		r.live.SetSubtask(r.id, text)
+	}
+}
+
+// SubtaskProgress sets the current sub-task's percentage.
+func (r *jobReporter) SubtaskProgress(pct float64) {
+	if r.live != nil {
+		r.live.SetSubtaskProgress(r.id, pct)
+	}
+}
+
+func absFloat(n float64) float64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

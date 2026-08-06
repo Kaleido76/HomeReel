@@ -62,7 +62,8 @@ func run() error {
 
 	storageSvc := storage.New(store.NewStorageRepo(database))
 	filesSvc := files.NewService(filepath.Join(cfg.Server.DataDir, "uploads"))
-	jobsSvc := jobs.NewService(store.NewJobRepo(database))
+	live := jobs.NewLiveStatus()
+	jobsSvc := jobs.NewService(store.NewJobRepo(database), live)
 	bus := events.New()
 	videosRepo := store.NewVideoRepo(database)
 	showsRepo := store.NewShowRepo(database)
@@ -123,8 +124,19 @@ func run() error {
 		}
 	}()
 
-	// Background job worker (ADR-008).
-	worker := jobs.NewWorker(store.NewJobRepo(database), scannerSvc.HandleJob, cfg.Media.ProbeConcurrency)
+	// Background job worker (ADR-008). Job results are published on the bus so
+	// any component can react to a long task finishing (e.g. the explorer
+	// unlocks a volume the moment its scan lands).
+	worker := jobs.NewWorker(store.NewJobRepo(database), scannerSvc.HandleJob, cfg.Media.ProbeConcurrency, live)
+	worker.SetNotify(func(ctx context.Context, j jobs.Job, err error) {
+		typ := events.JobDone
+		data := map[string]string{"job_id": j.ID, "type": j.Type, "target": j.Target}
+		if err != nil {
+			typ = events.JobFailed
+			data["error"] = err.Error()
+		}
+		bus.Publish(events.Event{Type: typ, Data: data})
+	})
 	go worker.Run(ctx)
 
 	// Watch enabled storage volumes for changes.

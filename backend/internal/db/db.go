@@ -194,6 +194,10 @@ var migrations = []string{
 	// 分段 MP4（多个 mdat 盒子 / moof 分片，hls.js 拼接文件）：Chrome 直连
 	// 会整文件下载，探测时标记 segmented，能力探测据此走 HLS。
 	`ALTER TABLE videos ADD COLUMN segmented INTEGER NOT NULL DEFAULT 0`,
+	// 长时任务（jobs）：name 用于任务面板展示，internal 标记探测/缩略图等
+	// 内部短任务（对用户隐藏、不发通知）。
+	`ALTER TABLE jobs ADD COLUMN name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE jobs ADD COLUMN internal INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

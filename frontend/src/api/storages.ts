@@ -11,6 +11,7 @@ export interface Storage {
   readonly: boolean
   enabled: boolean
   available: boolean
+  busy: boolean
   created_at: string
 }
 

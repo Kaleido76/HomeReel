@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 
 	"homereel/backend/internal/domain"
 )
@@ -76,7 +77,32 @@ func seriesDisplayName(title string, number int, kind string) string {
 	return title + " 第" + strconv.Itoa(number) + "季"
 }
 
-func (r *seriesRepo) List(ctx context.Context) ([]domain.Series, error) {
+func (r *seriesRepo) List(ctx context.Context, q domain.SeriesQuery) ([]domain.Series, error) {
+	var where []string
+	var args []any
+	if q.Q != "" {
+		like := "%" + q.Q + "%"
+		where = append(where, `(s.name LIKE ? OR s.overview LIKE ?)`)
+		args = append(args, like, like)
+	}
+	if q.Genre != "" {
+		like := "%" + q.Genre + "%"
+		where = append(where, `s.genre LIKE ?`)
+		args = append(args, like)
+	}
+	if q.Year > 0 {
+		where = append(where, `s.year = ?`)
+		args = append(args, q.Year)
+	}
+	for _, tag := range q.Tags {
+		where = append(where, `EXISTS (SELECT 1 FROM videos v JOIN video_tags vt ON vt.video_id = v.id
+			WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode' AND vt.tag = ?)`)
+		args = append(args, tag)
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = " WHERE " + strings.Join(where, " AND ")
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+seriesCols+`,
 			(SELECT COUNT(*) FROM videos v
@@ -85,8 +111,8 @@ func (r *seriesRepo) List(ctx context.Context) ([]domain.Series, error) {
 				WHERE sl.series_id = se.id OR sl.linked_series_id = se.id) AS link_count,
 			COALESCE((SELECT SUM(v.duration) FROM videos v
 				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode'), 0) AS total_duration
-		FROM seasons se JOIN shows s ON s.id = se.show_id
-		ORDER BY s.name, se.number`)
+		FROM seasons se JOIN shows s ON s.id = se.show_id`+whereSQL+`
+		ORDER BY s.name, se.number`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"homereel/backend/internal/domain"
 )
 
 func mustVideo(t *testing.T, svc *Service, ctx context.Context, root, rel string) string {
@@ -15,7 +17,7 @@ func mustVideo(t *testing.T, svc *Service, ctx context.Context, root, rel string
 // A lone episode-named file stays standalone; two similar files in one
 // directory become a series (one season, two ordered members).
 func TestGroupSameDirSeries(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mustVideo(t, svc, ctx, root, "Foo.S01E01.mkv")
@@ -42,7 +44,7 @@ func TestGroupSameDirSeries(t *testing.T) {
 		}
 	}
 
-	series, err := svc.series.List(ctx)
+	series, err := svc.series.List(ctx, domain.SeriesQuery{})
 	if err != nil || len(series) != 1 {
 		t.Fatalf("series = %+v, err=%v", series, err)
 	}
@@ -54,7 +56,7 @@ func TestGroupSameDirSeries(t *testing.T) {
 // A Season folder is itself an explicit series relationship, even with a
 // single episode.
 func TestGroupSeasonFolder(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mustVideo(t, svc, ctx, root, "Show/Season 1/e01.mkv")
@@ -64,7 +66,7 @@ func TestGroupSeasonFolder(t *testing.T) {
 	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	series, err := svc.series.List(ctx)
+	series, err := svc.series.List(ctx, domain.SeriesQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestGroupSeasonFolder(t *testing.T) {
 
 // Movie franchise parts (Part N / numeric suffix) group into linked series.
 func TestGroupMovieParts(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mustVideo(t, svc, ctx, root, "Bar 1.mkv")
@@ -97,7 +99,7 @@ func TestGroupMovieParts(t *testing.T) {
 	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	series, err := svc.series.List(ctx)
+	series, err := svc.series.List(ctx, domain.SeriesQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +131,7 @@ func TestGroupMovieParts(t *testing.T) {
 // Missing positions are preserved: a series with episodes 1 and 3 keeps the
 // gap (no ordering by DB id).
 func TestGroupKeepsGaps(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mustVideo(t, svc, ctx, root, "Gap.S01E01.mkv")
@@ -138,7 +140,7 @@ func TestGroupKeepsGaps(t *testing.T) {
 	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	series, err := svc.series.List(ctx)
+	series, err := svc.series.List(ctx, domain.SeriesQuery{})
 	if err != nil || len(series) != 1 {
 		t.Fatalf("series = %+v err=%v", series, err)
 	}

@@ -100,7 +100,7 @@ export function StorageSidebar({
                     <button
                       key={s.id}
                       onClick={() => onSelect(s.id)}
-                      title={`${s.name} · ${s.available ? '在线' : '离线'}`}
+                      title={`${s.name} · ${s.available ? '在线' : '离线'}${s.busy ? ' · 扫描中' : ''}`}
                       className={`relative rounded-lg p-2 transition-colors ${
                         s.id === selectedId ? 'bg-blue-50 text-blue-600' : 'text-neutral-500 hover:bg-neutral-100'
                       }`}
@@ -111,6 +111,12 @@ export function StorageSidebar({
                           s.available ? 'bg-emerald-500' : 'bg-neutral-300'
                         }`}
                       />
+                      {s.busy && (
+                        <span className="absolute -left-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center">
+                          <span className="absolute inline-flex h-3 w-3 animate-ping rounded-full bg-blue-400 opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-600" />
+                        </span>
+                      )}
                     </button>
                   )
                 })}
@@ -190,6 +196,9 @@ function StoragePanel({
             >
               <Icon className="size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
+              {s.busy && (
+                <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-600">扫描中</span>
+              )}
               <span
                 title={s.available ? `${typeLabels[s.type]} · 在线` : `${typeLabels[s.type]} · 离线`}
                 className={`size-2 shrink-0 rounded-full ${s.available ? 'bg-emerald-500' : 'bg-neutral-300'}`}
@@ -197,21 +206,23 @@ function StoragePanel({
               <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
                 <button
                   title="刷新探测"
+                  disabled={s.busy}
                   onClick={(e) => {
                     e.stopPropagation()
                     refreshMut.mutate(s.id)
                   }}
-                  className="rounded p-0.5 hover:bg-neutral-200"
+                  className="rounded p-0.5 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <RefreshCw className="size-3.5" />
+                  {s.busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                 </button>
                 <button
-                  title="移除"
+                  title={s.busy ? '扫描完成后才能移除' : '移除'}
+                  disabled={s.busy}
                   onClick={(e) => {
                     e.stopPropagation()
                     remove(s)
                   }}
-                  className="rounded p-0.5 text-red-500 hover:bg-red-50"
+                  className="rounded p-0.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Trash2 className="size-3.5" />
                 </button>

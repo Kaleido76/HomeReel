@@ -59,7 +59,7 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	}
 	storageSvc := storage.New(store.NewStorageRepo(database))
 	filesSvc := files.NewService(t.TempDir())
-	jobsSvc := jobs.NewService(store.NewJobRepo(database))
+	jobsSvc := jobs.NewService(store.NewJobRepo(database), jobs.NewLiveStatus())
 	videosRepo := store.NewVideoRepo(database)
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
@@ -222,7 +222,7 @@ func TestEmptyStoragesListIsArray(t *testing.T) {
 }
 
 func TestStorageLifecycle(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	root := t.TempDir()
 
@@ -270,6 +270,19 @@ func TestStorageLifecycle(t *testing.T) {
 	resp, body = doJSON(t, "POST", ts.URL+"/api/storages/"+id+"/refresh", "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh = %d, want 200 (body %s)", resp.StatusCode, body)
+	}
+
+	// Refresh schedules a rescan of the volume, which locks it until the scan
+	// finishes: mutating operations must be refused with 409 storage_busy.
+	resp, body = doJSON(t, "DELETE", ts.URL+"/api/storages/"+id, "", cookie)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "storage_busy") {
+		t.Fatalf("delete while scanning = %d, want 409 storage_busy (body %s)", resp.StatusCode, body)
+	}
+
+	// No worker consumes the queued rescan in the test handler, so drain the
+	// queue to simulate the scan result landing; the volume then unlocks.
+	if _, err := database.Exec(`DELETE FROM jobs`); err != nil {
+		t.Fatalf("drain jobs: %v", err)
 	}
 
 	resp, body = doJSON(t, "DELETE", ts.URL+"/api/storages/"+id, "", cookie)

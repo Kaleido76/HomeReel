@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,14 @@ import (
 	"homereel/backend/internal/store"
 )
 
-func newTestScanner(t *testing.T) (*Service, *jobs.Service) {
+// scanCalls counts inline probe/thumbnail invocations so tests can assert the
+// serial per-file work without relying on the async job queue.
+type scanCalls struct {
+	probes int
+	thumbs int
+}
+
+func newTestScanner(t *testing.T) (*Service, *jobs.Service, *scanCalls) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -25,7 +33,7 @@ func newTestScanner(t *testing.T) (*Service, *jobs.Service) {
 	if err := db.Migrate(database); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	jobsSvc := jobs.NewService(store.NewJobRepo(database))
+	jobsSvc := jobs.NewService(store.NewJobRepo(database), jobs.NewLiveStatus())
 	svc := New(
 		store.NewVideoRepo(database),
 		store.NewStorageRepo(database),
@@ -38,11 +46,16 @@ func newTestScanner(t *testing.T) (*Service, *jobs.Service) {
 		"ffmpeg",
 		t.TempDir(),
 	)
+	calls := &scanCalls{}
 	svc.probe = func(context.Context, string, string) (media.Info, error) {
+		calls.probes++
 		return media.Info{Duration: 90, Codec: "h264", Container: "mp4", Width: 1920, Height: 1080}, nil
 	}
-	svc.thumbnail = func(context.Context, string, string, string, string, float64) error { return nil }
-	return svc, jobsSvc
+	svc.thumbnail = func(context.Context, string, string, string, string, float64) error {
+		calls.thumbs++
+		return nil
+	}
+	return svc, jobsSvc, calls
 }
 
 func mkVideo(t *testing.T, path string) {
@@ -74,7 +87,7 @@ func ensureStorage(t *testing.T, svc *Service, root string) domain.Storage {
 }
 
 func TestScanAddsAndReScans(t *testing.T) {
-	svc, jobsSvc := newTestScanner(t)
+	svc, _, calls := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "a.mp4"))
@@ -87,12 +100,11 @@ func TestScanAddsAndReScans(t *testing.T) {
 	if res.Added != 2 || res.Unchanged != 0 {
 		t.Fatalf("first scan result = %+v", res)
 	}
-	jobs, _ := jobsSvc.List(ctx, 10)
-	if len(jobs) != 2 {
-		t.Fatalf("probe jobs = %d, want 2", len(jobs))
+	if calls.probes != 2 || calls.thumbs != 2 {
+		t.Fatalf("inline work = probes %d thumbs %d, want 2/2", calls.probes, calls.thumbs)
 	}
 
-	// Second scan: unchanged, no new jobs.
+	// Second scan: unchanged files with metadata present — no re-probe.
 	res, err = svc.Scan(ctx, ensureStorage(t, svc, root))
 	if err != nil {
 		t.Fatalf("re-scan: %v", err)
@@ -100,10 +112,13 @@ func TestScanAddsAndReScans(t *testing.T) {
 	if res.Added != 0 || res.Unchanged != 2 || res.Missing != 0 {
 		t.Fatalf("re-scan result = %+v", res)
 	}
+	if calls.probes != 2 || calls.thumbs != 2 {
+		t.Fatalf("re-scan re-processed files: probes %d thumbs %d", calls.probes, calls.thumbs)
+	}
 }
 
 func TestScanDetectsMoveByFileID(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "movie.mp4"))
@@ -134,7 +149,7 @@ func TestScanDetectsMoveByFileID(t *testing.T) {
 }
 
 func TestScanMarksDeleted(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "gone.mp4"))
@@ -159,32 +174,71 @@ func TestScanMarksDeleted(t *testing.T) {
 }
 
 func TestReProbeWhenMetadataMissing(t *testing.T) {
-	svc, jobsSvc := newTestScanner(t)
+	svc, _, calls := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "a.mp4"))
 
-	// First scan: no metadata yet (probe jobs never ran), 1 probe enqueued.
+	failProbe := true
+	svc.probe = func(context.Context, string, string) (media.Info, error) {
+		calls.probes++
+		if failProbe {
+			return media.Info{}, errors.New("probe failed")
+		}
+		return media.Info{Duration: 90, Codec: "h264", Container: "mp4"}, nil
+	}
+
+	// First scan: probe fails, so the video keeps no metadata.
 	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	jobs, _ := jobsSvc.List(ctx, 10)
-	if len(jobs) != 1 {
-		t.Fatalf("jobs after first scan = %d, want 1", len(jobs))
+	if calls.probes != 1 {
+		t.Fatalf("probes after first scan = %d, want 1", calls.probes)
 	}
 
-	// Unchanged file but metadata still missing → must re-probe.
+	// Unchanged file but metadata still missing → must re-probe (self-heal).
+	failProbe = false
 	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
-	jobs, _ = jobsSvc.List(ctx, 10)
-	if len(jobs) != 2 {
-		t.Fatalf("jobs after re-scan = %d, want 2 (re-probe)", len(jobs))
+	if calls.probes != 2 {
+		t.Fatalf("probes after re-scan = %d, want 2 (re-probe)", calls.probes)
+	}
+}
+
+func TestScanReportsSubTasks(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	mkVideo(t, filepath.Join(root, "a.mp4"))
+
+	var texts []string
+	var pcts []float64
+	_, err := svc.scan(ctx, ensureStorage(t, svc, root), nil, func(text string, pct float64) {
+		if text != "" {
+			texts = append(texts, text)
+			pcts = append(pcts, pct)
+		}
+	})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	want := []string{"探测 a.mp4", "生成 a.mp4 的缩略图"}
+	if len(texts) != len(want) {
+		t.Fatalf("sub-tasks = %v, want %v", texts, want)
+	}
+	for i := range want {
+		if texts[i] != want[i] {
+			t.Fatalf("sub-task[%d] = %q, want %q", i, texts[i], want[i])
+		}
+		if pcts[i] < 0 {
+			t.Fatalf("sub-task[%d] pct = %v, want >= 0", i, pcts[i])
+		}
 	}
 }
 
 func TestScanSkipsWhenRootUnreachable(t *testing.T) {
-	svc, _ := newTestScanner(t)
+	svc, _, _ := newTestScanner(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "a.mp4"))

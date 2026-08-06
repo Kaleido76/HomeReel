@@ -47,8 +47,11 @@ export interface VideoListResult {
 
 export interface VideoQuery {
   q?: string
+  desc?: string
+  genre?: string
+  year?: number
   kind?: 'movie' | 'episode'
-  tag?: string
+  tags?: string[]
   showId?: string
   ungrouped?: boolean
   sort?: 'title' | 'date' | 'duration' | 'name' | 'rating'
@@ -99,8 +102,11 @@ export interface TagCount {
 export function fetchVideos(query: VideoQuery = {}): Promise<VideoListResult> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
+  if (query.desc) params.set('desc', query.desc)
+  if (query.genre) params.set('genre', query.genre)
+  if (query.year) params.set('year', String(query.year))
   if (query.kind) params.set('kind', query.kind)
-  if (query.tag) params.set('tag', query.tag)
+  for (const tag of query.tags ?? []) params.append('tag', tag)
   if (query.showId) params.set('showId', query.showId)
   if (query.ungrouped) params.set('ungrouped', '1')
   if (query.sort) params.set('sort', query.sort)

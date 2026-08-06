@@ -187,7 +187,7 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
 // season) or removed from one. It PATCHes show_id / season_number /
 // episode_number, which the backend treats as the authoritative grouping source.
 function SeriesAssign({ video, save }: { video: Video; save: (patch: Parameters<typeof updateVideo>[1]) => void }) {
-  const seriesQuery = useQuery({ queryKey: ['series'], queryFn: fetchSeries })
+  const seriesQuery = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
   const [showId, setShowId] = useState(video.show_id ?? '')
   const [episode, setEpisode] = useState(video.episode_number ?? 1)
   const [saving, setSaving] = useState(false)

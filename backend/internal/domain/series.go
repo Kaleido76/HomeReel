@@ -47,9 +47,17 @@ type SeriesLink struct {
 	SortIndex   int    `json:"sort_index"`
 }
 
+// SeriesQuery filters the series list. Q matches the show name or overview.
+type SeriesQuery struct {
+	Q     string   // matches show name or overview
+	Genre string   // matches genre (substring)
+	Year  int      // matches year exactly
+	Tags  []string // every tag present on at least one member video
+}
+
 // SeriesRepo persists series (seasons) and their weak links.
 type SeriesRepo interface {
-	List(ctx context.Context) ([]Series, error)
+	List(ctx context.Context, q SeriesQuery) ([]Series, error)
 	// Get returns the series identified by its season id.
 	Get(ctx context.Context, id string) (Series, error)
 	// FindID resolves the series (season) id for a show/season pair.

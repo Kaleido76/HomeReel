@@ -9,6 +9,8 @@ const (
 	VideoDeleted     = "video.deleted"
 	StorageMounted   = "storage.mounted"
 	StorageUnmounted = "storage.unmounted"
+	JobDone          = "jobs.done"
+	JobFailed        = "jobs.failed"
 )
 
 // Event carries a typed message with string-keyed data.

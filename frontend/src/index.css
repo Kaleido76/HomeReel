@@ -33,6 +33,20 @@ body {
   scrollbar-color: theme(--color-neutral-300) transparent;
 }
 
+/* 不确定进度条（后台任务面板）：一条色块在轨道内来回滑过，表示任务进行中 */
+@keyframes indeterminate-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.indeterminate-bar {
+  animation: indeterminate-slide 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

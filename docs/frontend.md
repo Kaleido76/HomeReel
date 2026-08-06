@@ -15,7 +15,8 @@
 - 跨页签跳转走 `openVideo/openSeries/openLibrary`（切到 library 页签再 navigate）。
 - **新增子路由必须归属到某个页签的 router**（`tabs/routers.ts`），并在 `tabFromPath` 补路径映射，
   禁止添加全局平级路由；改动此类路由结构时勿破坏 keep-alive。
-- 深链/刷新按 URL 恢复对应页签视图；库的视图状态（`view/q/sort/page`）与搜索词 `q` 存在 URL 参数中。
+- 深链/刷新按 URL 恢复对应页签视图；库的视图状态（`view/q/sort/page` + 高级筛选 `tags/desc/genre/year`）与
+  搜索词 `q` 存在 URL 参数中。
 
 ## 2. Library 栏位栈布局（宽屏 ≥lg）
 
@@ -28,8 +29,12 @@
 - **URL 即栈**：`/library`=`[浏览]`、`/library/video/:id`=`[浏览][单集详情]`、
   `/library/video/:id/play`=`[浏览][单集详情][播放]`、`/series/:id`=`[浏览][系列详情]`、
   `/series/:id/video/:videoId`=`[浏览][系列详情][单集详情]`、`/series/:id/play/:videoId`=`[浏览][系列详情][播放]`。
-- **过滤器是浏览栏的一部分**（`全部/单集/系列` tab + 搜索 + 排序，位于浏览栏顶部，随浏览栏一起被挤出屏幕；
+- **过滤器是浏览栏的一部分**（`全部/单集/系列` tab + 搜索框 + 高级筛选按钮，位于浏览栏顶部，随浏览栏一起被挤出屏幕；
   窄屏仅浏览视图显示）。
+- **高级筛选面板**（`AdvancedFilter.tsx`，替换了原排序下拉）：JobsIndicator 同款开关——首次点击展开、再次点击
+  **应用并收起**；内含 标签（多选 chips，来自 `/api/tags`）/ 简介 / 类型 / 年份 过滤器 + 排序下拉；面板保留
+  本地草稿，应用前不生效；有激活筛选时按钮显示蓝色徽标计数，面板内「重置」仅清空草稿。
+  `tags` 在 URL 中逗号连接存储，`parseGridSearch` 还原为数组。
 - 系列详情成员行有**播放/续播 + 详情**两按钮：播放直达播放栏（左侧保留系列详情，不再插入单集详情）；
   详情打开单集详情栏（顶部有「返回系列」条）。
 - **替换逻辑（仅系列剧集）**：从系列内单集详情点播放时，单集详情栏被替换成播放栏
@@ -42,9 +47,9 @@
 - 播放栏=`PlayerPane`：**顶部退出播放条** + 播放器 + 简略元信息 + 系列内上下集/自动连播 +
   **「接下来播放」列表**（当前集后的至多 3 个成员，小缩略图低调展示）。
 - **窄屏（<lg）**退化为单栏全页（浏览→详情→播放，`NarrowBack` 返回条），复用同一批组件。
-- 网格筛选状态（`view/q/sort/page`）存于 `LibraryLayout` 组件 state（`features/library/types.ts`），
-  仅 `/library` 页写回 URL。子页面组件（`VideoDetailPane`/`PlayerPane`/`SeriesDetailPage`）以 props 接收
-  id，不用 `useParams`。
+- 网格筛选状态（`view/q/sort/page` + `tags/desc/genre/year`）存于 `LibraryLayout` 组件 state
+  （`features/library/types.ts`），仅 `/library` 页写回 URL。子页面组件（`VideoDetailPane`/`PlayerPane`/
+  `SeriesDetailPage`）以 props 接收 id，不用 `useParams`。
 - 播放器切走自动暂停：`VideoPlayer` 订阅页签 store，非 library 页签即 `remote.pause()`，切回保持暂停由
   用户手动播放。
 - 视频卡片任意页签点击 → 切到视频库页签打开播放器。
@@ -82,6 +87,11 @@
 - 页签文字标签 `<sm` 断点隐藏仅留图标（`hidden sm:inline`），窄屏页签列表 `overflow-x-auto`。
 - Logo 与「退出登录」保持原样。
 - **重封页签（2026-09 新增）**：图标 `Wrench`，root `/remux`，管理分段 MP4 的手动重封（见 [media.md](media.md) §3）。
+- **后台任务按钮（JobsIndicator）**：header 右侧、退出登录旁。双鱼箭头图标（`RefreshCw`）在有长时任务
+  时 `animate-spin` 并显示数量徽标；点击弹出任务面板（`features/jobs/JobsIndicator.tsx`，轮询
+  `GET /api/jobs`，进行中 1s / 空闲 15s）。面板为 `absolute` 覆盖自身区域，**不因点击外部消失**，仅
+  再次点击按钮收起。任务行展示名称 + 进度：`progress>=0` 为确定进度条，否则 `.indeterminate-bar`
+  动态滑条（`index.css`）。只显示 `internal=false` 的长时任务（扫描/重封）。
 
 ## 6. Explorer 文件页
 
@@ -98,4 +108,3 @@
 - 浏览栏**悬浮卡片**：每行一张 `border-neutral-200 bg-white rounded-lg shadow-sm` 卡片，行间 `gap-1.5`
   留白；hover `-translate-y-0.5` 上浮 + `border-blue-400/60` 描边变蓝 + `bg-blue-50/40` + `shadow-md`，
   `transition-all duration-200`；选中 `border-blue-500 bg-blue-50 ring-1 ring-blue-500/30`；封面无缩放动画。
-- 过滤器排序下拉在「系列」视图**禁用而非隐藏**（高度一致）。

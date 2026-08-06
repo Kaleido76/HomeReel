@@ -19,6 +19,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.storageBusyOrError(w, r, st.ID) {
+		return
+	}
 	if st.Readonly {
 		writeError(w, http.StatusForbidden, "readonly", "只读存储卷，拒绝写入")
 		return

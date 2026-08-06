@@ -12,7 +12,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const id = seriesId
   const queryClient = useQueryClient()
   const detail = useQuery({ queryKey: ['series', id], queryFn: () => fetchSeriesDetail(id) })
-  const allSeries = useQuery({ queryKey: ['series'], queryFn: fetchSeries })
+  const allSeries = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
   const [pick, setPick] = useState('')
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['series', id] })

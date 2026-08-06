@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +92,15 @@ type ScanResult struct {
 // ADR-012). If the volume root is unreachable the scan aborts without marking
 // anything missing, so an unplugged drive never loses metadata (ADR-014).
 func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, error) {
+	return s.scan(ctx, st, nil, nil)
+}
+
+// subtaskFn reports the current serial sub-task: a status line (replaced in
+// place by the frontend) and an optional within-file percentage in [0,100]
+// (negative means unknown).
+type subtaskFn func(text string, pct float64)
+
+func (s *Service) scan(ctx context.Context, st domain.Storage, progress func(done, total int), subtask subtaskFn) (ScanResult, error) {
 	var res ScanResult
 	res.StorageID = st.ID
 	if !pathReachable(st.RootPath, 3*time.Second) {
@@ -111,13 +123,17 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 	if err != nil {
 		return res, err
 	}
+	total := len(candidates)
 
 	// Videos whose grouping may have changed are re-grouped in one pass after
 	// every candidate is indexed, so same-directory siblings are visible when
 	// deciding whether a file belongs to a series.
 	toGroup := []string{}
 
-	for _, c := range candidates {
+	for i, c := range candidates {
+		if progress != nil {
+			progress(i, total)
+		}
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
@@ -125,7 +141,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 			if cur.Size == c.size && cur.MTime == c.mtime {
 				_ = s.videos.Touch(ctx, cur.ID, scanStart)
 				if needsProbe(cur) {
-					s.enqueueProbe(ctx, cur.ID)
+					s.processInline(ctx, cur.ID, subtask)
 				}
 				// Backfill grouping for videos indexed before the series
 				// reorganization: rows defaulted to kind=movie whose path is
@@ -139,7 +155,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 				res.Unchanged++
 			} else {
 				_ = s.videos.UpdateFingerprint(ctx, cur.ID, c.path, c.rel, c.size, c.mtime, scanStart)
-				s.enqueueProbe(ctx, cur.ID)
+				s.processInline(ctx, cur.ID, subtask)
 				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": cur.ID}})
 				toGroup = append(toGroup, cur.ID)
 				res.Updated++
@@ -150,7 +166,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 			// Same file moved/renamed: keep the record, update the path.
 			_ = s.videos.UpdateFingerprint(ctx, moved.ID, c.path, c.rel, c.size, c.mtime, scanStart)
 			if moved.Size != c.size || moved.MTime != c.mtime || needsProbe(moved) {
-				s.enqueueProbe(ctx, moved.ID)
+				s.processInline(ctx, moved.ID, subtask)
 				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": moved.ID}})
 			}
 			toGroup = append(toGroup, moved.ID)
@@ -175,7 +191,7 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 			continue
 		}
 		toGroup = append(toGroup, v.ID)
-		s.enqueueProbe(ctx, v.ID)
+		s.processInline(ctx, v.ID, subtask)
 		res.Added++
 	}
 
@@ -194,47 +210,111 @@ func (s *Service) Scan(ctx context.Context, st domain.Storage) (ScanResult, erro
 	return res, nil
 }
 
+// processInline probes a video and generates its cover/thumbnail synchronously,
+// reporting each step as a serial sub-task of the enclosing scan. Per-file
+// failure is non-fatal: metadata stays empty and the next scan re-probes it
+// (self-healing). The scan runs these strictly serially so the host never
+// saturates under a burst of ffprobe/ffmpeg processes.
+func (s *Service) processInline(ctx context.Context, videoID string, subtask subtaskFn) {
+	v, err := s.videos.Get(ctx, videoID)
+	if err != nil {
+		slog.Warn("inline get video", "video_id", videoID, "err", err)
+		return
+	}
+	name := filepath.Base(v.Path)
+
+	if subtask != nil {
+		subtask("探测 "+name, 5)
+	}
+	info, err := s.probe(ctx, s.ffprobePath, v.Path)
+	if err != nil {
+		slog.Warn("inline probe", "video_id", videoID, "err", err)
+		return
+	}
+	upd := v
+	upd.Title = titleFromPath(v.RelativePath)
+	upd.Duration = info.Duration
+	upd.Codec = info.Codec
+	upd.Container = info.Container
+	upd.Segmented = info.Segmented
+	upd.Width = info.Width
+	upd.Height = info.Height
+	if err := s.videos.UpdateProbe(ctx, upd); err != nil {
+		slog.Warn("inline update probe", "video_id", videoID, "err", err)
+		return
+	}
+
+	if subtask != nil {
+		subtask("生成 "+name+" 的缩略图", 60)
+	}
+	cover := filepath.Join(s.coversDir, videoID+".jpg")
+	thumb := filepath.Join(s.thumbsDir, videoID+".thumb.jpg")
+	if err := s.thumbnail(ctx, s.ffmpegPath, v.Path, cover, thumb, info.Duration); err != nil {
+		slog.Warn("inline thumbnail", "video_id", videoID, "err", err)
+		return
+	}
+	relCover := filepath.ToSlash(filepath.Join("covers", videoID+".jpg"))
+	relThumb := filepath.ToSlash(filepath.Join("thumbs", videoID+".thumb.jpg"))
+	if err := s.videos.UpdateCovers(ctx, videoID, relCover, relThumb); err != nil {
+		slog.Warn("inline update covers", "video_id", videoID, "err", err)
+	}
+
+	if subtask != nil {
+		subtask("", -1)
+	}
+}
+
 // HandleJob is the jobs.Worker handler for probe/thumbnail/rescan/remux jobs.
-func (s *Service) HandleJob(ctx context.Context, j jobs.Job) error {
+func (s *Service) HandleJob(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
 	switch j.Type {
 	case jobs.TypeProbe:
-		return s.handleProbe(ctx, j)
+		return s.handleProbe(ctx, j, report)
 	case jobs.TypeThumbnail:
-		return s.handleThumbnail(ctx, j)
+		return s.handleThumbnail(ctx, j, report)
 	case jobs.TypeRescan:
-		return s.handleRescan(ctx, j)
+		return s.handleRescan(ctx, j, report)
 	case jobs.TypeRemux:
-		return s.handleRemux(ctx, j)
+		return s.handleRemux(ctx, j, report)
 	}
 	return fmt.Errorf("unknown job type %q", j.Type)
 }
 
-// EnqueueRescan schedules a full scan of a storage volume.
+// EnqueueRescan schedules a full scan of a storage volume. The scan is a
+// user-facing long task: while it is queued/running the volume is considered
+// busy and mutating operations on it are refused until the result lands.
 func (s *Service) EnqueueRescan(ctx context.Context, storageID string) error {
+	st, err := s.storages.Get(ctx, storageID)
+	if err != nil {
+		return err
+	}
 	extra, _ := json.Marshal(map[string]string{"storage_id": storageID})
-	_, err := s.jobs.Enqueue(ctx, jobs.TypeRescan, "", string(extra))
+	_, err = s.jobs.Enqueue(ctx, jobs.TypeRescan, storageID, "扫描视频库 · "+st.Name, string(extra))
 	return err
 }
 
-// EnqueueThumbnail schedules cover/thumb generation for a video.
+// EnqueueThumbnail schedules cover/thumb generation for a video (internal).
 func (s *Service) EnqueueThumbnail(ctx context.Context, videoID string) error {
 	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
-	_, err := s.jobs.Enqueue(ctx, jobs.TypeThumbnail, "", string(extra))
+	_, err := s.jobs.EnqueueInternal(ctx, jobs.TypeThumbnail, videoID, string(extra))
 	return err
 }
 
-// EnqueueProbe schedules a probe job for a video (manual refresh).
+// EnqueueProbe schedules a probe job for a video (internal, manual refresh).
 func (s *Service) EnqueueProbe(ctx context.Context, videoID string) error {
 	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
-	_, err := s.jobs.Enqueue(ctx, jobs.TypeProbe, "", string(extra))
+	_, err := s.jobs.EnqueueInternal(ctx, jobs.TypeProbe, videoID, string(extra))
 	return err
 }
 
 // EnqueueRemux schedules a remux job that re-wraps a segmented MP4 into a
-// standard faststart MP4 (user-requested, ADR-007 cache dir remux/).
+// standard faststart MP4 (user-requested long task, ADR-007 cache dir remux/).
 func (s *Service) EnqueueRemux(ctx context.Context, videoID string) error {
+	v, err := s.videos.Get(ctx, videoID)
+	if err != nil {
+		return err
+	}
 	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
-	_, err := s.jobs.Enqueue(ctx, jobs.TypeRemux, "", string(extra))
+	_, err = s.jobs.Enqueue(ctx, jobs.TypeRemux, videoID, "重封 · "+v.Title, string(extra))
 	return err
 }
 
@@ -243,7 +323,7 @@ func (s *Service) EnqueueRemux(ctx context.Context, videoID string) error {
 // lives in data/remux/<id>.mp4 and is what the streaming service serves for
 // direct playback, turning a slow Chrome whole-file download into normal
 // progressive playback.
-func (s *Service) handleRemux(ctx context.Context, j jobs.Job) error {
+func (s *Service) handleRemux(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
 	var meta struct {
 		VideoID string `json:"video_id"`
 	}
@@ -268,10 +348,34 @@ func (s *Service) handleRemux(ctx context.Context, j jobs.Job) error {
 		"-map", "0",
 		"-c", "copy",
 		"-movflags", "+faststart",
+		"-progress", "pipe:1",
 		tmp)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// ffmpeg's machine-readable progress (out_time_us) maps to a determinate
+	// fraction; without a known duration the job stays indeterminate.
+	duration := v.Duration
+	scanOut := bufio.NewScanner(stdout)
+	for scanOut.Scan() {
+		if duration <= 0 {
+			continue
+		}
+		if val, ok := strings.CutPrefix(scanOut.Text(), "out_time_us="); ok {
+			if us, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64); err == nil && us >= 0 {
+				report.Progress(min(float64(us)/1e6/duration, 1))
+			}
+		}
+	}
+	if err := cmd.Wait(); err != nil {
 		if ctx.Err() == nil {
-			slog.Warn("remux failed", "video_id", v.ID, "err", err, "output", truncate(string(out), 500))
+			slog.Warn("remux failed", "video_id", v.ID, "err", err, "output", truncate(stderr.String(), 500))
 		}
 		_ = os.Remove(tmp)
 		return fmt.Errorf("ffmpeg remux: %w", err)
@@ -377,7 +481,7 @@ func (s *Service) watchLoop(ctx context.Context, watcher *fsnotify.Watcher, st d
 	}
 }
 
-func (s *Service) handleProbe(ctx context.Context, j jobs.Job) error {
+func (s *Service) handleProbe(ctx context.Context, j jobs.Job, _ jobs.Reporter) error {
 	var meta struct {
 		VideoID string `json:"video_id"`
 	}
@@ -411,7 +515,7 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job) error {
 	return nil
 }
 
-func (s *Service) handleThumbnail(ctx context.Context, j jobs.Job) error {
+func (s *Service) handleThumbnail(ctx context.Context, j jobs.Job, _ jobs.Reporter) error {
 	var meta struct {
 		VideoID string `json:"video_id"`
 	}
@@ -432,7 +536,7 @@ func (s *Service) handleThumbnail(ctx context.Context, j jobs.Job) error {
 	return s.videos.UpdateCovers(ctx, v.ID, relCover, relThumb)
 }
 
-func (s *Service) handleRescan(ctx context.Context, j jobs.Job) error {
+func (s *Service) handleRescan(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
 	var meta struct {
 		StorageID string `json:"storage_id"`
 	}
@@ -443,7 +547,18 @@ func (s *Service) handleRescan(ctx context.Context, j jobs.Job) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.Scan(ctx, st)
+	res, err := s.scan(ctx, st,
+		func(done, total int) {
+			if total > 0 {
+				report.Progress(float64(done) / float64(total))
+			}
+		},
+		func(text string, pct float64) {
+			report.Subtask(text)
+			if pct >= 0 {
+				report.SubtaskProgress(pct)
+			}
+		})
 	if err != nil {
 		return err
 	}
@@ -455,7 +570,7 @@ func (s *Service) handleRescan(ctx context.Context, j jobs.Job) error {
 
 func (s *Service) enqueueProbe(ctx context.Context, videoID string) {
 	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
-	if _, err := s.jobs.Enqueue(ctx, jobs.TypeProbe, "", string(extra)); err != nil {
+	if _, err := s.jobs.EnqueueInternal(ctx, jobs.TypeProbe, videoID, string(extra)); err != nil {
 		slog.Warn("enqueue probe", "video_id", videoID, "err", err)
 	}
 }

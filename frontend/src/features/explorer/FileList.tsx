@@ -44,6 +44,8 @@ export function FileList({
   const list = useQuery({
     queryKey: ['fs-list', storageId, path],
     queryFn: () => fetchFsList(storageId, path),
+    // 轮询以感知扫描锁定：存储卷扫描中 busy 态变化时横幅/禁用即时生效
+    refetchInterval: 5000,
   })
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -60,6 +62,7 @@ export function FileList({
   const [uploadProgress, setUploadProgress] = useState(0)
 
   const readonly = list.data?.storage.readonly ?? false
+  const scanning = list.data?.storage.busy ?? false
   const entries = list.data?.entries ?? []
   const parent = path.split('/').slice(0, -1).join('/')
 
@@ -147,6 +150,12 @@ export function FileList({
 
   return (
     <div className="flex h-full flex-col">
+      {scanning && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          <Loader2 className="size-4 animate-spin" />
+          <span>该存储卷正在扫描，文件操作暂时锁定</span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-100 px-3 py-2">
         {!readonly && (
           <>
@@ -159,7 +168,7 @@ export function FileList({
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={busy || uploading}
+              disabled={busy || uploading || scanning}
               className={btnCls}
             >
               <Upload className="size-4" /> <span className="hidden sm:inline">上传</span>
@@ -169,7 +178,7 @@ export function FileList({
                 setCreating(true)
                 setDirName('')
               }}
-              disabled={busy}
+              disabled={busy || scanning}
               className={btnCls}
             >
               <FolderPlus className="size-4" /> <span className="hidden sm:inline">新建文件夹</span>
@@ -183,7 +192,7 @@ export function FileList({
                 setMoving(true)
                 setMoveDest('')
               }}
-              disabled={busy}
+              disabled={busy || scanning}
               className={btnCls}
             >
               <Folder className="size-4" /> <span className="hidden sm:inline">移动到</span>
@@ -194,7 +203,7 @@ export function FileList({
                   run(() => fsDelete(storageId, Array.from(selected)), () => setSelected(new Set()))
                 }
               }}
-              disabled={busy}
+              disabled={busy || scanning}
               className="flex items-center gap-1.5 rounded-lg border border-red-200 px-2.5 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
               <Trash2 className="size-4" /> <span className="hidden sm:inline">删除</span>
@@ -225,7 +234,7 @@ export function FileList({
             autoFocus
             className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-600"
           />
-          <button type="submit" disabled={busy || !dirName.trim()} className={btnCls}>
+          <button type="submit" disabled={busy || scanning || !dirName.trim()} className={btnCls}>
             <Check className="size-4" /> 创建
           </button>
           <button type="button" onClick={() => setCreating(false)} className={btnCls}>
@@ -256,7 +265,7 @@ export function FileList({
             autoFocus
             className="flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-600"
           />
-          <button type="submit" disabled={busy} className={btnCls}>
+          <button type="submit" disabled={busy || scanning} className={btnCls}>
             移动
           </button>
           <button type="button" onClick={() => setMoving(false)} className={btnCls}>
@@ -315,6 +324,7 @@ export function FileList({
                       checked={selected.has(e.path)}
                       onChange={() => toggle(e.path)}
                       onClick={(ev) => ev.stopPropagation()}
+                      disabled={scanning}
                       className="accent-blue-600"
                     />
                   </td>
@@ -334,7 +344,7 @@ export function FileList({
                         autoFocus
                         className="rounded-md border border-neutral-300 px-1.5 py-0.5 text-sm outline-none focus:border-blue-600"
                       />
-                      <button type="submit" disabled={busy || !renameValue.trim()} title="确认">
+                      <button type="submit" disabled={busy || scanning || !renameValue.trim()} title="确认">
                         <Check className="size-4 text-emerald-600" />
                       </button>
                       <button type="button" onClick={() => setRenaming('')} title="取消">
@@ -379,24 +389,26 @@ export function FileList({
                         <>
                           <button
                             title="重命名"
+                            disabled={scanning}
                             onClick={(ev) => {
                               ev.stopPropagation()
                               setRenaming(e.path)
                               setRenameValue(e.name)
                             }}
-                            className="rounded p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                            className="rounded p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 disabled:opacity-40"
                           >
                             <Pencil className="size-4" />
                           </button>
                           <button
                             title="删除"
+                            disabled={scanning}
                             onClick={(ev) => {
                               ev.stopPropagation()
                               if (window.confirm(`删除「${e.name}」？此操作不可恢复。`)) {
                                 run(() => fsDelete(storageId, [e.path]))
                               }
                             }}
-                            className="rounded p-1 text-red-500 hover:bg-red-50"
+                            className="rounded p-1 text-red-500 hover:bg-red-50 disabled:opacity-40"
                           >
                             <Trash2 className="size-4" />
                           </button>

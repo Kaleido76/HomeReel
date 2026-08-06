@@ -9,6 +9,7 @@ import (
 
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/files"
+	"homereel/backend/internal/jobs"
 )
 
 // storageOrError loads a storage volume, writing an error response and
@@ -44,6 +45,24 @@ func fsError(w http.ResponseWriter, err error) {
 	}
 }
 
+// storageBusyOrError refuses the request with 409 when a long task (rescan) is
+// queued or running on the storage volume — mutating operations must wait for
+// the scan result so a mid-scan change is never reverted by the scan's
+// fingerprint pass. Returns false when a response has already been written.
+func (s *Server) storageBusyOrError(w http.ResponseWriter, r *http.Request, storageID string) bool {
+	busy, err := s.jobs.HasActive(r.Context(), jobs.TypeRescan, storageID)
+	if err != nil {
+		slog.Error("check storage busy", "storage_id", storageID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return false
+	}
+	if busy {
+		writeError(w, http.StatusConflict, "storage_busy", "该存储卷正在扫描中，暂时无法操作")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleFsMkdir(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		StorageID string `json:"storageId"`
@@ -55,6 +74,9 @@ func (s *Server) handleFsMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 	st, ok := s.storageOrError(w, r, req.StorageID)
 	if !ok {
+		return
+	}
+	if !s.storageBusyOrError(w, r, st.ID) {
 		return
 	}
 	if st.Readonly {
@@ -81,6 +103,9 @@ func (s *Server) handleFsRename(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.storageBusyOrError(w, r, st.ID) {
+		return
+	}
 	if st.Readonly {
 		writeError(w, http.StatusForbidden, "readonly", "只读存储卷，拒绝写入")
 		return
@@ -105,6 +130,9 @@ func (s *Server) handleFsMove(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.storageBusyOrError(w, r, st.ID) {
+		return
+	}
 	if st.Readonly {
 		writeError(w, http.StatusForbidden, "readonly", "只读存储卷，拒绝写入")
 		return
@@ -122,6 +150,9 @@ func (s *Server) handleFsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	st, ok := s.storageOrError(w, r, req.StorageID)
 	if !ok {
+		return
+	}
+	if !s.storageBusyOrError(w, r, st.ID) {
 		return
 	}
 	if st.Readonly {

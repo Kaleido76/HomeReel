@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -126,6 +127,25 @@ func TestSeriesListAndDetail(t *testing.T) {
 	}
 	if len(detail.Links) != 1 || detail.Links[0].LinkedID != out.Series[2].ID {
 		t.Errorf("links = %+v", detail.Links)
+	}
+}
+
+func TestSeriesListFilter(t *testing.T) {
+	ts, _, database := newTestServerDB(t, "secret")
+	seedSeries(t, database)
+	cookie := loginCookie(t, ts, "secret")
+	if err := store.NewVideoRepo(database).SetTags(context.Background(), "e1", []string{"犯罪"}); err != nil {
+		t.Fatalf("set tags: %v", err)
+	}
+
+	resp, body := doJSON(t, "GET", ts.URL+"/api/series?q="+url.QueryEscape("Breaking"), "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Breaking Bad") || strings.Contains(body, "Better Call Saul") {
+		t.Fatalf("series q = %d %s", resp.StatusCode, body)
+	}
+	// Only season 1 of Breaking Bad carries the tagged episode e1.
+	resp, body = doJSON(t, "GET", ts.URL+"/api/series?tag="+url.QueryEscape("犯罪"), "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "第1季") || strings.Contains(body, "第2季") || strings.Contains(body, "Better Call Saul") {
+		t.Fatalf("series tag = %d %s", resp.StatusCode, body)
 	}
 }
 

@@ -21,6 +21,7 @@ type Storage struct {
 	Readonly  bool        `json:"readonly"`
 	Enabled   bool        `json:"enabled"`
 	Available bool        `json:"available"`
+	Busy      bool        `json:"busy"`
 	CreatedAt string      `json:"created_at"`
 }
 
