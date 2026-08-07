@@ -15,6 +15,7 @@ import (
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/files"
+	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
@@ -29,6 +30,7 @@ type Server struct {
 	auth      *auth.Service
 	storages  *storage.Service
 	files     *files.Service
+	fsvc      *fservice.Service
 	jobs      *jobs.Service
 	scanner   *scanner.Service
 	videos    domain.VideoRepo
@@ -47,13 +49,13 @@ type Server struct {
 // extension-less paths falling back to index.html so SPA deep links survive a
 // refresh.
 func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Service,
-	jobsSvc *jobs.Service, scannerSvc *scanner.Service, videosRepo domain.VideoRepo,
-	showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
+	jobsSvc *jobs.Service, scannerSvc *scanner.Service, fsvc *fservice.Service,
+	videosRepo domain.VideoRepo, showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
 	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
 	searchProvider search.Provider, bus *events.Bus,
 	dataDir string, staticDir string) http.Handler {
 	s := &Server{
-		auth: authSvc, storages: storageSvc, files: filesSvc,
+		auth: authSvc, storages: storageSvc, files: filesSvc, fsvc: fsvc,
 		jobs: jobsSvc, scanner: scannerSvc,
 		videos: videosRepo, shows: showsRepo, series: seriesRepo,
 		history: historyRepo, streaming: streamingSvc,
@@ -77,6 +79,15 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("POST /api/fs/move", s.requireAuth(http.HandlerFunc(s.handleFsMove)))
 	mux.Handle("POST /api/fs/delete", s.requireAuth(http.HandlerFunc(s.handleFsDelete)))
 	mux.Handle("POST /api/fs/scan", s.requireAuth(http.HandlerFunc(s.handleFsScan)))
+	mux.Handle("GET /api/disks", s.requireAuth(http.HandlerFunc(s.handleDisksList)))
+	mux.Handle("GET /api/fs2/list", s.requireAuth(http.HandlerFunc(s.handleFs2List)))
+	mux.Handle("POST /api/fs2/copy", s.requireAuth(http.HandlerFunc(s.handleFs2Copy)))
+	mux.Handle("POST /api/fs2/move", s.requireAuth(http.HandlerFunc(s.handleFs2Move)))
+	mux.Handle("POST /api/fs2/rename", s.requireAuth(http.HandlerFunc(s.handleFs2Rename)))
+	mux.Handle("POST /api/fs2/delete", s.requireAuth(http.HandlerFunc(s.handleFs2Delete)))
+	mux.Handle("GET /api/fs2/pins", s.requireAuth(http.HandlerFunc(s.handleFs2PinsList)))
+	mux.Handle("POST /api/fs2/pins", s.requireAuth(http.HandlerFunc(s.handleFs2PinsAdd)))
+	mux.Handle("DELETE /api/fs2/pins", s.requireAuth(http.HandlerFunc(s.handleFs2PinsRemove)))
 	mux.Handle("POST /api/upload", s.requireAuth(http.HandlerFunc(s.handleUpload)))
 	mux.Handle("GET /api/jobs", s.requireAuth(http.HandlerFunc(s.handleJobsList)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleVideosList)))

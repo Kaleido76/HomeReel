@@ -16,6 +16,8 @@ const (
 	TypeThumbnail = "thumbnail"
 	TypeRescan    = "rescan"
 	TypeRemux     = "remux"
+	TypeFsCopy    = "fscopy"
+	TypeFsMove    = "fsmove"
 )
 
 // Job statuses.

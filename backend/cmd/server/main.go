@@ -19,6 +19,7 @@ import (
 	"homereel/backend/internal/db"
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/files"
+	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/netutil"
 	"homereel/backend/internal/scanner"
@@ -83,6 +84,9 @@ func run() error {
 		cfg.Media.FFmpegPath,
 		cfg.Server.DataDir,
 	)
+	// Generic machine-wide file browser (文件（新） tab): absolute-path listing
+	// and clipboard-style copy/move behind its own background jobs.
+	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database))
 
 	// VideoImported → enqueue thumbnail generation (ADR-010, ADR-012).
 	go func() {
@@ -126,8 +130,15 @@ func run() error {
 
 	// Background job worker (ADR-008). Job results are published on the bus so
 	// any component can react to a long task finishing (e.g. the explorer
-	// unlocks a volume the moment its scan lands).
-	worker := jobs.NewWorker(store.NewJobRepo(database), scannerSvc.HandleJob, cfg.Media.ProbeConcurrency, live)
+	// unlocks a volume the moment its scan lands). Generic file-browser jobs
+	// (fscopy/fsmove) are dispatched to the fservice handler, everything else
+	// to the scanner.
+	worker := jobs.NewWorker(store.NewJobRepo(database), func(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
+		if j.Type == jobs.TypeFsCopy || j.Type == jobs.TypeFsMove {
+			return fsvc.HandleJob(ctx, j, report)
+		}
+		return scannerSvc.HandleJob(ctx, j, report)
+	}, cfg.Media.ProbeConcurrency, live)
 	worker.SetNotify(func(ctx context.Context, j jobs.Job, err error) {
 		typ := events.JobDone
 		data := map[string]string{"job_id": j.ID, "type": j.Type, "target": j.Target}
@@ -155,7 +166,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler: api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
+		Handler: api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc, fsvc,
 			videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
 			search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
 			config.ResolveStaticDir(cfg.Server.StaticDir)),

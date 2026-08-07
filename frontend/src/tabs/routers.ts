@@ -17,6 +17,9 @@ const LibraryLayout = lazy(() => import('../features/library/LibraryLayout').the
 const SearchPage = lazy(() => import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })))
 const ExplorerPage = lazy(() => import('../features/explorer/ExplorerPage').then((m) => ({ default: m.ExplorerPage })))
 const RemuxPage = lazy(() => import('../features/remux/RemuxPage').then((m) => ({ default: m.RemuxPage })))
+const FilesNewPage = lazy(() =>
+  import('../features/filesnew/FilesNewPage').then((m) => ({ default: m.FilesNewPage })),
+)
 
 // initialEntry seeds each tab's memory history. The tab matching the current URL
 // starts at that URL (refresh / deep-link support); every other tab starts at its
@@ -172,6 +175,29 @@ export const remuxRouter = createRouter({
   defaultPreload: 'intent',
 })
 
+// ---- filesnew tab (generic machine-wide file browser) ----
+// The current absolute directory is kept in the URL so refresh/deep-link
+// restores the exact folder being browsed.
+const filesnewRoot = createRootRoute()
+const filesnewIndex = createRoute({
+  getParentRoute: () => filesnewRoot,
+  path: '/filesnew',
+  component: FilesNewPage,
+  validateSearch: (search) => ({ path: typeof search.path === 'string' ? search.path : '' }),
+})
+const filesnewNotFound = createRoute({
+  getParentRoute: () => filesnewRoot,
+  path: '*',
+  beforeLoad: () => redirect({ to: '/filesnew' }),
+  component: () => null,
+})
+const filesnewTree = filesnewRoot.addChildren([filesnewIndex, filesnewNotFound])
+export const filesnewRouter = createRouter({
+  routeTree: filesnewTree,
+  history: createMemoryHistory({ initialEntries: [initialEntry('filesnew')] }),
+  defaultPreload: 'intent',
+})
+
 // Routers are typed with distinct route trees; Router's generics are invariant
 // (the `update` method), so unify to a common AnyRouter at this single boundary.
 export const routers: Record<TabId, AnyRouter> = {
@@ -180,4 +206,5 @@ export const routers: Record<TabId, AnyRouter> = {
   search: searchRouter as unknown as AnyRouter,
   explorer: explorerRouter as unknown as AnyRouter,
   remux: remuxRouter as unknown as AnyRouter,
+  filesnew: filesnewRouter as unknown as AnyRouter,
 }

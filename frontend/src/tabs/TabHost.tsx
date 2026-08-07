@@ -16,7 +16,11 @@ function PaneLoader() {
 // Panes that manage their own full-height internal scrolling (library uses a
 // grid + right drawer split, explorer uses columns + sidebar) opt out of the
 // shared scroll wrapper so nested scroll regions work on wide screens.
-const selfScrolling: ReadonlySet<TabId> = new Set(['library', 'explorer'])
+const selfScrolling: ReadonlySet<TabId> = new Set(['library', 'explorer', 'filesnew'])
+
+// Tabs that render a full-bleed layout (no max-width / padding) are exempt from
+// the shared padded wrapper, exactly like the library panel.
+const fullBleed: ReadonlySet<TabId> = new Set(['library', 'filesnew'])
 
 // TabHost renders every mounted tab router in its own pane. Tabs stay mounted
 // once visited (keep-alive); only the active pane is visible. Home/search use
@@ -52,7 +56,7 @@ export function TabHost() {
           >
             <div
               className={
-                def.id === 'library'
+                fullBleed.has(def.id)
                   ? 'h-full w-full'
                   : `mx-auto w-full px-4 sm:px-6 xl:px-8 ${
                       selfScrolling.has(def.id)

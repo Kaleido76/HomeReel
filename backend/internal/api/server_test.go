@@ -17,6 +17,7 @@ import (
 	"homereel/backend/internal/db"
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/files"
+	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
@@ -79,7 +80,8 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	streamingSvc := streaming.New(videosRepo, t.TempDir(), "ffmpeg", "auto", "fast")
 	dataDir := t.TempDir()
 	bus := events.New()
-	handler := New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc,
+	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database))
+	handler := New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc, fsvc,
 		videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
 		search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)
 	return handler, database

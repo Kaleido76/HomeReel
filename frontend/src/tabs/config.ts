@@ -1,9 +1,9 @@
-import { FolderOpen, Home, MonitorPlay, Search, Wrench, type LucideIcon } from 'lucide-react'
+import { FolderOpen, FolderTree, Home, MonitorPlay, Search, Wrench, type LucideIcon } from 'lucide-react'
 
 // TabId is one of the top-level "browser tabs". Each tab owns an independent
 // router instance whose component tree stays mounted while hidden, so switching
 // tabs never loses view state (scroll, filters, the player, uploads…).
-export type TabId = 'home' | 'library' | 'search' | 'explorer' | 'remux'
+export type TabId = 'home' | 'library' | 'search' | 'explorer' | 'remux' | 'filesnew'
 
 export interface TabDef {
   id: TabId
@@ -18,6 +18,7 @@ export const TAB_DEFS: TabDef[] = [
   { id: 'search', label: '搜索', root: '/search', icon: Search },
   { id: 'explorer', label: '文件', root: '/explorer', icon: FolderOpen },
   { id: 'remux', label: '重封', root: '/remux', icon: Wrench },
+  { id: 'filesnew', label: '文件（新）', root: '/filesnew', icon: FolderTree },
 ]
 
 export const TAB_ROOTS: Record<TabId, string> = {
@@ -26,6 +27,7 @@ export const TAB_ROOTS: Record<TabId, string> = {
   search: '/search',
   explorer: '/explorer',
   remux: '/remux',
+  filesnew: '/filesnew',
 }
 
 // tabFromPath maps a URL pathname to the tab that owns it. Deep routes such as
@@ -37,5 +39,6 @@ export function tabFromPath(pathname: string): TabId {
   if (pathname.startsWith('/search')) return 'search'
   if (pathname.startsWith('/explorer')) return 'explorer'
   if (pathname.startsWith('/remux')) return 'remux'
+  if (pathname.startsWith('/filesnew')) return 'filesnew'
   return 'home'
 }

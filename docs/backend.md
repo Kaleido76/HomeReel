@@ -78,3 +78,15 @@
 - **remux 进度**：`handleRemux` 用 `-progress pipe:1` 解析 `out_time_us`，结合 `videos.duration` 得出
   确定进度；时长未知则保持不确定。
 - 事件总线（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
+
+## 10. 泛用文件浏览器（fservice，2026-08 增量）
+
+- 独立于存储卷模型（ADR-011）的**机器级文件服务**（「文件（新）」页签）：绝对路径列目录 + 剪贴板式
+  copy/move/rename/delete，**不索引、不入库**（仅 pin 存 settings 表）。
+- `fservice` 包（`internal/fservice`）：`/api/disks`（Windows 本地盘枚举，fixed/removable，排除网络盘，
+  build-tag 实现）；`/api/fs2/list?path=`（实时 readdir，**Lstat 读条目自身属性过滤 Windows
+  HIDDEN/SYSTEM 条目**——$RECYCLE.BIN、System Volume Information、desktop.ini 等特殊目录/文件不出现在
+  列表，非名称过滤；junction 取其自身属性而非目标；再 Stat 取目录/尺寸/时间）；`/api/fs2/rename|delete`
+  （同步）；`/api/fs2/copy|move`（**入 jobs** `fscopy`/`fsmove`，后台任务带字节进度，跨卷 move 自动
+  copy+delete，复制跳过符号链接/junction 防环路）；`/api/fs2/pins`（增删查，settings 键 `fs2.pins`）。
+- worker 分发：main.go 把 `fscopy`/`fsmove` 交给 `fsvc.HandleJob`，其余仍走 `scannerSvc.HandleJob`。
