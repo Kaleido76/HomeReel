@@ -1,8 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Film, Layers, Loader2 } from 'lucide-react'
-import type { Storage } from '../../api/storages'
-import { fetchStorages } from '../../api/storages'
 import { fetchVideos } from '../../api/videos'
 import { fetchSeries } from '../../api/series'
 import { coverUrl } from '../../api/videos'
@@ -62,13 +60,6 @@ export function LibraryList({
     enabled: showSeries,
   })
 
-  const storages = useQuery({ queryKey: ['storages'], queryFn: fetchStorages })
-  const storageById = useMemo(() => {
-    const map = new Map<string, Storage>()
-    for (const s of storages.data?.storages ?? []) map.set(s.id, s)
-    return map
-  }, [storages.data])
-
   const seriesItems = useMemo(() => {
     if (!series.data) return []
     const query = q.trim().toLowerCase()
@@ -90,7 +81,7 @@ export function LibraryList({
     if (q || state.tags.length > 0 || state.desc || state.genre || state.year) return '没有匹配的视频或系列'
     if (state.view === 'series') return '暂无系列。同一目录下多个相近命名的视频（如 S01E01、S01E02 或「第1部」「第2部」）会被自动归为一季/一部的系列。'
     if (state.view === 'standalone') return '暂无单集视频。归入系列的视频会显示在「系列」中。'
-    return '暂无视频。请先在「文件管理」配置存储卷并触发扫描。'
+    return '暂无视频。请先在「文件」页签中把存放媒体的目录标记为多媒体源并等待扫描完成。'
   }
 
   return (
@@ -140,7 +131,7 @@ export function LibraryList({
                         {s.name}
                       </p>
                       <p className="mt-1 truncate text-xs text-neutral-400">
-                        {s.kind === 'movie' ? '电影部' : '系列剧集'} · {s.member_count} 个成员
+                        系列剧集 · {s.member_count} 个成员
                         {s.link_count > 0 ? ` · ${s.link_count} 个关联` : ''}
                       </p>
                     </div>
@@ -150,8 +141,6 @@ export function LibraryList({
             })}
           {showVideos &&
             videos.data?.videos.map((v) => {
-              const storage = storageById.get(v.storage_id)
-              const offline = storage !== undefined && !storage.available
               const active = selection?.type === 'video' && selection.id === v.id
               const isEpisode = v.kind === 'episode' || v.episode_number != null
               const meta = isEpisode
@@ -177,7 +166,7 @@ export function LibraryList({
                           <Film className="size-6" />
                         </div>
                       )}
-                      {v.duration > 0 && !offline && (
+                      {v.duration > 0 && (
                         <span className="absolute bottom-1 right-1 rounded bg-neutral-900/80 px-1 py-0.5 text-[10px] text-white">
                           {formatDuration(v.duration)}
                         </span>

@@ -8,7 +8,7 @@ import (
 	"homereel/backend/internal/domain"
 )
 
-func newSeriesTestRepo(t *testing.T) (domain.SeriesRepo, domain.VideoRepo, domain.ShowRepo, domain.StorageRepo) {
+func newSeriesTestRepo(t *testing.T) (domain.SeriesRepo, domain.VideoRepo, domain.ShowRepo, domain.SourceRepo) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -18,15 +18,13 @@ func newSeriesTestRepo(t *testing.T) (domain.SeriesRepo, domain.VideoRepo, domai
 	if err := db.Migrate(database); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return NewSeriesRepo(database), NewVideoRepo(database), NewShowRepo(database), NewStorageRepo(database)
+	return NewSeriesRepo(database), NewVideoRepo(database), NewShowRepo(database), NewSourceRepo(database)
 }
 
 func TestSeriesListFilter(t *testing.T) {
-	series, videos, shows, storages := newSeriesTestRepo(t)
+	series, videos, shows, sources := newSeriesTestRepo(t)
 	ctx := context.Background()
-	_ = storages.Create(ctx, domain.Storage{
-		ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "t",
-	})
+	seedSource(t, sources, "s1", `C:\x`)
 
 	for _, show := range []domain.Show{
 		{ID: "show1", Name: "星际穿越", Overview: "太空之旅", Genre: "科幻", Year: 2020, MetadataSource: "manual", CreatedAt: "t", UpdatedAt: "t"},
@@ -36,23 +34,28 @@ func TestSeriesListFilter(t *testing.T) {
 			t.Fatalf("create show: %v", err)
 		}
 	}
-	for _, season := range []struct{ show string; num int }{
+	for _, season := range []struct {
+		show string
+		num  int
+	}{
 		{"show1", 1}, {"show1", 2}, {"show2", 1},
 	} {
-		if _, err := shows.EnsureSeason(ctx, season.show, season.num, "tv"); err != nil {
+		if _, err := shows.EnsureSeason(ctx, season.show, season.num); err != nil {
 			t.Fatalf("ensure season: %v", err)
 		}
 	}
 	ep := func(id, show string, season int, tag string) {
 		v := domain.Video{
-			ID: id, StorageID: "s1", FileID: id, RelativePath: id + ".mp4", Path: "p",
+			ID: id, SourceID: "s1", FileID: id, RelativePath: id + ".mp4", Path: "p",
 			Size: 1, MTime: 1, Title: id,
 			CreatedAt: "t", UpdatedAt: "t", LastScannedAt: "t",
 		}
 		if err := videos.Create(ctx, v); err != nil {
 			t.Fatalf("create video: %v", err)
 		}
-		if err := videos.AssignEpisode(ctx, id, show, season, 1, id+".mp4"); err != nil {
+		showName := map[string]string{"show1": "星际穿越", "show2": "爱情公寓"}[show]
+		if _, err := shows.AssignSeason(ctx, showName, season,
+			[]domain.EpisodeAssign{{VideoID: id, EpisodeNumber: 1, Title: id + ".mp4"}}); err != nil {
 			t.Fatalf("assign: %v", err)
 		}
 		if err := videos.SetTags(ctx, id, []string{tag}); err != nil {

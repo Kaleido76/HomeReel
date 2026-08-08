@@ -21,12 +21,20 @@
 
 ## 4. 剧集/系列组织
 
-- 库 = 单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季/一部一个，`kind`=tv/movie），成员按位次排序允许缺失。
-- 分组唯一来源：`scanner.ParseEpisode`（`SxxEyy`/`第x集`/`Season N` 目录/中文数字）与
-  `scanner.ParseMoviePart`（`Part N`/`第N部`/数字后缀）。
-- **默认单集**，仅当位于 `Season N` 目录、或同目录 ≥2 个标题键相同/编辑距离 ≤2（`scanner.editDistance`）才归系列。
-- `groupVideo` 在 **Scan 结束时统一对 `toGroup` 执行**（同目录兄弟可见），也用于 ImportUploaded/probe/手动归组；
-  老库数据在 unchanged 分支回填。
+- 库 = 单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季一个，`kind` 恒 `tv`），成员按
+  `(season_number, episode_number)` 位次排序；缺失编号不显示占位（前端只列实际成员）。**无电影/tv
+  结构类型**，任何区分走标签。
+- 分组分两阶段（`scanner`）：先全部以单集入库并记住含 ≥2 视频的目录，再对这类目录做**严格**判定
+  `classifyDir`——**系列 ↔ 物理目录严格对应**：目录内**每个视频**都必须匹配同一模式才成系列，任一不匹配
+  的视频对象（特典/无关文件）使整个目录不归组；非多媒体文件（字幕、nfo、封面）不参与判定：
+  - 编号系列：**全部视频标题键一致**（`titleKeyOf` 去 SxxEyy/第x集/Part N/质量标签/年份/尾部数字，无标题
+    时回退父目录名）+ 每文件有数值标记（`scanner.ParseEpisode`/`ParseMoviePart` 统一取 `(season, episode)`）；
+    `Season N` 目录即系列关系（季号取目录、剧名取上级目录）。
+  - 未编号系列：共享以分隔符结尾的较长公共前缀、每文件后缀互不相同（如「XX冒险记：北京/上海」），
+    排序号按文件名序 1..N。
+  - 任一视频不匹配 → 该目录不自动分组（宁漏不误）。
+- **只增不拆**：自动分组仅归组、绝不拆散既有分组（为手动归组预留）；`reconcileGroups` 在扫描剪除缺失后
+  统一执行，分配走 `shows.AssignSeason`（创建 show+season+全员单事务），已归组数据跳过不重写。
 - `series_links` 无名称、`sort_index` 排序，同 show 相邻季 `SyncShowLinks` 自动关联，
   `/api/series/{id}/links` 手动增删。
 - `videos_bd` 触发器删光某 show 最后一集时删空 show；删空 season 由扫描/后续兜底。
@@ -44,18 +52,18 @@
 
 ## 7. 扫描安全
 
-- 卷根不可达中止扫描、绝不误删元数据（ADR-014）。
+- 多媒体源根不可达 → 扫描**中止、绝不动库**（ADR-014 保护：移动硬盘没插时不误删元数据）。
 - 无 probe 元数据（`duration==0 && codec==""`）强制重 probe（自愈）。
 
 ## 8. 上传清理
 
-- 合并完成即删 staging；启动时 + 每小时清理超 24h 孤儿分片。
+> 2026-08 已随旧 Explorer 移除（分块上传接口删除），无 staging 目录需清理。
 
 ## 9. jobs（长时任务管理器）与事件总线
 
-- `jobs` 是**长时任务管理器**（ADR-008）：队列 + Worker（probe/thumbnail/rescan/remux，崩溃恢复）；
+- `jobs` 是**长时任务管理器**（ADR-008）：队列 + Worker（probe/thumbnail/scan_source/remux，崩溃恢复）；
   缩略图 covers 320px + thumbs 160px。
-- **任务分类**：`Enqueue` 创建用户可见长时任务（scan/remux，带展示名 `name`）；`EnqueueInternal` 创建
+- **任务分类**：`Enqueue` 创建用户可见长时任务（scan_source/remux，带展示名 `name`）；`EnqueueInternal` 创建
   内部短任务（probe/thumbnail，`internal=true`，前端任务面板隐藏、不触发生命周期通知）。
 - **整体进度**：`Job.Progress` 为 `[0,1]`；`<0` 表示不确定（前端显示动态条）。`Handler` 收到
   `jobs.Reporter`，`report.Progress` 节流写库（≤250ms 或 ≥1% 差值），handler 不调用即保持不确定。
@@ -64,29 +72,35 @@
   **不落库**——存入 `jobs.LiveStatus`（Service 与 Worker 共享的内存注册表），`handleJobsList` 经
   `Service.AttachLive` 合并到 job JSON 的 `subtask`/`subtask_progress`。大任务内部子任务严格串行执行，
   任务完成时从 LiveStatus 移除。
-- **扫描 = 串行内联**：`Scan(ctx, st)` 保持原签名；内部 `scan(ctx, st, progress(done,total), subtask)`。
-  每个待处理文件在**主循环内串行**执行「探测 → 生成缩略图」（`processInline`，逐文件上报子任务
-  「探测 X」「生成 X 的缩略图」），不再 enqueue 探测 job；单文件失败不致命（下次扫描自愈）。内联路径
-  不发布 `VideoImported`（避免监听器重复生成缩略图）；上传/手动刷新仍走队列 + 监听器。代价：首次
-  全量扫描明显变慢（串行避免并行 ffmpeg 抢占卡顿），增量扫描仅处理变更文件。
+- **扫描 = 串行内联**：`ScanSource(ctx, src)`；内部 `scan(ctx, src, progress(done,total), subtask)`。
+  每个待处理文件在**主循环内串行**执行「探测 → 生成缩略图」（新增文件在探测后**单条 INSERT 全量元数据**，
+  原子；变更文件走 UpdateProbe 单条 UPDATE），并逐文件上报子任务「探测 X」「生成 X 的缩略图」。
+  扫描结束对 `toGroup` 做**按 show 的原子归组**（`shows.AssignSeason` 单事务建 show/季 + 分配全部成员；
+  无归属单集走 `videos.AssignStandalone` 单条 UPDATE）。内联路径不发布 `VideoImported`
+  （避免监听器重复生成缩略图）；手动 refresh 仍走队列 + 监听器。代价：首次全量扫描明显变慢
+  （串行避免并行 ffmpeg 抢占卡顿），增量扫描仅处理变更文件。
 - **生命周期通知**：`Worker.SetNotify` 在任务落库后回调 `(job, err)`，`main.go` 据此发布
   `events.JobDone` / `events.JobFailed`（ADR-010 事件总线）。
-- **资源锁**：`Service.HasActive(type, target)` 查询指定资源的 queued/running 任务。rescan 的
-  `target=storage_id`，扫描期间该存储卷 `Busy=true`：`/api/storages` 与 `/api/fs/list` 响应带上
-  `busy` 标记；FS 变更操作（mkdir/rename/move/delete）、上传、存储卷 patch/delete/refresh、重复扫描
-  均拒绝（409 `storage_busy`），直到扫描结果落库后自动解锁。
+- **多媒体源路由表**：扫描父源时遇到子源（`files.UnderRoot(o.Path, src.Path)` 且非自身）根目录
+  → `collect` 整棵 `SkipDir`；`MarkMissingBySource` 跳过绝对路径落在任一子源根下的行（防「父源先删、
+  子源重建」抖动）。file_id **全局匹配**：跨源移动仅更新 path/source_id/relative_path，不新建记录。
 - **remux 进度**：`handleRemux` 用 `-progress pipe:1` 解析 `out_time_us`，结合 `videos.duration` 得出
   确定进度；时长未知则保持不确定。
 - 事件总线（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
 
 ## 10. 泛用文件浏览器（fservice，2026-08 增量）
 
-- 独立于存储卷模型（ADR-011）的**机器级文件服务**（「文件（新）」页签）：绝对路径列目录 + 剪贴板式
-  copy/move/rename/delete，**不索引、不入库**（仅 pin 存 settings 表）。
+- 独立于视频库的**机器级文件服务**（「文件」页签）：绝对路径列目录 + 剪贴板式 copy/move/rename/delete，
+  **不索引、不入库**（仅 pin 与多媒体源标记持久化）。
 - `fservice` 包（`internal/fservice`）：`/api/disks`（Windows 本地盘枚举，fixed/removable，排除网络盘，
-  build-tag 实现）；`/api/fs2/list?path=`（实时 readdir，**Lstat 读条目自身属性过滤 Windows
+  build-tag 实现）；`/api/files/list?path=`（实时 readdir，**Lstat 读条目自身属性过滤 Windows
   HIDDEN/SYSTEM 条目**——$RECYCLE.BIN、System Volume Information、desktop.ini 等特殊目录/文件不出现在
-  列表，非名称过滤；junction 取其自身属性而非目标；再 Stat 取目录/尺寸/时间）；`/api/fs2/rename|delete`
-  （同步）；`/api/fs2/copy|move`（**入 jobs** `fscopy`/`fsmove`，后台任务带字节进度，跨卷 move 自动
-  copy+delete，复制跳过符号链接/junction 防环路）；`/api/fs2/pins`（增删查，settings 键 `fs2.pins`）。
-- worker 分发：main.go 把 `fscopy`/`fsmove` 交给 `fsvc.HandleJob`，其余仍走 `scannerSvc.HandleJob`。
+  列表，非名称过滤；junction 取其自身属性而非目标；再 Stat 取目录/尺寸/时间）；`/api/files/rename|delete`
+   （同步）；`/api/files/copy|move`（**入 jobs** `fscopy`/`fsmove`，后台任务带字节进度，跨卷 move 自动
+   copy+delete，复制跳过符号链接/junction 防环路）；`/api/files/pins`（增删查，settings 键 `files.pins`）。
+ - **多媒体源**（`media_sources` 表，见 plan §5.2/6.2）：`/api/files/sources`（GET 列表，附每源
+   `available`=根可达性、`scanning`=有无进行中 scan_source 任务）、`POST`（标记 + 入队 `scan_source`
+   Job）、`DELETE`（仅移除标记，**不删库**）、`/api/files/sources/scan`（手动重扫）。源路径在
+  `fservice.sources.go` 做规范化（`filepath.Clean`，盘符根保留尾分隔符）以便路由前缀比较。
+- worker 分发：main.go 把 `fscopy`/`fsmove` 交给 `fsvc.HandleJob`，其余（probe/thumbnail/scan_source/
+  remux）交给 `scannerSvc.HandleJob`。

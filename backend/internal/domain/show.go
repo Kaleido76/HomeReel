@@ -36,18 +36,16 @@ type Season struct {
 // Episode is one episode inside a season, with playback progress joined from
 // history so the UI can show per-episode resume state.
 type Episode struct {
-	VideoID          string  `json:"video_id"`
-	ShowID           string  `json:"show_id"`
-	SeasonNumber     int     `json:"season_number"`
-	EpisodeNumber    int     `json:"episode_number"`
-	Title            string  `json:"title"`
-	EpisodeTitle     string  `json:"episode_title,omitempty"`
-	RelativePath     string  `json:"relative_path"`
-	Duration         float64 `json:"duration"`
-	ThumbPath        string  `json:"thumb_path,omitempty"`
-	StorageID        string  `json:"storage_id"`
-	StorageAvailable bool    `json:"storage_available"`
-	Progress         float64 `json:"progress"`
+	VideoID       string  `json:"video_id"`
+	ShowID        string  `json:"show_id"`
+	SeasonNumber  int     `json:"season_number"`
+	EpisodeNumber int     `json:"episode_number"`
+	Title         string  `json:"title"`
+	EpisodeTitle  string  `json:"episode_title,omitempty"`
+	RelativePath  string  `json:"relative_path"`
+	Duration      float64 `json:"duration"`
+	ThumbPath     string  `json:"thumb_path,omitempty"`
+	Progress      float64 `json:"progress"`
 }
 
 // ShowRepo persists shows, seasons and their episodes.
@@ -61,10 +59,13 @@ type ShowRepo interface {
 	// FindByName resolves a show by name (case-insensitive) for grouping.
 	FindByName(ctx context.Context, name string) (Show, error)
 	Create(ctx context.Context, s Show) error
-	// EnsureSeason returns the season, creating it if missing. kind is the
-	// series kind: "tv" (a season of a show) or "movie" (a part of a movie
-	// franchise).
-	EnsureSeason(ctx context.Context, showID string, number int, kind string) (Season, error)
+	// EnsureSeason returns the season, creating it if missing.
+	EnsureSeason(ctx context.Context, showID string, number int) (Season, error)
+	// AssignSeason groups a set of already-existing videos under one
+	// show/season atomically: it creates the show and season when missing and
+	// assigns every member in a single transaction, so a series never appears
+	// in the library half-formed. It returns the show id.
+	AssignSeason(ctx context.Context, showName string, seasonNumber int, members []EpisodeAssign) (string, error)
 	// UpdateMetadata applies editable show metadata.
 	UpdateMetadata(ctx context.Context, s Show) error
 	// RemoveEmptyShow deletes a show that no longer has episodes.

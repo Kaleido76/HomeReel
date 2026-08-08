@@ -19,16 +19,13 @@ func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.His
 	if err := db.Migrate(database); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO storages (id, name, type, root_path, created_at)
-		VALUES ('s1', 'test', 'internal', 'C:\\Videos', '2026-01-01T00:00:00.000000000Z')`); err != nil {
-		t.Fatalf("seed storage: %v", err)
-	}
+	seedSource(t, NewSourceRepo(database), "s1", `C:\Videos`)
 	return NewVideoRepo(database), NewShowRepo(database), NewHistoryRepo(database)
 }
 
 func mkVideo(id, title string) domain.Video {
 	return domain.Video{
-		ID: id, StorageID: "s1", FileID: "f" + id, RelativePath: title + ".mp4",
+		ID: id, SourceID: "s1", FileID: "f" + id, RelativePath: title + ".mp4",
 		Path: "C:\\Videos\\" + title + ".mp4", Size: 10, MTime: 1, Title: title,
 		CreatedAt: "2026-01-01T00:00:00.000000000Z", UpdatedAt: "2026-01-01T00:00:00.000000000Z",
 		LastScannedAt: "2026-01-01T00:00:00.000000000Z",
@@ -38,16 +35,6 @@ func mkVideo(id, title string) domain.Video {
 func TestEpisodeGroupingAndSearch(t *testing.T) {
 	videos, shows, _ := newPhase3Store(t)
 	ctx := context.Background()
-
-	// Show must exist before episodes can reference it (FK).
-	now := "2026-01-01T00:00:00.000000000Z"
-	if err := shows.Create(ctx, domain.Show{ID: "show-1", Name: "Game of Thrones",
-		MetadataSource: "manual", CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := shows.EnsureSeason(ctx, "show-1", 1, "tv"); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := videos.Create(ctx, mkVideo("e1", "GoT.S01E01")); err != nil {
 		t.Fatal(err)
@@ -59,13 +46,12 @@ func TestEpisodeGroupingAndSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := videos.AssignEpisode(ctx, "e1", "show-1", 1, 1, "Winter Is Coming"); err != nil {
-		t.Fatal(err)
-	}
-	if err := videos.AssignEpisode(ctx, "e2", "show-1", 1, 2, "The Kingsroad"); err != nil {
-		t.Fatal(err)
-	}
-	if err := videos.AssignMovie(ctx, "m1"); err != nil {
+	// Group both episodes under one show/season atomically.
+	showID, err := shows.AssignSeason(ctx, "Game of Thrones", 1, []domain.EpisodeAssign{
+		{VideoID: "e1", EpisodeNumber: 1, Title: "Winter Is Coming"},
+		{VideoID: "e2", EpisodeNumber: 2, Title: "The Kingsroad"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,8 +64,8 @@ func TestEpisodeGroupingAndSearch(t *testing.T) {
 		t.Errorf("episode grouping wrong: %+v", e1)
 	}
 
-	// Show derived counts: 2 episodes, 1 season, 0 unwatched.
-	show, err := shows.Get(ctx, "show-1")
+	// Show derived counts: 2 episodes, 1 season, 2 unwatched.
+	show, err := shows.Get(ctx, showID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +148,7 @@ func TestFTS5SearchIntegration(t *testing.T) {
 	ctx := context.Background()
 	videos := NewVideoRepo(database)
 	shows := NewShowRepo(database)
-	if _, err := database.Exec(`INSERT INTO storages (id, name, type, root_path, created_at)
-		VALUES ('s1', 'test', 'internal', 'C:\\Videos', '2026-01-01T00:00:00.000000000Z')`); err != nil {
-		t.Fatal(err)
-	}
+	seedSource(t, NewSourceRepo(database), "s1", `C:\Videos`)
 	if err := videos.Create(ctx, mkVideo("a", "Interstellar")); err != nil {
 		t.Fatal(err)
 	}
@@ -175,12 +158,8 @@ func TestFTS5SearchIntegration(t *testing.T) {
 	if err := videos.Create(ctx, mkVideo("c", "Movie C")); err != nil {
 		t.Fatal(err)
 	}
-	now := "2026-01-01T00:00:00.000000000Z"
-	if err := shows.Create(ctx, domain.Show{ID: "show-1", Name: "The Dark Knight",
-		MetadataSource: "manual", CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	if err := videos.AssignEpisode(ctx, "c", "show-1", 1, 1, "Episode One"); err != nil {
+	if _, err := shows.AssignSeason(ctx, "The Dark Knight", 1,
+		[]domain.EpisodeAssign{{VideoID: "c", EpisodeNumber: 1, Title: "Episode One"}}); err != nil {
 		t.Fatal(err)
 	}
 

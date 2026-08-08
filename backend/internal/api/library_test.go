@@ -17,17 +17,16 @@ const ts2026 = "2026-01-01T00:00:00.000000000Z"
 func seedLibrary(t *testing.T, database *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	storages := store.NewStorageRepo(database)
-	if err := storages.Create(ctx, domain.Storage{
-		ID: "s1", Name: "test", Type: domain.StorageTypeInternal,
-		RootPath: t.TempDir(), Available: true, CreatedAt: ts2026,
+	sources := store.NewSourceRepo(database)
+	if err := sources.Create(ctx, domain.MediaSource{
+		ID: "s1", Path: t.TempDir(), CreatedAt: ts2026,
 	}); err != nil {
-		t.Fatalf("seed storage: %v", err)
+		t.Fatalf("seed source: %v", err)
 	}
 	videos := store.NewVideoRepo(database)
 	mk := func(id, rel string) domain.Video {
 		return domain.Video{
-			ID: id, StorageID: "s1", FileID: "f" + id, RelativePath: rel,
+			ID: id, SourceID: "s1", FileID: "f" + id, RelativePath: rel,
 			Path: t.TempDir() + "\\" + rel, Size: 1, MTime: 1, Title: titleOf(rel),
 			CreatedAt: ts2026, UpdatedAt: ts2026, LastScannedAt: ts2026,
 		}
@@ -47,20 +46,21 @@ func seedLibrary(t *testing.T, database *sql.DB) {
 	}); err != nil {
 		t.Fatalf("seed show: %v", err)
 	}
-	if _, err := shows.EnsureSeason(ctx, "show1", 1, "tv"); err != nil {
-		t.Fatalf("seed season: %v", err)
+	episodes := []domain.EpisodeAssign{
+		{VideoID: "e1", EpisodeNumber: 1, Title: "Ep e1"},
+		{VideoID: "e2", EpisodeNumber: 2, Title: "Ep e2"},
 	}
-	episodes := map[string]domain.Video{
-		"e1": mk("e1", "Breaking.Bad.S01E01.mkv"),
-		"e2": mk("e2", "Breaking.Bad.S01E02.mkv"),
+	for _, e := range episodes {
+		rel := "Breaking.Bad.S01E01.mkv"
+		if e.EpisodeNumber == 2 {
+			rel = "Breaking.Bad.S01E02.mkv"
+		}
+		if err := videos.Create(ctx, mk(e.VideoID, rel)); err != nil {
+			t.Fatalf("seed episode %s: %v", e.VideoID, err)
+		}
 	}
-	for id, v := range episodes {
-		if err := videos.Create(ctx, v); err != nil {
-			t.Fatalf("seed episode %s: %v", id, err)
-		}
-		if err := videos.AssignEpisode(ctx, id, "show1", 1, map[string]int{"e1": 1, "e2": 2}[id], "Ep "+id); err != nil {
-			t.Fatalf("assign episode %s: %v", id, err)
-		}
+	if _, err := shows.AssignSeason(ctx, "Breaking Bad", 1, episodes); err != nil {
+		t.Fatalf("assign season: %v", err)
 	}
 	history := store.NewHistoryRepo(database)
 	if err := history.Upsert(ctx, domain.History{VideoID: "m1", User: "local", Progress: 40, UpdatedAt: "2026-01-02T00:00:00.000000000Z"}); err != nil {

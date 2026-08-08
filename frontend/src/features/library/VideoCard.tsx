@@ -1,5 +1,4 @@
-import { Film, HardDrive, PlayCircle } from 'lucide-react'
-import type { Storage } from '../../api/storages'
+import { Film, PlayCircle } from 'lucide-react'
 import type { Video } from '../../api/videos'
 import { coverUrl } from '../../api/videos'
 import { formatBytes, formatDuration } from '../../lib/format'
@@ -10,8 +9,7 @@ import { openVideo } from '../../tabs/manager'
 // two lines so long series-style names stay readable, and the meta line adapts:
 // episodes show their SxxEyy + episode title, standalone videos show
 // resolution · size. Episodes (inside series) additionally get a kind chip.
-export function VideoCard({ video, storage }: { video: Video; storage?: Storage }) {
-  const offline = storage !== undefined && !storage.available
+export function VideoCard({ video }: { video: Video }) {
   const isEpisode = video.kind === 'episode' || video.episode_number != null
   const meta = isEpisode
     ? `S${String(video.season_number ?? 1).padStart(2, '0')}E${String(video.episode_number ?? 1).padStart(2, '0')}`
@@ -37,23 +35,14 @@ export function VideoCard({ video, storage }: { video: Video; storage?: Storage 
             <Film className="size-10" />
           </div>
         )}
-        {offline && (
-          <span className="absolute inset-0 flex items-center justify-center bg-neutral-100/80 text-neutral-500">
-            <span className="flex items-center gap-1.5 rounded bg-white px-2.5 py-1 text-xs">
-              <HardDrive className="size-3.5" /> 存储离线
-            </span>
-          </span>
-        )}
-        {video.duration > 0 && !offline && (
+        {video.duration > 0 && (
           <span className="absolute bottom-1.5 right-1.5 rounded bg-neutral-900/80 px-1.5 py-0.5 text-xs text-white">
             {formatDuration(video.duration)}
           </span>
         )}
-        {!offline && (
-          <span className="absolute inset-0 flex items-center justify-center bg-white/0 opacity-0 transition-opacity group-hover:bg-black/10 group-hover:opacity-100">
-            <PlayCircle className="size-12 text-white" />
-          </span>
-        )}
+        <span className="absolute inset-0 flex items-center justify-center bg-white/0 opacity-0 transition-opacity group-hover:bg-black/10 group-hover:opacity-100">
+          <PlayCircle className="size-12 text-white" />
+        </span>
       </div>
       <div className="min-w-0 px-3 pb-2.5 pt-2">
         <p className="line-clamp-2 text-sm font-medium leading-snug text-neutral-800" title={video.title}>

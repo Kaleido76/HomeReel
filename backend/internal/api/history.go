@@ -4,14 +4,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"homereel/backend/internal/domain"
 )
-
-// timeLayout matches the fixed-width nanosecond timestamp used across the
-// data layer (lexicographic order == chronological order).
-const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 // handleHistoryGet returns the resume position for a video (null when absent).
 func (s *Server) handleHistoryGet(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +47,7 @@ func (s *Server) handleHistoryPut(w http.ResponseWriter, r *http.Request) {
 		VideoID:   v.ID,
 		User:      "local",
 		Progress:  req.Progress,
-		UpdatedAt: time.Now().UTC().Format(timeLayout),
+		UpdatedAt: domain.Now(),
 	}
 	if err := s.history.Upsert(r.Context(), h); err != nil {
 		slog.Error("save history", "video_id", v.ID, "err", err)

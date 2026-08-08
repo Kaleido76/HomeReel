@@ -2,7 +2,7 @@ import { api } from './client'
 
 export interface Video {
   id: string
-  storage_id: string
+  source_id?: string
   file_id: string
   relative_path: string
   path: string
@@ -128,10 +128,8 @@ export function updateVideo(id: string, patch: VideoPatch): Promise<{ video: Vid
   })
 }
 
-export function deleteVideo(id: string, deleteFile = false): Promise<{ deleted: boolean }> {
-  return api<{ deleted: boolean }>(`/api/videos/${id}${deleteFile ? '?deleteFile=true' : ''}`, {
-    method: 'DELETE',
-  })
+export function deleteVideo(id: string): Promise<{ deleted: boolean }> {
+  return api<{ deleted: boolean }>(`/api/videos/${id}`, { method: 'DELETE' })
 }
 
 export function refreshVideo(id: string): Promise<{ queued: boolean }> {

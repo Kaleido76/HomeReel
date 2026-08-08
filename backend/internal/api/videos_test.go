@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -16,13 +16,37 @@ import (
 	"homereel/backend/internal/store"
 )
 
+// newTestSource marks a fresh temp directory as a multimedia source and
+// returns its id.
+func newTestSource(t *testing.T, ts *httptest.Server, cookie string) string {
+	t.Helper()
+	root := t.TempDir()
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/sources",
+		mustJSON(t, map[string]string{"path": root}), cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("add source = %d (body %s)", resp.StatusCode, body)
+	}
+	var created struct {
+		Source struct {
+			ID string `json:"id"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("decode add source: %v", err)
+	}
+	if created.Source.ID == "" {
+		t.Fatalf("no source id in %s", body)
+	}
+	return created.Source.ID
+}
+
 // seedVideo inserts a video row into the given test database.
-func seedVideo(t *testing.T, database *sql.DB, storageID, id, rel, path, title string, dur float64) {
+func seedVideo(t *testing.T, database *sql.DB, sourceID, id, rel, path, title string, dur float64) {
 	t.Helper()
 	repo := store.NewVideoRepo(database)
 	now := "2026-01-01T00:00:00.000000000Z"
 	if err := repo.Create(context.Background(), domain.Video{
-		ID: id, StorageID: storageID, FileID: id, RelativePath: rel,
+		ID: id, SourceID: sourceID, FileID: id, RelativePath: rel,
 		Path: path, Size: 1, MTime: 1, Title: title, Duration: dur,
 		Codec: "h264", Container: "mp4",
 		CreatedAt: now, UpdatedAt: now, LastScannedAt: now,
@@ -34,9 +58,9 @@ func seedVideo(t *testing.T, database *sql.DB, storageID, id, rel, path, title s
 func TestVideosList(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
-	storageID, _ := newTestStorage(t, ts, cookie)
-	seedVideo(t, database, storageID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
-	seedVideo(t, database, storageID, "v2", "b.mp4", "b.mp4", "Beta", 200)
+	sourceID := newTestSource(t, ts, cookie)
+	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
+	seedVideo(t, database, sourceID, "v2", "b.mp4", "b.mp4", "Beta", 200)
 
 	resp, body := doJSON(t, "GET", ts.URL+"/api/videos?sort=title&order=asc", "", cookie)
 	if resp.StatusCode != http.StatusOK {
@@ -60,9 +84,9 @@ func TestVideosList(t *testing.T) {
 func TestVideosListAdvancedFilter(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
-	storageID, _ := newTestStorage(t, ts, cookie)
-	seedVideo(t, database, storageID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
-	seedVideo(t, database, storageID, "v2", "b.mp4", "b.mp4", "Beta", 200)
+	sourceID := newTestSource(t, ts, cookie)
+	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
+	seedVideo(t, database, sourceID, "v2", "b.mp4", "b.mp4", "Beta", 200)
 	ctx := context.Background()
 	repo := store.NewVideoRepo(database)
 	desc, genre, year := "太空冒险", "科幻", 2001
@@ -96,8 +120,8 @@ func TestVideosListAdvancedFilter(t *testing.T) {
 func TestVideoDetail(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
-	storageID, _ := newTestStorage(t, ts, cookie)
-	seedVideo(t, database, storageID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
+	sourceID := newTestSource(t, ts, cookie)
+	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
 
 	resp, body := doJSON(t, "GET", ts.URL+"/api/videos/v1", "", cookie)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) {
@@ -113,8 +137,8 @@ func TestVideoDetail(t *testing.T) {
 func TestHistoryUpsertAndRead(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
-	storageID, _ := newTestStorage(t, ts, cookie)
-	seedVideo(t, database, storageID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
+	sourceID := newTestSource(t, ts, cookie)
+	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
 
 	resp, body := doJSON(t, "GET", ts.URL+"/api/videos/v1/history", "", cookie)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"history":null`) {
@@ -150,22 +174,24 @@ func TestStreamDirectAndCover(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	root := t.TempDir()
-	resp, body := doJSON(t, "POST", ts.URL+"/api/storages",
-		`{"name":"root","type":"internal","root_path":`+strconv.Quote(root)+`}`, cookie)
-	var created struct {
-		Storage struct {
-			ID string `json:"id"`
-		} `json:"storage"`
-	}
-	if err := json.Unmarshal([]byte(body), &created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	storageID := created.Storage.ID
-
 	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("0123456789"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	seedVideo(t, database, storageID, "v1", "clip.mp4", root+string(filepath.Separator)+"clip.mp4", "Clip", 10)
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/sources",
+		mustJSON(t, map[string]string{"path": root}), cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("add source = %d (body %s)", resp.StatusCode, body)
+	}
+	var created struct {
+		Source struct {
+			ID string `json:"id"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("decode add source: %v", err)
+	}
+	sourceID := created.Source.ID
+	seedVideo(t, database, sourceID, "v1", "clip.mp4", root+string(filepath.Separator)+"clip.mp4", "Clip", 10)
 
 	req, _ := http.NewRequest("GET", ts.URL+"/api/stream/v1", nil)
 	req.Header.Set("Cookie", cookie)
@@ -190,22 +216,11 @@ func TestStreamDirectAndCover(t *testing.T) {
 func TestRemuxEndpoints(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
-	root := t.TempDir()
-	resp, body := doJSON(t, "POST", ts.URL+"/api/storages",
-		`{"name":"root","type":"internal","root_path":`+strconv.Quote(root)+`}`, cookie)
-	var created struct {
-		Storage struct {
-			ID string `json:"id"`
-		} `json:"storage"`
-	}
-	if err := json.Unmarshal([]byte(body), &created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	storageID := created.Storage.ID
+	sourceID := newTestSource(t, ts, cookie)
 
-	// One segmented video under a subfolder and one normal video outside it.
-	seedVideo(t, database, storageID, "v1", "shows/ep1.mp4", "shows/ep1.mp4", "Seg", 10)
-	seedVideo(t, database, storageID, "v2", "other.mp4", "other.mp4", "Plain", 10)
+	// One segmented video and one normal video.
+	seedVideo(t, database, sourceID, "v1", "shows/ep1.mp4", "shows/ep1.mp4", "Seg", 10)
+	seedVideo(t, database, sourceID, "v2", "other.mp4", "other.mp4", "Plain", 10)
 	repo := store.NewVideoRepo(database)
 	if err := repo.UpdateProbe(context.Background(), domain.Video{
 		ID: "v1", Title: "Seg", Codec: "h264", Container: "mp4", Segmented: true,
@@ -214,7 +229,7 @@ func TestRemuxEndpoints(t *testing.T) {
 	}
 
 	// Status lists only the segmented video, not remuxed (no cache in test).
-	resp, body = doJSON(t, "GET", ts.URL+"/api/remux/status", "", cookie)
+	resp, body := doJSON(t, "GET", ts.URL+"/api/remux/status", "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("remux status = %d (body %s)", resp.StatusCode, body)
 	}
@@ -229,14 +244,5 @@ func TestRemuxEndpoints(t *testing.T) {
 	resp, body = doJSON(t, "POST", ts.URL+"/api/videos/v1/remux", "", cookie)
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("single remux = %d (body %s)", resp.StatusCode, body)
-	}
-
-	// Folder remux targets only the segmented video under that folder.
-	resp, body = doJSON(t, "POST", ts.URL+"/api/fs/remux", `{"storageId":"`+storageID+`","path":"shows"}`, cookie)
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("folder remux = %d (body %s)", resp.StatusCode, body)
-	}
-	if !strings.Contains(body, `"accepted":1`) {
-		t.Fatalf("folder remux accepted count unexpected: %s", body)
 	}
 }

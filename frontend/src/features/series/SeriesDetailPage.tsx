@@ -49,12 +49,6 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const linkedIds = new Set(links.map((l) => l.linked_id))
   const candidates = (allSeries.data?.series ?? []).filter((s) => s.id !== id && !linkedIds.has(s.id))
 
-  const maxEp = members.reduce((m, x) => Math.max(m, x.episode_number), 0)
-  const rows: { ep: number; member?: (typeof members)[number] }[] = []
-  for (let i = 1; i <= maxEp; i++) {
-    rows.push({ ep: i, member: members.find((m) => m.episode_number === i) })
-  }
-
   return (
     <div className="space-y-4 p-4 sm:p-5">
       <div className="relative overflow-hidden rounded-xl border border-neutral-200">
@@ -66,9 +60,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                {series.kind === 'movie' ? '电影部' : '系列剧集'}
-              </span>
+              <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">系列剧集</span>
               <span className="flex items-center gap-1 text-xs text-neutral-400">
                 <Layers className="size-3.5" /> {series.member_count} 个成员
               </span>
@@ -94,59 +86,48 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
       <div className="rounded-xl border border-neutral-200 bg-white p-4">
         <h3 className="mb-3 text-sm font-medium text-neutral-700">
-          {series.kind === 'movie' ? '本部分集' : '本系列剧集'}
-          <span className="ml-2 text-xs font-normal text-neutral-400">
-            {members.length} 集{maxEp > members.length ? `（编号到第 ${maxEp} 集，存在缺失）` : ''}
-          </span>
+          本系列剧集
+          <span className="ml-2 text-xs font-normal text-neutral-400">{members.length} 集</span>
         </h3>
         <div className="divide-y divide-neutral-100">
-          {rows.map(({ ep, member }) =>
-            member ? (
-              <div key={member.video_id} className="flex items-center gap-3 py-2.5">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-500">
-                  {ep}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
-                  <p className="mt-0.5 truncate font-mono text-xs text-neutral-400">{member.relative_path}</p>
-                  {member.duration > 0 && member.progress > 0 && member.progress < member.duration - 20 && (
-                    <div className="mt-1.5 h-1 w-full max-w-xs overflow-hidden rounded-sm bg-neutral-100">
-                      <div
-                        className="h-full rounded-sm bg-blue-600"
-                        style={{ width: `${Math.min(100, (member.progress / member.duration) * 100)}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-                <span className="shrink-0 text-xs text-neutral-400">
-                  {member.duration > 0 ? formatDuration(member.duration) : ''}
-                </span>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Link
-                    to="/series/$id/play/$videoId"
-                    params={{ id: seriesId, videoId: member.video_id }}
-                    className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
-                  >
-                    <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
-                  </Link>
-                  <Link
-                    to="/series/$id/video/$videoId"
-                    params={{ id: seriesId, videoId: member.video_id }}
-                    className="flex shrink-0 items-center gap-1.5 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
-                  >
-                    详情
-                  </Link>
-                </div>
+          {members.map((member) => (
+            <div key={member.video_id} className="flex items-center gap-3 py-2.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-500">
+                {member.episode_number}
               </div>
-            ) : (
-              <div key={`gap-${ep}`} className="flex items-center gap-3 py-2.5 opacity-50">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-dashed border-neutral-300 text-sm font-medium text-neutral-300">
-                  {ep}
-                </div>
-                <p className="text-sm text-neutral-300">第 {ep} 集缺失</p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
+                <p className="mt-0.5 truncate font-mono text-xs text-neutral-400">{member.relative_path}</p>
+                {member.duration > 0 && member.progress > 0 && member.progress < member.duration - 20 && (
+                  <div className="mt-1.5 h-1 w-full max-w-xs overflow-hidden rounded-sm bg-neutral-100">
+                    <div
+                      className="h-full rounded-sm bg-blue-600"
+                      style={{ width: `${Math.min(100, (member.progress / member.duration) * 100)}%` }}
+                    />
+                  </div>
+                )}
               </div>
-            ),
-          )}
+              <span className="shrink-0 text-xs text-neutral-400">
+                {member.duration > 0 ? formatDuration(member.duration) : ''}
+              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                <Link
+                  to="/series/$id/play/$videoId"
+                  params={{ id: seriesId, videoId: member.video_id }}
+                  className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+                >
+                  <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
+                </Link>
+                <Link
+                  to="/series/$id/video/$videoId"
+                  params={{ id: seriesId, videoId: member.video_id }}
+                  className="flex shrink-0 items-center gap-1.5 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
+                >
+                  详情
+                </Link>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

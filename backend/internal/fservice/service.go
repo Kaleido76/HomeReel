@@ -1,9 +1,9 @@
-// Package fservice powers the generic machine-wide file browser ("文件（新）"
+// Package fservice powers the generic machine-wide file browser ("文件"
 // tab): it lists drives and directories by absolute path and performs
 // cut/copy/paste/rename/delete against the host filesystem. It never touches
-// the database for file contents — no indexing, no scanning, no watchers — and
-// is intentionally independent from the storage-volume model used by the
-// Explorer. Only user pins (favorite paths) persist, in the settings table.
+// the database for file contents — no indexing, no scanning, no watchers.
+// Only user pins (favorite paths) and multimedia-source markers persist, in
+// the settings/DB layer.
 package fservice
 
 import (
@@ -37,7 +37,7 @@ type Disk struct {
 // Entry is a single filesystem entry listed by absolute path.
 type Entry struct {
 	Name    string `json:"name"`
-	Path    string `json:"path"`    // absolute
+	Path    string `json:"path"` // absolute
 	IsDir   bool   `json:"is_dir"`
 	Size    int64  `json:"size"`
 	ModTime int64  `json:"mtime"` // unix seconds
@@ -58,14 +58,16 @@ type OpResult struct {
 
 // Service implements the generic file browser operations.
 type Service struct {
-	jobs *jobs.Service
-	pins domain.SettingsRepo
+	jobs    *jobs.Service
+	pins    domain.SettingsRepo
+	sources domain.SourceRepo
 }
 
 // New builds the generic file service. jobsSvc backs background copy/move; pins
-// persists favorite paths in the settings table.
-func New(jobsSvc *jobs.Service, pins domain.SettingsRepo) *Service {
-	return &Service{jobs: jobsSvc, pins: pins}
+// persists favorite paths and sources the multimedia-source markers, both in the
+// settings/DB layer.
+func New(jobsSvc *jobs.Service, pins domain.SettingsRepo, sources domain.SourceRepo) *Service {
+	return &Service{jobs: jobsSvc, pins: pins, sources: sources}
 }
 
 // ListDisks enumerates the host's local drives (Windows) or the root (unix).
@@ -98,7 +100,7 @@ func (s *Service) ListDir(_ context.Context, path string) ([]Entry, error) {
 		if err != nil {
 			continue
 		}
-		if isHiddenOrSystem(linkInfo) {
+		if files.IsHiddenOrSystem(linkInfo) {
 			continue
 		}
 		info, err := os.Stat(full)
@@ -122,7 +124,7 @@ func (s *Service) ListDir(_ context.Context, path string) ([]Entry, error) {
 
 // Rename renames the entry at path to newName within the same directory.
 func (s *Service) Rename(_ context.Context, path, newName string) error {
-	if !validName(newName) {
+	if !files.ValidName(newName) {
 		return ErrInvalidName
 	}
 	return os.Rename(filepath.Clean(path), filepath.Join(filepath.Dir(filepath.Clean(path)), newName))
@@ -142,25 +144,42 @@ func (s *Service) Delete(_ context.Context, paths []string) OpResult {
 	return res
 }
 
-// validName reports whether name is acceptable as a file or directory name.
-func validName(name string) bool {
-	if name == "" || name == "." || name == ".." {
-		return false
-	}
-	return !strings.ContainsAny(name, `/\`)
-}
+const pinsKey = "files.pins"
 
-const pinsKey = "fs2.pins"
+// legacyPinsKey is the settings key used before the fs2→files rename; kept for
+// a one-time migration so pins saved under the old name are not lost.
+const legacyPinsKey = "fs2.pins"
 
-// GetPins returns the pinned favorite paths (order preserved).
+// GetPins returns the pinned favorite paths (order preserved), never nil. When
+// the current key is absent it migrates any pins stored under the legacy key.
 func (s *Service) GetPins(ctx context.Context) ([]string, error) {
 	raw, err := s.pins.Get(ctx, pinsKey)
 	if errors.Is(err, domain.ErrNotFound) {
-		return nil, nil
+		return s.migrateLegacyPins(ctx)
 	}
 	if err != nil {
 		return nil, err
 	}
+	return parsePins(raw)
+}
+
+// migrateLegacyPins moves pins saved under the pre-rename key to the current
+// key and returns them, or an empty (non-nil) list when there are none.
+func (s *Service) migrateLegacyPins(ctx context.Context) ([]string, error) {
+	raw, err := s.pins.Get(ctx, legacyPinsKey)
+	if errors.Is(err, domain.ErrNotFound) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.pins.Set(ctx, pinsKey, raw); err != nil {
+		return nil, err
+	}
+	return parsePins(raw)
+}
+
+func parsePins(raw string) ([]string, error) {
 	var out []string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, fmt.Errorf("parse pins: %w", err)

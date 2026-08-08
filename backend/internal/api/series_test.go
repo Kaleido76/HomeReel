@@ -16,12 +16,11 @@ import (
 func seedSeries(t *testing.T, database *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	storages := store.NewStorageRepo(database)
-	if err := storages.Create(ctx, domain.Storage{
-		ID: "s1", Name: "test", Type: domain.StorageTypeInternal,
-		RootPath: t.TempDir(), Available: true, CreatedAt: ts2026,
+	sources := store.NewSourceRepo(database)
+	if err := sources.Create(ctx, domain.MediaSource{
+		ID: "s1", Path: t.TempDir(), CreatedAt: ts2026,
 	}); err != nil {
-		t.Fatalf("seed storage: %v", err)
+		t.Fatalf("seed source: %v", err)
 	}
 	videos := store.NewVideoRepo(database)
 	shows := store.NewShowRepo(database)
@@ -35,16 +34,6 @@ func seedSeries(t *testing.T, database *sql.DB) {
 			t.Fatalf("seed show: %v", err)
 		}
 	}
-	// show1: two seasons, one episode each; show2: one season.
-	if _, err := shows.EnsureSeason(ctx, "show1", 1, "tv"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := shows.EnsureSeason(ctx, "show1", 2, "tv"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := shows.EnsureSeason(ctx, "show2", 1, "tv"); err != nil {
-		t.Fatal(err)
-	}
 	for _, ep := range []struct {
 		id, show string
 		season   int
@@ -55,13 +44,14 @@ func seedSeries(t *testing.T, database *sql.DB) {
 		{"e3", "show2", 1, "Better.Call.Saul.S01E01.mkv"},
 	} {
 		if err := videos.Create(ctx, domain.Video{
-			ID: ep.id, StorageID: "s1", FileID: "f" + ep.id, RelativePath: ep.rel,
+			ID: ep.id, SourceID: "s1", FileID: "f" + ep.id, RelativePath: ep.rel,
 			Path: t.TempDir() + "\\" + ep.rel, Title: titleOf(ep.rel),
 			CreatedAt: ts2026, UpdatedAt: ts2026, LastScannedAt: ts2026,
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := videos.AssignEpisode(ctx, ep.id, ep.show, ep.season, 1, ep.rel); err != nil {
+		if _, err := shows.AssignSeason(ctx, map[string]string{"show1": "Breaking Bad", "show2": "Better Call Saul"}[ep.show],
+			ep.season, []domain.EpisodeAssign{{VideoID: ep.id, EpisodeNumber: 1, Title: ep.rel}}); err != nil {
 			t.Fatal(err)
 		}
 	}

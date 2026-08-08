@@ -10,7 +10,6 @@ import (
 	"homereel/backend/internal/db"
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
-	"homereel/backend/internal/files"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/media"
 	"homereel/backend/internal/store"
@@ -36,11 +35,10 @@ func newTestScanner(t *testing.T) (*Service, *jobs.Service, *scanCalls) {
 	jobsSvc := jobs.NewService(store.NewJobRepo(database), jobs.NewLiveStatus())
 	svc := New(
 		store.NewVideoRepo(database),
-		store.NewStorageRepo(database),
+		store.NewSourceRepo(database),
 		store.NewShowRepo(database),
 		store.NewSeriesRepo(database),
 		jobsSvc,
-		files.NewService(t.TempDir()),
 		events.New(),
 		"ffprobe",
 		"ffmpeg",
@@ -68,22 +66,16 @@ func mkVideo(t *testing.T, path string) {
 	}
 }
 
-func storageFor(root string) domain.Storage {
-	return domain.Storage{
-		ID: "s1", Name: "root", Type: domain.StorageTypeInternal,
-		RootPath: root, Available: true, CreatedAt: "t",
-	}
-}
-
-func ensureStorage(t *testing.T, svc *Service, root string) domain.Storage {
+// ensureSource registers a media source with a fixed id and returns it.
+func ensureSource(t *testing.T, svc *Service, root string) domain.MediaSource {
 	t.Helper()
-	st := storageFor(root)
-	if _, err := svc.storages.Get(context.Background(), st.ID); err != nil {
-		if err := svc.storages.Create(context.Background(), st); err != nil {
-			t.Fatalf("create storage: %v", err)
+	src := domain.MediaSource{ID: "s1", Path: filepath.Clean(root), CreatedAt: "t"}
+	if _, err := svc.sources.Get(context.Background(), src.ID); err != nil {
+		if err := svc.sources.Create(context.Background(), src); err != nil {
+			t.Fatalf("create source: %v", err)
 		}
 	}
-	return st
+	return src
 }
 
 func TestScanAddsAndReScans(t *testing.T) {
@@ -93,7 +85,7 @@ func TestScanAddsAndReScans(t *testing.T) {
 	mkVideo(t, filepath.Join(root, "a.mp4"))
 	mkVideo(t, filepath.Join(root, "sub", "b.mkv"))
 
-	res, err := svc.Scan(ctx, ensureStorage(t, svc, root))
+	res, err := svc.ScanSource(ctx, ensureSource(t, svc, root))
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -105,7 +97,7 @@ func TestScanAddsAndReScans(t *testing.T) {
 	}
 
 	// Second scan: unchanged files with metadata present — no re-probe.
-	res, err = svc.Scan(ctx, ensureStorage(t, svc, root))
+	res, err = svc.ScanSource(ctx, ensureSource(t, svc, root))
 	if err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
@@ -123,10 +115,10 @@ func TestScanDetectsMoveByFileID(t *testing.T) {
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "movie.mp4"))
 
-	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	first, _ := svc.videos.ListByStorage(ctx, "s1")
+	first, _ := svc.videos.ListBySource(ctx, "s1")
 	if len(first) != 1 {
 		t.Fatalf("videos = %d, want 1", len(first))
 	}
@@ -135,16 +127,59 @@ func TestScanDetectsMoveByFileID(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "movie.mp4"), filepath.Join(root, "renamed.mp4")); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	res, err := svc.Scan(ctx, ensureStorage(t, svc, root))
+	res, err := svc.ScanSource(ctx, ensureSource(t, svc, root))
 	if err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
 	if res.Added != 0 || res.Updated != 1 || res.Missing != 0 {
 		t.Fatalf("move result = %+v", res)
 	}
-	after, _ := svc.videos.ListByStorage(ctx, "s1")
+	after, _ := svc.videos.ListBySource(ctx, "s1")
 	if len(after) != 1 || after[0].RelativePath != "renamed.mp4" {
 		t.Fatalf("video not re-linked: %+v", after)
+	}
+}
+
+func TestScanDetectsMoveAcrossSources(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	rootA := t.TempDir()
+	rootB := filepath.Join(t.TempDir(), "b")
+	if err := os.MkdirAll(rootB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mkVideo(t, filepath.Join(rootA, "movie.mp4"))
+
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, rootA)); err != nil {
+		t.Fatalf("scan A: %v", err)
+	}
+	first, _ := svc.videos.ListBySource(ctx, "s1")
+	if len(first) != 1 {
+		t.Fatalf("videos after A = %d, want 1", len(first))
+	}
+
+	// Move the file into a second source: it keeps the same video identity
+	// (global file_id matching), ownership just transfers.
+	if err := os.Rename(filepath.Join(rootA, "movie.mp4"), filepath.Join(rootB, "movie.mp4")); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	srcB := domain.MediaSource{ID: "s2", Path: rootB, CreatedAt: "t"}
+	if err := svc.sources.Create(ctx, srcB); err != nil {
+		t.Fatalf("create source B: %v", err)
+	}
+	res, err := svc.ScanSource(ctx, srcB)
+	if err != nil {
+		t.Fatalf("scan B: %v", err)
+	}
+	if res.Added != 0 || res.Updated != 1 {
+		t.Fatalf("cross-source move result = %+v", res)
+	}
+	all, _ := svc.videos.ListAll(ctx)
+	if len(all) != 1 {
+		t.Fatalf("videos total = %d, want 1 (no dup)", len(all))
+	}
+	if all[0].SourceID != "s2" || all[0].Path != filepath.Join(rootB, "movie.mp4") {
+		t.Fatalf("video not re-owned: %+v", all[0])
 	}
 }
 
@@ -154,22 +189,55 @@ func TestScanMarksDeleted(t *testing.T) {
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "gone.mp4"))
 
-	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, "gone.mp4")); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	res, err := svc.Scan(ctx, ensureStorage(t, svc, root))
+	res, err := svc.ScanSource(ctx, ensureSource(t, svc, root))
 	if err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
 	if res.Missing != 1 {
 		t.Fatalf("missing = %d, want 1", res.Missing)
 	}
-	after, _ := svc.videos.ListByStorage(ctx, "s1")
+	after, _ := svc.videos.ListBySource(ctx, "s1")
 	if len(after) != 0 {
 		t.Fatalf("videos after delete = %d, want 0", len(after))
+	}
+}
+
+func TestScanSkipsChildSourceSubtree(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	mkVideo(t, filepath.Join(root, "parent.mp4"))
+	mkVideo(t, filepath.Join(child, "child.mp4"))
+
+	// Register the child source before scanning the parent (routing table).
+	if err := svc.sources.Create(ctx, domain.MediaSource{ID: "s2", Path: child, CreatedAt: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.ScanSource(ctx, ensureSource(t, svc, root))
+	if err != nil {
+		t.Fatalf("scan parent: %v", err)
+	}
+	if res.Added != 1 {
+		t.Fatalf("parent added = %d, want 1 (child subtree skipped)", res.Added)
+	}
+	// The child's video is indexed only when the child source is scanned.
+	res, err = svc.ScanSource(ctx, domain.MediaSource{ID: "s2", Path: child, CreatedAt: "t"})
+	if err != nil {
+		t.Fatalf("scan child: %v", err)
+	}
+	if res.Added != 1 {
+		t.Fatalf("child added = %d, want 1", res.Added)
+	}
+	all, _ := svc.videos.ListAll(ctx)
+	if len(all) != 2 {
+		t.Fatalf("videos total = %d, want 2", len(all))
 	}
 }
 
@@ -189,7 +257,7 @@ func TestReProbeWhenMetadataMissing(t *testing.T) {
 	}
 
 	// First scan: probe fails, so the video keeps no metadata.
-	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	if calls.probes != 1 {
@@ -198,7 +266,7 @@ func TestReProbeWhenMetadataMissing(t *testing.T) {
 
 	// Unchanged file but metadata still missing → must re-probe (self-heal).
 	failProbe = false
-	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
 	if calls.probes != 2 {
@@ -214,7 +282,7 @@ func TestScanReportsSubTasks(t *testing.T) {
 
 	var texts []string
 	var pcts []float64
-	_, err := svc.scan(ctx, ensureStorage(t, svc, root), nil, func(text string, pct float64) {
+	_, err := svc.scan(ctx, ensureSource(t, svc, root), nil, func(text string, pct float64) {
 		if text != "" {
 			texts = append(texts, text)
 			pcts = append(pcts, pct)
@@ -242,20 +310,17 @@ func TestScanSkipsWhenRootUnreachable(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	mkVideo(t, filepath.Join(root, "a.mp4"))
-	if _, err := svc.Scan(ctx, ensureStorage(t, svc, root)); err != nil {
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if _, err := svc.videos.ListByStorage(ctx, "s1"); err != nil {
-		t.Fatal(err)
-	}
 
-	// Point the storage at a missing root; the scan must abort without
-	// deleting anything (ADR-014).
-	_, err := svc.Scan(ctx, storageFor(filepath.Join(root, "does-not-exist")))
+	// A source whose root is gone must abort without deleting anything
+	// (ADR-014): an unplugged drive never wipes the library.
+	_, err := svc.ScanSource(ctx, domain.MediaSource{ID: "s2", Path: filepath.Join(root, "does-not-exist")})
 	if err == nil {
 		t.Fatalf("scan of missing root should error")
 	}
-	after, _ := svc.videos.ListByStorage(ctx, "s1")
+	after, _ := svc.videos.ListBySource(ctx, "s1")
 	if len(after) != 1 {
 		t.Fatalf("videos lost after unreachable scan = %d, want 1", len(after))
 	}

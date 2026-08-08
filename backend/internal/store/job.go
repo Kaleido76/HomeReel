@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"homereel/backend/internal/domain"
 	"homereel/backend/internal/jobs"
 )
 
@@ -43,7 +44,7 @@ func (r *jobRepo) ClaimNext(ctx context.Context) (jobs.Job, bool, error) {
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?`,
-		jobs.StatusRunning, nowRFC3339(), j.ID); err != nil {
+		jobs.StatusRunning, domain.Now(), j.ID); err != nil {
 		return jobs.Job{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -56,21 +57,21 @@ func (r *jobRepo) ClaimNext(ctx context.Context) (jobs.Job, bool, error) {
 func (r *jobRepo) MarkProgress(ctx context.Context, id string, progress float64) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE jobs SET progress = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)`,
-		progress, nowRFC3339(), id, jobs.StatusRunning, jobs.StatusQueued)
+		progress, domain.Now(), id, jobs.StatusRunning, jobs.StatusQueued)
 	return err
 }
 
 func (r *jobRepo) MarkDone(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE jobs SET status = ?, progress = 1, updated_at = ? WHERE id = ?`,
-		jobs.StatusDone, nowRFC3339(), id)
+		jobs.StatusDone, domain.Now(), id)
 	return err
 }
 
 func (r *jobRepo) MarkFailed(ctx context.Context, id, errMsg string) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?`,
-		jobs.StatusFailed, errMsg, nowRFC3339(), id)
+		jobs.StatusFailed, errMsg, domain.Now(), id)
 	return err
 }
 
@@ -106,7 +107,7 @@ func (r *jobRepo) HasActive(ctx context.Context, typ, target string) (bool, erro
 func (r *jobRepo) ResetRunning(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE jobs SET status = ?, updated_at = ? WHERE status = ?`,
-		jobs.StatusQueued, nowRFC3339(), jobs.StatusRunning)
+		jobs.StatusQueued, domain.Now(), jobs.StatusRunning)
 	return err
 }
 

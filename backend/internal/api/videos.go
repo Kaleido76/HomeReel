@@ -83,17 +83,9 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// streamOrError resolves the video and checks its storage is online before
-// any source-dependent streaming work.
+// streamOrError resolves the video for any source-dependent streaming work.
 func (s *Server) streamOrError(w http.ResponseWriter, r *http.Request) (*domain.Video, bool) {
-	v, ok := s.videoOrError(w, r, r.PathValue("id"))
-	if !ok {
-		return nil, false
-	}
-	if _, ok := s.storageOrError(w, r, v.StorageID); !ok {
-		return nil, false
-	}
-	return v, true
+	return s.videoOrError(w, r, r.PathValue("id"))
 }
 
 func (s *Server) handleStreamDirect(w http.ResponseWriter, r *http.Request) {

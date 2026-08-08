@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -18,13 +17,11 @@ import (
 	"homereel/backend/internal/config"
 	"homereel/backend/internal/db"
 	"homereel/backend/internal/events"
-	"homereel/backend/internal/files"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/netutil"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
-	"homereel/backend/internal/storage"
 	"homereel/backend/internal/store"
 	"homereel/backend/internal/streaming"
 )
@@ -61,12 +58,11 @@ func run() error {
 		slog.Warn("未配置 auth.password，已生成随机访问口令（仅本次显示一次）", "password", generated)
 	}
 
-	storageSvc := storage.New(store.NewStorageRepo(database))
-	filesSvc := files.NewService(filepath.Join(cfg.Server.DataDir, "uploads"))
 	live := jobs.NewLiveStatus()
 	jobsSvc := jobs.NewService(store.NewJobRepo(database), live)
 	bus := events.New()
 	videosRepo := store.NewVideoRepo(database)
+	sourcesRepo := store.NewSourceRepo(database)
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
@@ -74,19 +70,19 @@ func run() error {
 		cfg.Media.FFmpegPath, cfg.Media.EnableHLS, cfg.Media.HLSPreset)
 	scannerSvc := scanner.New(
 		videosRepo,
-		store.NewStorageRepo(database),
+		sourcesRepo,
 		showsRepo,
 		seriesRepo,
 		jobsSvc,
-		filesSvc,
 		bus,
 		cfg.Media.FFprobePath,
 		cfg.Media.FFmpegPath,
 		cfg.Server.DataDir,
 	)
-	// Generic machine-wide file browser (文件（新） tab): absolute-path listing
-	// and clipboard-style copy/move behind its own background jobs.
-	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database))
+	// Generic machine-wide file browser (文件 tab): absolute-path listing,
+	// clipboard-style copy/move behind its own background jobs, and the
+	// multimedia-source markers that feed the video library.
+	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo)
 
 	// VideoImported → enqueue thumbnail generation (ADR-010, ADR-012).
 	go func() {
@@ -112,27 +108,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Periodically purge orphaned upload chunks (interrupted uploads).
-	go func() {
-		for {
-			if n, err := filesSvc.CleanupStaleUploads(24 * time.Hour); err != nil {
-				slog.Warn("cleanup stale uploads", "err", err)
-			} else if n > 0 {
-				slog.Info("cleaned stale uploads", "dirs", n)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Hour):
-			}
-		}
-	}()
-
 	// Background job worker (ADR-008). Job results are published on the bus so
-	// any component can react to a long task finishing (e.g. the explorer
-	// unlocks a volume the moment its scan lands). Generic file-browser jobs
-	// (fscopy/fsmove) are dispatched to the fservice handler, everything else
-	// to the scanner.
+	// any component can react to a long task finishing. Generic file-browser
+	// jobs (fscopy/fsmove) are dispatched to the fservice handler, everything
+	// else (probe/thumbnail/scan_source/remux) to the scanner.
 	worker := jobs.NewWorker(store.NewJobRepo(database), func(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
 		if j.Type == jobs.TypeFsCopy || j.Type == jobs.TypeFsMove {
 			return fsvc.HandleJob(ctx, j, report)
@@ -150,23 +129,9 @@ func run() error {
 	})
 	go worker.Run(ctx)
 
-	// Watch enabled storage volumes for changes.
-	if list, err := storageSvc.List(context.Background()); err == nil {
-		for _, st := range list {
-			if !st.Enabled {
-				continue
-			}
-			if err := scannerSvc.Watch(ctx, st); err != nil {
-				slog.Warn("watch storage", "storage_id", st.ID, "err", err)
-			}
-		}
-	} else {
-		slog.Warn("list storages for watching", "err", err)
-	}
-
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler: api.New(authSvc, storageSvc, filesSvc, jobsSvc, scannerSvc, fsvc,
+		Handler: api.New(authSvc, jobsSvc, scannerSvc, fsvc,
 			videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
 			search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
 			config.ResolveStaticDir(cfg.Server.StaticDir)),

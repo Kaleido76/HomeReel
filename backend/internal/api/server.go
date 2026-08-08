@@ -14,12 +14,10 @@ import (
 	"homereel/backend/internal/auth"
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
-	"homereel/backend/internal/files"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
-	"homereel/backend/internal/storage"
 	"homereel/backend/internal/streaming"
 )
 
@@ -28,8 +26,6 @@ const sessionCookie = "homereel_session"
 // Server wires routes and shared dependencies.
 type Server struct {
 	auth      *auth.Service
-	storages  *storage.Service
-	files     *files.Service
 	fsvc      *fservice.Service
 	jobs      *jobs.Service
 	scanner   *scanner.Service
@@ -48,15 +44,13 @@ type Server struct {
 // GET requests that match no /api route are served from disk, with
 // extension-less paths falling back to index.html so SPA deep links survive a
 // refresh.
-func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Service,
-	jobsSvc *jobs.Service, scannerSvc *scanner.Service, fsvc *fservice.Service,
+func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Service, fsvc *fservice.Service,
 	videosRepo domain.VideoRepo, showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
 	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
 	searchProvider search.Provider, bus *events.Bus,
 	dataDir string, staticDir string) http.Handler {
 	s := &Server{
-		auth: authSvc, storages: storageSvc, files: filesSvc, fsvc: fsvc,
-		jobs: jobsSvc, scanner: scannerSvc,
+		auth: authSvc, fsvc: fsvc, jobs: jobsSvc, scanner: scannerSvc,
 		videos: videosRepo, shows: showsRepo, series: seriesRepo,
 		history: historyRepo, streaming: streamingSvc,
 		search: searchProvider, bus: bus, dataDir: dataDir,
@@ -67,28 +61,19 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.Handle("GET /api/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
-	mux.Handle("GET /api/storages", s.requireAuth(http.HandlerFunc(s.handleStoragesList)))
-	mux.Handle("POST /api/storages", s.requireAuth(http.HandlerFunc(s.handleStorageCreate)))
-	mux.Handle("PATCH /api/storages/{id}", s.requireAuth(http.HandlerFunc(s.handleStoragePatch)))
-	mux.Handle("DELETE /api/storages/{id}", s.requireAuth(http.HandlerFunc(s.handleStorageDelete)))
-	mux.Handle("POST /api/storages/{id}/refresh", s.requireAuth(http.HandlerFunc(s.handleStorageRefresh)))
-	mux.Handle("GET /api/fs/list", s.requireAuth(http.HandlerFunc(s.handleFsList)))
-	mux.Handle("GET /api/fs/download", s.requireAuth(http.HandlerFunc(s.handleFsDownload)))
-	mux.Handle("POST /api/fs/mkdir", s.requireAuth(http.HandlerFunc(s.handleFsMkdir)))
-	mux.Handle("POST /api/fs/rename", s.requireAuth(http.HandlerFunc(s.handleFsRename)))
-	mux.Handle("POST /api/fs/move", s.requireAuth(http.HandlerFunc(s.handleFsMove)))
-	mux.Handle("POST /api/fs/delete", s.requireAuth(http.HandlerFunc(s.handleFsDelete)))
-	mux.Handle("POST /api/fs/scan", s.requireAuth(http.HandlerFunc(s.handleFsScan)))
 	mux.Handle("GET /api/disks", s.requireAuth(http.HandlerFunc(s.handleDisksList)))
-	mux.Handle("GET /api/fs2/list", s.requireAuth(http.HandlerFunc(s.handleFs2List)))
-	mux.Handle("POST /api/fs2/copy", s.requireAuth(http.HandlerFunc(s.handleFs2Copy)))
-	mux.Handle("POST /api/fs2/move", s.requireAuth(http.HandlerFunc(s.handleFs2Move)))
-	mux.Handle("POST /api/fs2/rename", s.requireAuth(http.HandlerFunc(s.handleFs2Rename)))
-	mux.Handle("POST /api/fs2/delete", s.requireAuth(http.HandlerFunc(s.handleFs2Delete)))
-	mux.Handle("GET /api/fs2/pins", s.requireAuth(http.HandlerFunc(s.handleFs2PinsList)))
-	mux.Handle("POST /api/fs2/pins", s.requireAuth(http.HandlerFunc(s.handleFs2PinsAdd)))
-	mux.Handle("DELETE /api/fs2/pins", s.requireAuth(http.HandlerFunc(s.handleFs2PinsRemove)))
-	mux.Handle("POST /api/upload", s.requireAuth(http.HandlerFunc(s.handleUpload)))
+	mux.Handle("GET /api/files/list", s.requireAuth(http.HandlerFunc(s.handleFilesList)))
+	mux.Handle("POST /api/files/copy", s.requireAuth(http.HandlerFunc(s.handleFilesCopy)))
+	mux.Handle("POST /api/files/move", s.requireAuth(http.HandlerFunc(s.handleFilesMove)))
+	mux.Handle("POST /api/files/rename", s.requireAuth(http.HandlerFunc(s.handleFilesRename)))
+	mux.Handle("POST /api/files/delete", s.requireAuth(http.HandlerFunc(s.handleFilesDelete)))
+	mux.Handle("GET /api/files/pins", s.requireAuth(http.HandlerFunc(s.handleFilesPinsList)))
+	mux.Handle("POST /api/files/pins", s.requireAuth(http.HandlerFunc(s.handleFilesPinsAdd)))
+	mux.Handle("DELETE /api/files/pins", s.requireAuth(http.HandlerFunc(s.handleFilesPinsRemove)))
+	mux.Handle("GET /api/files/sources", s.requireAuth(http.HandlerFunc(s.handleFilesSourcesList)))
+	mux.Handle("POST /api/files/sources", s.requireAuth(http.HandlerFunc(s.handleFilesSourcesAdd)))
+	mux.Handle("DELETE /api/files/sources", s.requireAuth(http.HandlerFunc(s.handleFilesSourcesRemove)))
+	mux.Handle("POST /api/files/sources/scan", s.requireAuth(http.HandlerFunc(s.handleFilesSourcesScan)))
 	mux.Handle("GET /api/jobs", s.requireAuth(http.HandlerFunc(s.handleJobsList)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleVideosList)))
 	mux.Handle("GET /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoDetail)))
@@ -114,7 +99,6 @@ func New(authSvc *auth.Service, storageSvc *storage.Service, filesSvc *files.Ser
 	mux.Handle("GET /api/home", s.requireAuth(http.HandlerFunc(s.handleHome)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/remux/status", s.requireAuth(http.HandlerFunc(s.handleRemuxStatus)))
-	mux.Handle("POST /api/fs/remux", s.requireAuth(http.HandlerFunc(s.handleFsRemux)))
 	mux.Handle("POST /api/videos/{id}/remux", s.requireAuth(http.HandlerFunc(s.handleVideoRemux)))
 	mux.Handle("GET /api/stream/{id}", s.requireAuth(http.HandlerFunc(s.handleStreamDirect)))
 	mux.Handle("GET /api/stream/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleStreamCover)))
@@ -205,169 +189,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // when no valid session is present.
 func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": "local"})
-}
-
-func (s *Server) handleStoragesList(w http.ResponseWriter, r *http.Request) {
-	list, err := s.storages.List(r.Context())
-	if err != nil {
-		slog.Error("list storages", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	for i := range list {
-		busy, _ := s.jobs.HasActive(r.Context(), jobs.TypeRescan, list[i].ID)
-		list[i].Busy = busy
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"storages": list})
-}
-
-func (s *Server) handleStorageCreate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name     string `json:"name"`
-		Type     string `json:"type"`
-		RootPath string `json:"root_path"`
-		DeviceID string `json:"device_id"`
-		Readonly bool   `json:"readonly"`
-		Enabled  bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "无效的请求体")
-		return
-	}
-	st, err := s.storages.Create(r.Context(), domain.Storage{
-		Name:     req.Name,
-		Type:     domain.StorageType(req.Type),
-		RootPath: req.RootPath,
-		DeviceID: req.DeviceID,
-		Readonly: req.Readonly,
-		Enabled:  req.Enabled,
-	})
-	if err != nil {
-		if errors.Is(err, domain.ErrInvalid) {
-			writeError(w, http.StatusBadRequest, "invalid_input", "参数不合法")
-			return
-		}
-		slog.Error("create storage", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"storage": st})
-}
-
-func (s *Server) handleStoragePatch(w http.ResponseWriter, r *http.Request) {
-	if !s.storageBusyOrError(w, r, r.PathValue("id")) {
-		return
-	}
-	var req struct {
-		Name     *string `json:"name"`
-		Type     *string `json:"type"`
-		Readonly *bool   `json:"readonly"`
-		Enabled  *bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "无效的请求体")
-		return
-	}
-	var patch storage.Patch
-	if req.Name != nil {
-		patch.Name = req.Name
-	}
-	if req.Type != nil {
-		typ := domain.StorageType(*req.Type)
-		patch.Type = &typ
-	}
-	patch.Readonly = req.Readonly
-	patch.Enabled = req.Enabled
-
-	st, err := s.storages.Update(r.Context(), r.PathValue("id"), patch)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "存储卷不存在")
-			return
-		}
-		if errors.Is(err, domain.ErrInvalid) {
-			writeError(w, http.StatusBadRequest, "invalid_input", "参数不合法")
-			return
-		}
-		slog.Error("patch storage", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"storage": st})
-}
-
-func (s *Server) handleStorageDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.storageBusyOrError(w, r, r.PathValue("id")) {
-		return
-	}
-	if err := s.storages.Delete(r.Context(), r.PathValue("id")); err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "存储卷不存在")
-			return
-		}
-		slog.Error("delete storage", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
-}
-
-func (s *Server) handleStorageRefresh(w http.ResponseWriter, r *http.Request) {
-	if !s.storageBusyOrError(w, r, r.PathValue("id")) {
-		return
-	}
-	st, err := s.storages.Refresh(r.Context(), r.PathValue("id"))
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "存储卷不存在")
-			return
-		}
-		slog.Error("refresh storage", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	if st.Available {
-		if err := s.scanner.EnqueueRescan(r.Context(), st.ID); err != nil {
-			slog.Warn("enqueue rescan after refresh", "storage_id", st.ID, "err", err)
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"storage": st})
-}
-
-// handleFsList lists a directory inside a storage volume.
-func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
-	st, err := s.storages.Get(r.Context(), r.URL.Query().Get("storageId"))
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "存储卷不存在")
-			return
-		}
-		slog.Error("get storage", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	if !st.Available {
-		writeError(w, http.StatusConflict, "storage_unavailable", "存储卷当前离线")
-		return
-	}
-	rel := r.URL.Query().Get("path")
-	entries, err := s.files.ListDir(st.RootPath, rel)
-	if err != nil {
-		if errors.Is(err, files.ErrOutsideRoot) {
-			writeError(w, http.StatusBadRequest, "invalid_path", "路径越界")
-			return
-		}
-		if errors.Is(err, os.ErrNotExist) {
-			writeError(w, http.StatusNotFound, "not_found", "目录不存在")
-			return
-		}
-		slog.Error("list dir", "storage_id", st.ID, "path", rel, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	busy, _ := s.jobs.HasActive(r.Context(), jobs.TypeRescan, st.ID)
-	st.Busy = busy
-	writeJSON(w, http.StatusOK, map[string]any{"storage": st, "path": rel, "entries": entries})
 }
 
 func (s *Server) authenticated(r *http.Request) bool {

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchJobs, hasActiveJobs } from '../../api/jobs'
 
-const jobsKey = ['jobs'] as const
+export const jobsKey = ['jobs'] as const
 
 // useJobs polls the job queue; while a task is active it refreshes every
 // second so the header indicator and progress bars stay live, and backs off

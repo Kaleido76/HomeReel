@@ -45,8 +45,8 @@ func TestDisksList(t *testing.T) {
 	}
 }
 
-// TestFs2List verifies absolute-path directory listing with size/mtime.
-func TestFs2List(t *testing.T) {
+// TestFilesList verifies absolute-path directory listing with size/mtime.
+func TestFilesList(t *testing.T) {
 	ts, cookie := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
@@ -58,10 +58,10 @@ func TestFs2List(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	u := ts.URL + "/api/fs2/list?path=" + url.QueryEscape(root)
+	u := ts.URL + "/api/files/list?path=" + url.QueryEscape(root)
 	resp, body := doJSON(t, "GET", u, "", cookie)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("fs2 list status = %d, want 200 (body %s)", resp.StatusCode, body)
+		t.Fatalf("files list status = %d, want 200 (body %s)", resp.StatusCode, body)
 	}
 	var out struct {
 		Entries []struct {
@@ -73,7 +73,7 @@ func TestFs2List(t *testing.T) {
 		} `json:"entries"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		t.Fatalf("decode fs2 list: %v", err)
+		t.Fatalf("decode files list: %v", err)
 	}
 	foundFile, foundDir := false, false
 	for _, e := range out.Entries {
@@ -89,8 +89,8 @@ func TestFs2List(t *testing.T) {
 	}
 }
 
-// TestFs2RenameDelete verifies synchronous rename and permanent delete.
-func TestFs2RenameDelete(t *testing.T) {
+// TestFilesRenameDelete verifies synchronous rename and permanent delete.
+func TestFilesRenameDelete(t *testing.T) {
 	ts, cookie := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
@@ -100,7 +100,7 @@ func TestFs2RenameDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, body := doJSON(t, "POST", ts.URL+"/api/fs2/rename",
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/rename",
 		mustJSON(t, map[string]string{"path": orig, "newName": "new.txt"}), cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("rename status = %d, want 200 (body %s)", resp.StatusCode, body)
@@ -109,7 +109,7 @@ func TestFs2RenameDelete(t *testing.T) {
 		t.Fatalf("renamed file missing: %v", err)
 	}
 
-	resp, body = doJSON(t, "POST", ts.URL+"/api/fs2/delete",
+	resp, body = doJSON(t, "POST", ts.URL+"/api/files/delete",
 		mustJSON(t, map[string][]string{"paths": []string{filepath.Join(root, "new.txt")}}), cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("delete status = %d, want 200 (body %s)", resp.StatusCode, body)
@@ -119,18 +119,18 @@ func TestFs2RenameDelete(t *testing.T) {
 	}
 }
 
-// TestFs2Pins verifies pin add/list/remove against the settings table.
-func TestFs2Pins(t *testing.T) {
+// TestFilesPins verifies pin add/list/remove against the settings table.
+func TestFilesPins(t *testing.T) {
 	ts, cookie := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
-	resp, body := doJSON(t, "POST", ts.URL+"/api/fs2/pins",
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/pins",
 		mustJSON(t, map[string]string{"path": `C:\Videos`}), cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pin add status = %d, want 200 (body %s)", resp.StatusCode, body)
 	}
 
-	resp, body = doJSON(t, "GET", ts.URL+"/api/fs2/pins", "", cookie)
+	resp, body = doJSON(t, "GET", ts.URL+"/api/files/pins", "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pin list status = %d, want 200 (body %s)", resp.StatusCode, body)
 	}
@@ -144,11 +144,11 @@ func TestFs2Pins(t *testing.T) {
 		t.Fatalf("pins = %+v, want [C:\\Videos]", out.Pins)
 	}
 
-	resp, body = doJSON(t, "DELETE", ts.URL+"/api/fs2/pins?path="+url.QueryEscape(`C:\Videos`), "", cookie)
+	resp, body = doJSON(t, "DELETE", ts.URL+"/api/files/pins?path="+url.QueryEscape(`C:\Videos`), "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pin remove status = %d, want 200 (body %s)", resp.StatusCode, body)
 	}
-	resp, body = doJSON(t, "GET", ts.URL+"/api/fs2/pins", "", cookie)
+	resp, body = doJSON(t, "GET", ts.URL+"/api/files/pins", "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pin list after remove status = %d, want 200 (body %s)", resp.StatusCode, body)
 	}
@@ -160,8 +160,8 @@ func TestFs2Pins(t *testing.T) {
 	}
 }
 
-// TestFs2CopyEnqueue verifies copy enqueues a background job.
-func TestFs2CopyEnqueue(t *testing.T) {
+// TestFilesCopyEnqueue verifies copy enqueues a background job.
+func TestFilesCopyEnqueue(t *testing.T) {
 	ts, cookie := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
@@ -169,7 +169,7 @@ func TestFs2CopyEnqueue(t *testing.T) {
 	if err := os.WriteFile(src, []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resp, body := doJSON(t, "POST", ts.URL+"/api/fs2/copy",
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/copy",
 		mustJSON(t, map[string]any{"paths": []string{src}, "dest": t.TempDir()}), cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("copy enqueue status = %d, want 200 (body %s)", resp.StatusCode, body)

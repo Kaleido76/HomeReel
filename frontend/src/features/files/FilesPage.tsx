@@ -4,50 +4,64 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../../api/client'
 import {
   addPin,
+  addSource,
   fetchDisks,
-  fetchFs2List,
+  fetchFilesList,
   fetchPins,
-  fs2Copy,
-  fs2Delete,
-  fs2Move,
-  fs2Rename,
+  fetchSources,
+  filesCopy,
+  filesDelete,
+  filesMove,
+  filesRename,
   removePin,
-} from '../../api/fsbrowse'
+  removeSource,
+  scanSource,
+} from '../../api/files'
 import { DriveRail } from './DriveRail'
 import { Toolbar, type ClipMode, type Clipboard, type SortState } from './Toolbar'
 import { FileListView } from './FileListView'
 import { ConfirmDelete } from './ConfirmDelete'
+import { ToolDrawerShell } from './ToolDrawerShell'
+import { ClipboardDrawer } from './ClipboardDrawer'
 import { isMediaName } from './fileType'
 import { parentPath } from './path'
+import { jobsKey } from '../jobs/useJobs'
 
-interface FilesNewSearch {
+interface FilesSearch {
   path: string
 }
 
-// FilesNewPage is the generic machine-wide file browser (文件（新） tab): it
+// FilesPage is the generic machine-wide file browser (文件 tab): it
 // lists directories by absolute path on demand (nothing is indexed) and offers
 // Windows-Explorer-style clipboard operations (cut/copy/paste/rename/delete).
 // The current path lives in the URL so refresh/deep-link restores the folder.
-export function FilesNewPage() {
+export function FilesPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { path } = (location.search ?? {}) as FilesNewSearch
+  const { path } = (location.search ?? {}) as FilesSearch
 
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' })
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [clipboard, setClipboard] = useState<Clipboard | null>(null)
+  const [activeDrawer, setActiveDrawer] = useState<'clipboard' | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string[] | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [mediaOnly, setMediaOnly] = useState(false)
 
-  const disks = useQuery({ queryKey: ['fs2-disks'], queryFn: fetchDisks, staleTime: 60_000 })
-  const pins = useQuery({ queryKey: ['fs2-pins'], queryFn: fetchPins })
+  const disks = useQuery({ queryKey: ['files-disks'], queryFn: fetchDisks, staleTime: 60_000 })
+  const pins = useQuery({ queryKey: ['files-pins'], queryFn: fetchPins })
+  const sources = useQuery({
+    queryKey: ['files-sources'],
+    queryFn: fetchSources,
+    // 轮询以感知扫描完成/离线状态变化
+    refetchInterval: 5000,
+  })
   const list = useQuery({
-    queryKey: ['fs2-list', path],
-    queryFn: () => fetchFs2List(path),
+    queryKey: ['files-list', path],
+    queryFn: () => fetchFilesList(path),
     enabled: !!path,
     // 轮询以感知后台复制/移动任务完成后目录内容的变化（同旧文件页的 busy 轮询）
     refetchInterval: 5000,
@@ -60,7 +74,7 @@ export function FilesNewPage() {
   function go(p: string) {
     setSelected(new Set())
     setRenaming(null)
-    navigate({ to: '/filesnew', search: { path: p } })
+    navigate({ to: '/files', search: { path: p } })
   }
 
   function goUp() {
@@ -75,8 +89,8 @@ export function FilesNewPage() {
   }
 
   function invalidate() {
-    if (path) queryClient.invalidateQueries({ queryKey: ['fs2-list', path] })
-    queryClient.invalidateQueries({ queryKey: ['fs2-pins'] })
+    if (path) queryClient.invalidateQueries({ queryKey: ['files-list', path] })
+    queryClient.invalidateQueries({ queryKey: ['files-pins'] })
   }
 
   function toggleSelect(p: string) {
@@ -97,21 +111,51 @@ export function FilesNewPage() {
 
   function setClipboardMode(mode: ClipMode) {
     if (selected.size === 0) return
-    setClipboard({ mode, items: Array.from(selected) })
+    const items = Array.from(selected).map((p) => {
+      const e = entries.find((x) => x.path === p)
+      return e
+        ? { path: e.path, name: e.name, is_dir: e.is_dir }
+        : { path: p, name: p.split(/[\\/]/).pop() ?? p, is_dir: false }
+    })
+    setClipboard({ mode, items })
+    setActiveDrawer('clipboard')
+  }
+
+  function removeClipboardItem(p: string) {
+    if (!clipboard) return
+    const items = clipboard.items.filter((i) => i.path !== p)
+    if (items.length === 0) {
+      setClipboard(null)
+      setActiveDrawer(null)
+    } else {
+      setClipboard({ ...clipboard, items })
+    }
+  }
+
+  function clearClipboard() {
+    setClipboard(null)
+    setActiveDrawer(null)
   }
 
   async function paste() {
     if (!clipboard || !path) return
     setError('')
     try {
+      const paths = clipboard.items.map((i) => i.path)
       if (clipboard.mode === 'copy') {
-        await fs2Copy(clipboard.items, path)
+        await filesCopy(paths, path)
       } else {
-        await fs2Move(clipboard.items, path)
+        await filesMove(paths, path)
       }
       const verb = clipboard.mode === 'copy' ? '复制' : '移动'
       flash(`${verb}已作为后台任务开始，可在顶部任务面板查看进度`)
-      if (clipboard.mode === 'cut') setClipboard(null)
+      // 复制/移动是后台任务，立即刷新任务指示器让顶部图标马上旋转。
+      void queryClient.invalidateQueries({ queryKey: jobsKey })
+      if (clipboard.mode === 'cut') {
+        setClipboard(null)
+        setActiveDrawer(null)
+        setSelected(new Set())
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '操作失败')
     }
@@ -120,7 +164,7 @@ export function FilesNewPage() {
   async function commitRename(p: string, newName: string) {
     setError('')
     try {
-      await fs2Rename(p, newName)
+      await filesRename(p, newName)
       setRenaming(null)
       invalidate()
     } catch (err) {
@@ -132,7 +176,7 @@ export function FilesNewPage() {
     if (!deleting) return
     setError('')
     try {
-      const res = await fs2Delete(deleting)
+      const res = await filesDelete(deleting)
       if (res.errors && res.errors.length > 0) {
         setError(res.errors.map((e) => `${e.path}: ${e.message}`).join('；'))
       } else {
@@ -158,13 +202,44 @@ export function FilesNewPage() {
         flash('已固定当前目录')
       }
       // 立即刷新 pin 列表，避免左侧面板需刷新页面才更新
-      await queryClient.invalidateQueries({ queryKey: ['fs2-pins'] })
+      await queryClient.invalidateQueries({ queryKey: ['files-pins'] })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : pinned ? '取消固定失败' : '固定失败')
     }
   }
 
-  const pinned = pins.data?.pins.includes(path) ?? false
+  async function toggleSource() {
+    if (!path) return
+    setError('')
+    try {
+      if (isSource) {
+        await removeSource(path)
+        flash('已取消多媒体源标记，已入库视频不会移除')
+      } else {
+        const res = await addSource(path)
+        flash(res.job_id ? '已标记为多媒体源，开始扫描…' : '已标记为多媒体源')
+        if (res.job_id) void queryClient.invalidateQueries({ queryKey: jobsKey })
+      }
+      await queryClient.invalidateQueries({ queryKey: ['files-sources'] })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : isSource ? '取消多媒体源失败' : '标记多媒体源失败')
+    }
+  }
+
+  async function rescanSource(p: string) {
+    setError('')
+    try {
+      await scanSource(p)
+      flash('已提交重新扫描')
+      void queryClient.invalidateQueries({ queryKey: jobsKey })
+      await queryClient.invalidateQueries({ queryKey: ['files-sources'] })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '重新扫描失败')
+    }
+  }
+
+  const pinned = pins.data?.pins?.includes(path) ?? false
+  const isSource = sources.data?.sources?.some((s) => s.path === path) ?? false
   const selectedCount = selected.size
 
   return (
@@ -172,8 +247,10 @@ export function FilesNewPage() {
       <DriveRail
         disks={disks.data?.disks ?? []}
         pins={pins.data?.pins ?? []}
+        sources={sources.data?.sources ?? []}
         currentPath={path}
         onNavigate={go}
+        onRescanSource={rescanSource}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -183,8 +260,7 @@ export function FilesNewPage() {
           entryCount={visibleEntries.length}
           selectedCount={selectedCount}
           clipboard={clipboard}
-          sort={sort}
-          onSortChange={setSort}
+          notice={notice}
           onNavigate={go}
           onGoUp={goUp}
           onCut={() => setClipboardMode('cut')}
@@ -198,9 +274,10 @@ export function FilesNewPage() {
           }}
           onPin={togglePin}
           pinned={pinned}
+          isSource={isSource}
+          onToggleSource={toggleSource}
           mediaOnly={mediaOnly}
           onToggleMedia={() => setMediaOnly((v) => !v)}
-          notice={notice}
         />
 
         {error && <p className="border-b border-neutral-100 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
@@ -212,17 +289,28 @@ export function FilesNewPage() {
           error={list.error instanceof ApiError ? list.error : null}
           selected={selected}
           renaming={renaming}
+          sort={sort}
+          onSortChange={setSort}
           onToggle={toggleSelect}
           onSelect={selectSingle}
+          onSelectSet={setSelected}
           onNavigate={go}
-          onGoUp={goUp}
-          canGoUp={parentPath(path) !== null}
           onRetry={() => void list.refetch()}
           onRenameCancel={() => setRenaming(null)}
           onRenameCommit={commitRename}
-          sort={sort}
           emptyText={mediaOnly ? '该目录没有视频或音乐文件' : '空目录'}
         />
+
+        <ToolDrawerShell open={activeDrawer === 'clipboard' && clipboard !== null}>
+          {clipboard && (
+            <ClipboardDrawer
+              items={clipboard.items}
+              mode={clipboard.mode}
+              onRemove={removeClipboardItem}
+              onClear={clearClipboard}
+            />
+          )}
+        </ToolDrawerShell>
       </div>
 
       {deleting && (

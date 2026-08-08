@@ -1,9 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import { Loader2, Search } from 'lucide-react'
-import type { Storage } from '../../api/storages'
-import { fetchStorages } from '../../api/storages'
 import { searchVideos } from '../../api/videos'
 import { VideoCard } from '../library/VideoCard'
 import { MediaGrid } from '../library/MediaGrid'
@@ -22,13 +20,6 @@ export function SearchPage() {
     queryFn: () => searchVideos(submitted),
     enabled: submitted !== '',
   })
-
-  const storages = useQuery({ queryKey: ['storages'], queryFn: fetchStorages })
-  const storageById = useMemo(() => {
-    const map = new Map<string, Storage>()
-    for (const s of storages.data?.storages ?? []) map.set(s.id, s)
-    return map
-  }, [storages.data])
 
   function submit() {
     navigate({ to: '/search', search: { q: input.trim() } })
@@ -83,7 +74,7 @@ export function SearchPage() {
           ) : (
             <MediaGrid>
               {results.data?.videos.map((v) => (
-                <VideoCard key={v.id} video={v} storage={storageById.get(v.storage_id)} />
+                <VideoCard key={v.id} video={v} />
               ))}
             </MediaGrid>
           )}

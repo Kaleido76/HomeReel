@@ -66,14 +66,14 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 	if totalDuration.Valid {
 		series.TotalDuration = totalDuration.Float64
 	}
-	series.Name = seriesDisplayName(series.Title, series.SeasonNumber, series.Kind)
+	series.Name = seriesDisplayName(series.Title, series.SeasonNumber)
 	return series, nil
 }
 
-func seriesDisplayName(title string, number int, kind string) string {
-	if kind == "movie" {
-		return title + " 第" + strconv.Itoa(number) + "部"
-	}
+// seriesDisplayName renders a series name as "标题 第 N 季". There is no
+// movie/tv structural type, so every numbered unit reads as a 季; any
+// movie/tv distinction is a tag on the videos instead.
+func seriesDisplayName(title string, number int) string {
 	return title + " 第" + strconv.Itoa(number) + "季"
 }
 
@@ -159,15 +159,13 @@ func (r *seriesRepo) FindID(ctx context.Context, showID string, seasonNumber int
 func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.SeriesMember, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT v.id, v.title, v.episode_number, v.episode_title, v.duration, v.thumb_path,
-			v.relative_path, v.storage_id,
-			COALESCE(st.available, 0) AS available,
+			v.relative_path,
 			COALESCE(h.progress, 0) AS progress
 		FROM videos v
 		JOIN seasons se ON se.id = ?
-		LEFT JOIN storages st ON st.id = v.storage_id
 		LEFT JOIN history h ON h.video_id = v.id AND h.user = 'local'
 		WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode'
-		ORDER BY v.episode_number`, id)
+		ORDER BY v.episode_number, v.title`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -180,10 +178,9 @@ func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.Series
 			epTitle  sql.NullString
 			duration sql.NullFloat64
 			thumb    sql.NullString
-			avail    bool
 		)
 		if err := rows.Scan(&m.VideoID, &title, &m.EpisodeNumber, &epTitle, &duration,
-			&thumb, &m.RelativePath, &m.StorageID, &avail, &m.Progress); err != nil {
+			&thumb, &m.RelativePath, &m.Progress); err != nil {
 			return nil, err
 		}
 		if title.Valid {
@@ -198,7 +195,6 @@ func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.Series
 		if thumb.Valid {
 			m.ThumbPath = thumb.String
 		}
-		m.StorageAvailable = avail
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -207,14 +203,14 @@ func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.Series
 func (r *seriesRepo) GetLinks(ctx context.Context, id string) ([]domain.SeriesLink, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT sl.series_id, sl.linked_series_id, sl.sort_index,
-			s2.name AS title, se2.number AS number, se2.kind AS kind
+			s2.name AS title, se2.number AS number
 		FROM series_links sl
 		JOIN seasons se2 ON se2.id = sl.linked_series_id
 		JOIN shows s2 ON s2.id = se2.show_id
 		WHERE sl.series_id = ?
 		UNION ALL
 		SELECT sl.series_id, sl.linked_series_id, sl.sort_index,
-			s1.name AS title, se1.number AS number, se1.kind AS kind
+			s1.name AS title, se1.number AS number
 		FROM series_links sl
 		JOIN seasons se1 ON se1.id = sl.series_id
 		JOIN shows s1 ON s1.id = se1.show_id
@@ -230,13 +226,12 @@ func (r *seriesRepo) GetLinks(ctx context.Context, id string) ([]domain.SeriesLi
 			link   domain.SeriesLink
 			title  string
 			number int
-			kind   string
 		)
-		if err := rows.Scan(&link.SeriesID, &link.LinkedID, &link.SortIndex, &title, &number, &kind); err != nil {
+		if err := rows.Scan(&link.SeriesID, &link.LinkedID, &link.SortIndex, &title, &number); err != nil {
 			return nil, err
 		}
 		link.LinkedTitle = title
-		link.LinkedName = seriesDisplayName(title, number, kind)
+		link.LinkedName = seriesDisplayName(title, number)
 		out = append(out, link)
 	}
 	return out, rows.Err()
@@ -245,7 +240,7 @@ func (r *seriesRepo) GetLinks(ctx context.Context, id string) ([]domain.SeriesLi
 func (r *seriesRepo) AddLink(ctx context.Context, seriesID, linkedID string, sortIndex int) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO series_links (series_id, linked_series_id, sort_index, created_at)
-		VALUES (?, ?, ?, ?)`, seriesID, linkedID, sortIndex, nowRFC3339())
+		VALUES (?, ?, ?, ?)`, seriesID, linkedID, sortIndex, domain.Now())
 	return err
 }
 

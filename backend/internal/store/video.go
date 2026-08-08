@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/files"
 )
 
 type videoRepo struct {
@@ -18,7 +19,20 @@ func NewVideoRepo(database *sql.DB) domain.VideoRepo {
 	return &videoRepo{db: database}
 }
 
-const videoCols = `id, storage_id, file_id, relative_path, path, size, mtime, title,
+// scanner is the shared row-scan abstraction for both *sql.Row and *sql.Rows.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+// queryer abstracts *sql.DB and *sql.Tx so FTS search_text rebuilds can run
+// inside a grouping transaction.
+type queryer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+const videoCols = `id, source_id, file_id, relative_path, path, size, mtime, title,
 	kind, description, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
 	cover_path, thumb_path, backdrop_path, show_id, season_number, episode_number, episode_title,
 	year, rating, genre, overview, studio, cast_text, metadata_source,
@@ -61,7 +75,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 		studio        sql.NullString
 		castText      sql.NullString
 	)
-	if err := row.Scan(&v.ID, &v.StorageID, &v.FileID, &v.RelativePath, &v.Path,
+	if err := row.Scan(&v.ID, &v.SourceID, &v.FileID, &v.RelativePath, &v.Path,
 		&v.Size, &v.MTime, &v.Title, &v.Kind, &v.Description, &duration, &codec,
 		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
@@ -142,8 +156,8 @@ func (r *videoRepo) Get(ctx context.Context, id string) (domain.Video, error) {
 	return getVideo(ctx, r.db, id)
 }
 
-func getVideo(ctx context.Context, db *sql.DB, id string) (domain.Video, error) {
-	row := db.QueryRowContext(ctx, `SELECT `+videoCols+` FROM videos WHERE id = ?`, id)
+func getVideo(ctx context.Context, q queryer, id string) (domain.Video, error) {
+	row := q.QueryRowContext(ctx, `SELECT `+videoCols+` FROM videos WHERE id = ?`, id)
 	v, err := scanVideo(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Video{}, domain.ErrNotFound
@@ -248,25 +262,34 @@ func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.Video
 	return domain.VideoPage{Videos: out, Total: total}, rows.Err()
 }
 
+// Create inserts a video with its full probe metadata in a single statement so
+// a video never appears in the library with half its metadata (the scanner
+// probes before creating). kind defaults to standalone.
 func (r *videoRepo) Create(ctx context.Context, v domain.Video) error {
+	if v.Kind == "" {
+		v.Kind = "movie"
+	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO videos (id, storage_id, file_id, relative_path, path, size, mtime,
-			title, kind, description, created_at, updated_at, last_scanned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.StorageID, v.FileID, v.RelativePath, v.Path, v.Size, v.MTime,
-		v.Title, "movie", v.Description, v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
+		INSERT INTO videos (id, source_id, file_id, relative_path, path, size, mtime,
+			title, kind, description, duration, codec, container, segmented, width, height,
+			created_at, updated_at, last_scanned_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, nullString(v.SourceID), v.FileID, v.RelativePath, v.Path, v.Size, v.MTime,
+		v.Title, v.Kind, v.Description, nullFloat(v.Duration), nullString(v.Codec),
+		nullString(v.Container), segmentedInt(v.Segmented), v.Width, v.Height,
+		v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
 	if err != nil {
 		return err
 	}
 	return rebuildSearchText(ctx, r.db, v.ID)
 }
 
-func (r *videoRepo) UpdateFingerprint(ctx context.Context, id, path, relativePath string, size, mtime int64, lastScannedAt string) error {
+func (r *videoRepo) UpdateFingerprint(ctx context.Context, id, sourceID, path, relativePath string, size, mtime int64, lastScannedAt string) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE videos SET path = ?, relative_path = ?, size = ?, mtime = ?,
+		UPDATE videos SET source_id = ?, path = ?, relative_path = ?, size = ?, mtime = ?,
 			updated_at = ?, last_scanned_at = ?
 		WHERE id = ?`,
-		path, relativePath, size, mtime, nowRFC3339(), lastScannedAt, id)
+		nullString(sourceID), path, relativePath, size, mtime, domain.Now(), lastScannedAt, id)
 	return err
 }
 
@@ -297,7 +320,7 @@ func (r *videoRepo) UpdateProbe(ctx context.Context, v domain.Video) error {
 			segmented = ?, width = ?, height = ?, updated_at = ?
 		WHERE id = ?`,
 		v.Title, v.Duration, nullString(v.Codec), nullString(v.Container),
-		segmentedInt(v.Segmented), v.Width, v.Height, nowRFC3339(), v.ID)
+		segmentedInt(v.Segmented), v.Width, v.Height, domain.Now(), v.ID)
 	if err != nil {
 		return err
 	}
@@ -326,7 +349,7 @@ func (r *videoRepo) UpdateCovers(ctx context.Context, id, coverPath, thumbPath s
 		return nil
 	}
 	sets = append(sets, "updated_at = ?")
-	args = append(args, nowRFC3339(), id)
+	args = append(args, domain.Now(), id)
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE videos SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	return err
@@ -402,7 +425,7 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 	if len(sets) == 0 {
 		return nil
 	}
-	args = append(args, nowRFC3339(), id)
+	args = append(args, domain.Now(), id)
 	if _, err := r.db.ExecContext(ctx,
 		`UPDATE videos SET `+strings.Join(sets, ", ")+`, updated_at = ? WHERE id = ?`, args...); err != nil {
 		return err
@@ -410,24 +433,29 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 	return rebuildSearchText(ctx, r.db, id)
 }
 
-func (r *videoRepo) AssignEpisode(ctx context.Context, id, showID string, seasonNumber, episodeNumber int, episodeTitle string) error {
-	if _, err := r.db.ExecContext(ctx, `
-		UPDATE videos SET kind = 'episode', show_id = ?, season_number = ?,
-			episode_number = ?, episode_title = ?, updated_at = ? WHERE id = ?`,
-		showID, seasonNumber, episodeNumber, nullString(episodeTitle), nowRFC3339(), id); err != nil {
-		return err
+// AssignStandalone marks every given video as a standalone movie in a single
+// statement (used by the scan-end grouping pass), then rebuilds each row's
+// search text. Clearing the series linkage is atomic as one UPDATE.
+func (r *videoRepo) AssignStandalone(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
 	}
-	return rebuildSearchText(ctx, r.db, id)
-}
-
-func (r *videoRepo) AssignMovie(ctx context.Context, id string) error {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, domain.Now())
+	for _, id := range ids {
+		args = append(args, id)
+	}
 	if _, err := r.db.ExecContext(ctx, `
 		UPDATE videos SET kind = 'movie', show_id = NULL, season_number = NULL,
-			episode_number = NULL, episode_title = NULL, updated_at = ? WHERE id = ?`,
-		nowRFC3339(), id); err != nil {
+			episode_number = NULL, episode_title = NULL, updated_at = ?
+		WHERE id IN (`+placeholders+`)`, args...); err != nil {
 		return err
 	}
-	return rebuildSearchText(ctx, r.db, id)
+	for _, id := range ids {
+		_ = rebuildSearchText(ctx, r.db, id)
+	}
+	return nil
 }
 
 func (r *videoRepo) SetTags(ctx context.Context, id string, tags []string) error {
@@ -459,8 +487,8 @@ func (r *videoRepo) Tags(ctx context.Context, id string) ([]string, error) {
 	return getTags(ctx, r.db, id)
 }
 
-func getTags(ctx context.Context, db *sql.DB, id string) ([]string, error) {
-	rows, err := db.QueryContext(ctx,
+func getTags(ctx context.Context, q queryer, id string) ([]string, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT tag FROM video_tags WHERE video_id = ? ORDER BY tag`, id)
 	if err != nil {
 		return nil, err
@@ -495,9 +523,26 @@ func (r *videoRepo) AllTags(ctx context.Context) ([]domain.TagCount, error) {
 	return out, rows.Err()
 }
 
-func (r *videoRepo) ListByStorage(ctx context.Context, storageID string) ([]domain.Video, error) {
+func (r *videoRepo) ListAll(ctx context.Context) ([]domain.Video, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+videoCols+` FROM videos ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Video, 0)
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (r *videoRepo) ListBySource(ctx context.Context, sourceID string) ([]domain.Video, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+videoCols+` FROM videos WHERE storage_id = ? ORDER BY relative_path`, storageID)
+		`SELECT `+videoCols+` FROM videos WHERE source_id = ? ORDER BY relative_path`, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -552,23 +597,25 @@ func (r *videoRepo) ContinueWatching(ctx context.Context, limit int) ([]domain.V
 	return out, rows.Err()
 }
 
-func (r *videoRepo) MarkMissing(ctx context.Context, storageID, since string) ([]string, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM videos WHERE storage_id = ? AND last_scanned_at < ?`, storageID, since)
+// MarkMissingBySource deletes videos owned by source whose last_scanned_at is
+// older than since, skipping any whose current absolute path falls under a
+// child source root (those belong to the child's scan). It returns the deleted
+// ids so callers can publish deletion events.
+func (r *videoRepo) MarkMissingBySource(ctx context.Context, sourceID, since string, excludeRoots []string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, path FROM videos WHERE source_id = ? AND last_scanned_at < ?`, sourceID, since)
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, p string
+		if err := rows.Scan(&id, &p); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if files.UnderAnyRoot(p, excludeRoots) {
+			continue
 		}
 		ids = append(ids, id)
 	}
@@ -577,26 +624,29 @@ func (r *videoRepo) MarkMissing(ctx context.Context, storageID, since string) ([
 		return nil, err
 	}
 	if len(ids) > 0 {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM videos WHERE storage_id = ? AND last_scanned_at < ?`, storageID, since); err != nil {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		args := make([]any, 0, len(ids))
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		if _, err := r.db.ExecContext(ctx,
+			`DELETE FROM videos WHERE id IN (`+placeholders+`)`, args...); err != nil {
 			return nil, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
 	}
 	return ids, nil
 }
 
 // rebuildSearchText rewrites the denormalised search_text column (title +
 // description + tags + show name) so FTS5 stays searchable (ADR-009). The
-// videos_au trigger keeps videos_fts in sync.
-func rebuildSearchText(ctx context.Context, db *sql.DB, id string) error {
-	v, err := getVideo(ctx, db, id)
+// videos_au trigger keeps videos_fts in sync. It runs against a queryer so the
+// rebuild can join a grouping transaction.
+func rebuildSearchText(ctx context.Context, q queryer, id string) error {
+	v, err := getVideo(ctx, q, id)
 	if err != nil {
 		return err
 	}
-	tags, err := getTags(ctx, db, id)
+	tags, err := getTags(ctx, q, id)
 	if err != nil {
 		return err
 	}
@@ -604,13 +654,13 @@ func rebuildSearchText(ctx context.Context, db *sql.DB, id string) error {
 	parts = append(parts, tags...)
 	if v.ShowID != "" {
 		var showName string
-		if err := db.QueryRowContext(ctx,
+		if err := q.QueryRowContext(ctx,
 			`SELECT name FROM shows WHERE id = ?`, v.ShowID).Scan(&showName); err == nil && showName != "" {
 			parts = append(parts, showName)
 		}
 	}
 	text := strings.Join(parts, " ")
-	_, err = db.ExecContext(ctx,
+	_, err = q.ExecContext(ctx,
 		`UPDATE videos SET search_text = ? WHERE id = ?`, text, id)
 	return err
 }

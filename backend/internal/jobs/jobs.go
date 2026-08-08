@@ -12,12 +12,12 @@ import (
 
 // Job types (ADR-008).
 const (
-	TypeProbe     = "probe"
-	TypeThumbnail = "thumbnail"
-	TypeRescan    = "rescan"
-	TypeRemux     = "remux"
-	TypeFsCopy    = "fscopy"
-	TypeFsMove    = "fsmove"
+	TypeProbe      = "probe"
+	TypeThumbnail  = "thumbnail"
+	TypeScanSource = "scan_source"
+	TypeRemux      = "remux"
+	TypeFsCopy     = "fscopy"
+	TypeFsMove     = "fsmove"
 )
 
 // Job statuses.

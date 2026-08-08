@@ -61,10 +61,12 @@ func (s *Service) HandleJob(ctx context.Context, j jobs.Job, report jobs.Reporte
 	return fmt.Errorf("unknown fs job type %q", j.Type)
 }
 
-// copyJob copies each source into dest, reporting byte-based progress. A source
-// directory is copied recursively; the destination tree mirrors its relative
-// layout under dest.
-func (s *Service) copyJob(ctx context.Context, sources []string, dest string, report jobs.Reporter) error {
+// fsMover copies or moves a single source into dst, reporting copied bytes.
+type fsMover func(ctx context.Context, src, dst string, step func(int64)) error
+
+// runFsJob runs a copy/move batch over sources, reporting byte-based progress
+// and collecting per-item failures into a single job error at the end.
+func (s *Service) runFsJob(ctx context.Context, sources []string, dest, verb string, report jobs.Reporter, move fsMover) error {
 	total, err := totalBytes(sources)
 	if err != nil {
 		return err
@@ -81,39 +83,24 @@ func (s *Service) copyJob(ctx context.Context, sources []string, dest string, re
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		report.Subtask("复制 " + filepath.Base(src))
-		if err := copyTree(ctx, src, filepath.Join(dest, filepath.Base(src)), step); err != nil {
+		report.Subtask(verb + " " + filepath.Base(src))
+		if err := move(ctx, src, filepath.Join(dest, filepath.Base(src)), step); err != nil {
 			errs = append(errs, src+": "+err.Error())
 		}
 	}
 	return collectErrors(errs)
 }
 
+// copyJob copies each source into dest; a source directory is copied
+// recursively, mirroring its relative layout under dest.
+func (s *Service) copyJob(ctx context.Context, sources []string, dest string, report jobs.Reporter) error {
+	return s.runFsJob(ctx, sources, dest, "复制", report, copyTree)
+}
+
 // moveJob moves each source into dest, preferring a same-volume rename and
-// falling back to copy+delete across volumes (EXDEV). Progress is byte-based.
+// falling back to copy+delete across volumes (EXDEV).
 func (s *Service) moveJob(ctx context.Context, sources []string, dest string, report jobs.Reporter) error {
-	total, err := totalBytes(sources)
-	if err != nil {
-		return err
-	}
-	var done int64
-	step := func(n int64) {
-		done += n
-		if total > 0 {
-			report.Progress(float64(done) / float64(total))
-		}
-	}
-	var errs []string
-	for _, src := range sources {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		report.Subtask("移动 " + filepath.Base(src))
-		if err := moveTree(ctx, src, filepath.Join(dest, filepath.Base(src)), step); err != nil {
-			errs = append(errs, src+": "+err.Error())
-		}
-	}
-	return collectErrors(errs)
+	return s.runFsJob(ctx, sources, dest, "移动", report, moveTree)
 }
 
 func collectErrors(errs []string) error {

@@ -198,6 +198,98 @@ var migrations = []string{
 	// 内部短任务（对用户隐藏、不发通知）。
 	`ALTER TABLE jobs ADD COLUMN name TEXT NOT NULL DEFAULT '';
 	ALTER TABLE jobs ADD COLUMN internal INTEGER NOT NULL DEFAULT 0`,
+	// 2026-08 多媒体源重构：视频库入库从「存储卷（storages）」改为「多媒体源
+	// （media_sources）」。库清空重建（用户决策）；videos.storage_id 迁移为
+	// source_id（可空，预留离散资源）；storages 表整体删除。FTS 外部内容表
+	// 与触发器随 videos 一并重建。
+	// 清空顺序很关键：必须先 DELETE FROM videos（顺带经 CASCADE 清空
+	// video_tags/history），再删 seasons/shows —— 若先 DROP videos，shows 的
+	// FK 检查会因找不到 videos 表而报错；若先删 shows，又有 videos 行引用。
+	`DELETE FROM videos;
+	DELETE FROM series_links;
+	DELETE FROM seasons;
+	DELETE FROM shows;
+	DELETE FROM video_tags;
+	DELETE FROM history;
+	DROP TRIGGER IF EXISTS videos_ai;
+	DROP TRIGGER IF EXISTS videos_ad;
+	DROP TRIGGER IF EXISTS videos_au;
+	DROP TRIGGER IF EXISTS videos_bd;
+	DROP TABLE IF EXISTS videos_fts;
+	DROP TABLE IF EXISTS videos;
+	DROP TABLE IF EXISTS storages;
+	CREATE TABLE media_sources (
+		id           TEXT PRIMARY KEY,
+		path         TEXT NOT NULL UNIQUE,
+		created_at   TEXT NOT NULL,
+		last_scan_at TEXT
+	);
+	CREATE TABLE videos (
+		id              TEXT PRIMARY KEY,
+		source_id       TEXT REFERENCES media_sources(id) ON DELETE SET NULL,
+		file_id         TEXT NOT NULL,
+		relative_path   TEXT NOT NULL,
+		path            TEXT NOT NULL,
+		size            INTEGER NOT NULL DEFAULT 0,
+		mtime           INTEGER NOT NULL DEFAULT 0,
+		title           TEXT NOT NULL DEFAULT '',
+		kind            TEXT NOT NULL DEFAULT 'movie',
+		description     TEXT NOT NULL DEFAULT '',
+		duration        REAL,
+		codec           TEXT,
+		audio_codec     TEXT,
+		container       TEXT,
+		segmented       INTEGER NOT NULL DEFAULT 0,
+		width           INTEGER,
+		height          INTEGER,
+		fps             REAL,
+		file_size       INTEGER,
+		cover_path      TEXT,
+		thumb_path      TEXT,
+		backdrop_path   TEXT,
+		show_id         TEXT REFERENCES shows(id),
+		season_number   INTEGER,
+		episode_number  INTEGER,
+		episode_title   TEXT,
+		year            INTEGER,
+		rating          REAL,
+		genre           TEXT,
+		overview        TEXT,
+		studio          TEXT,
+		cast_text       TEXT,
+		metadata_source TEXT NOT NULL DEFAULT 'manual',
+		search_text     TEXT,
+		created_at      TEXT NOT NULL,
+		updated_at      TEXT NOT NULL,
+		last_scanned_at TEXT NOT NULL,
+		UNIQUE (source_id, relative_path)
+	);
+	CREATE INDEX idx_videos_source ON videos(source_id);
+	CREATE INDEX idx_videos_file ON videos(file_id);
+	CREATE INDEX idx_videos_show ON videos(show_id, season_number, episode_number);
+	CREATE INDEX idx_videos_kind ON videos(kind);
+	CREATE VIRTUAL TABLE videos_fts USING fts5(
+		content='videos', content_rowid='rowid',
+		title, description, search_text
+	);
+	CREATE TRIGGER videos_ai AFTER INSERT ON videos BEGIN
+		INSERT INTO videos_fts(rowid, title, description, search_text)
+		VALUES (new.rowid, new.title, new.description, coalesce(new.search_text, ''));
+	END;
+	CREATE TRIGGER videos_ad AFTER DELETE ON videos BEGIN
+		INSERT INTO videos_fts(videos_fts, rowid, title, description, search_text)
+		VALUES ('delete', old.rowid, old.title, old.description, old.search_text);
+	END;
+	CREATE TRIGGER videos_au AFTER UPDATE ON videos BEGIN
+		INSERT INTO videos_fts(videos_fts, rowid, title, description, search_text)
+		VALUES ('delete', old.rowid, old.title, old.description, old.search_text);
+		INSERT INTO videos_fts(rowid, title, description, search_text)
+		VALUES (new.rowid, new.title, new.description, coalesce(new.search_text, ''));
+	END;
+	CREATE TRIGGER videos_bd AFTER DELETE ON videos BEGIN
+		DELETE FROM shows WHERE id = OLD.show_id
+			AND NOT EXISTS (SELECT 1 FROM videos WHERE show_id = OLD.show_id);
+	END;`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

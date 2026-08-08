@@ -31,6 +31,10 @@ HomeReel 是部署在家里 PC 上的**个人视频资料管理平台**（DAM）
 3. **单用户 + 多终端并发**：唯一所有者、单访问口令；每终端独立会话，可同时看视频 + 整理文件，互不挤占。
 4. **AI 可长期维护**：模块化、低耦合、显式优先、少用复杂设计模式。
 5. **Library = 简易 JellyFin**：提供媒体库体验但不引入冗余功能（无插件系统/多用户档案/直播/音乐库等）。
+6. **识别类硬编码要克制（低产出投入比）**：分集/系列/标题等**名称自动识别**只做**少数稳健的规则**，
+   **禁止**为覆盖各种命名变体持续堆叠硬编码（不断加正则、质量标签清单、模糊匹配、相似度算法等）。
+   识别错了就错，交给用户**手动修正**（编辑标题 / 手动归组 / 手动排序）——自动识别的价值在于「大多数
+   情况一次命中」，而不是「穷尽所有可能」。新增识别逻辑前先自问：这一条规则能覆盖多少真实场景？值不值得？
 
 ## 4. 技术栈（速览）
 
@@ -48,13 +52,13 @@ backend/
   cmd/server            # 装配 + 启动
   internal/
     config  auth  api  db  domain  store  netutil
-    files  storage  events  scanner  jobs
+    files  fservice  events  scanner  jobs
     media  streaming  search
   testdata/
 frontend/
   src/
     api  components  features  lib  styles  tabs
-    # features: auth home explorer library player series search remux
+    # features: auth home files library player series search remux
     # tabs: 多 Router 页签宿主（config/routers/manager/TabBar/TabHost/TabSync）
 ```
 
@@ -129,7 +133,7 @@ frontend/
 |---|---|
 | 项目定位 / 核心原则 / ADR 摘要 / 技术栈 / 部署 / 静态托管 / 启动输出 | [docs/architecture.md](docs/architecture.md) |
 | 开发环境（版本 / 安装 / FFmpeg PATH 陷阱 / go env） | [docs/environment.md](docs/environment.md) |
-| 后端与数据层（时间戳 / SQLite / 迁移 / FTS5 / 剧集系列归组 / 存储卷 / 上传 / jobs / 事件总线） | [docs/backend.md](docs/backend.md) |
+| 后端与数据层（时间戳 / SQLite / 迁移 / FTS5 / 剧集系列归组 / 多媒体源 / jobs / 事件总线） | [docs/backend.md](docs/backend.md) |
 | 媒体管线（ffprobe / 容器判定 / 分段 MP4 + 重封 / HLS / 能力探测 / 字幕 / 封面） | [docs/media.md](docs/media.md) |
-| 前端（页签 keep-alive / 栏位栈 / Vidstack / 响应式 / Explorer / 卡片） | [docs/frontend.md](docs/frontend.md) |
+| 前端（页签 keep-alive / 栏位栈 / Vidstack / 响应式 / 文件浏览器 / 卡片） | [docs/frontend.md](docs/frontend.md) |
 | 现状清单 / 遗留待办 / 人工验证清单 / 未来方向 | [docs/status.md](docs/status.md) |

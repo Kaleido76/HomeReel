@@ -2,11 +2,12 @@ package domain
 
 import "context"
 
-// Video is an indexed media file (ADR-007: identity is
-// storage_id + file_id + relative_path, fingerprint is size + mtime).
+// Video is an indexed media file (ADR-007: identity is source_id + file_id +
+// relative_path, fingerprint is size + mtime). file_id is matched globally so a
+// file moved between sources keeps its identity.
 type Video struct {
 	ID             string  `json:"id"`
-	StorageID      string  `json:"storage_id"`
+	SourceID       string  `json:"source_id,omitempty"`
 	FileID         string  `json:"file_id"`
 	RelativePath   string  `json:"relative_path"`
 	Path           string  `json:"path"`
@@ -85,6 +86,14 @@ type VideoPage struct {
 	Total  int
 }
 
+// EpisodeAssign is one member of a show/season grouping applied atomically in
+// a single transaction by ShowRepo.AssignSeason.
+type EpisodeAssign struct {
+	VideoID       string
+	EpisodeNumber int
+	Title         string // episode_title fallback (file base name)
+}
+
 // VideoRepo persists video records.
 type VideoRepo interface {
 	Get(ctx context.Context, id string) (Video, error)
@@ -93,8 +102,9 @@ type VideoRepo interface {
 	List(ctx context.Context, q VideoQuery) (VideoPage, error)
 	Create(ctx context.Context, v Video) error
 	// UpdateFingerprint refreshes the on-disk location/size/mtime of a video
-	// (used for moves and in-place changes) and marks it as scanned.
-	UpdateFingerprint(ctx context.Context, id, path, relativePath string, size, mtime int64, lastScannedAt string) error
+	// (used for moves between sources and in-place changes) and marks it as
+	// scanned.
+	UpdateFingerprint(ctx context.Context, id, sourceID, path, relativePath string, size, mtime int64, lastScannedAt string) error
 	// Touch refreshes last_scanned_at for an unchanged video.
 	Touch(ctx context.Context, id string, lastScannedAt string) error
 	// Delete removes a video record (FK cascades clear tags/history
@@ -106,27 +116,31 @@ type VideoRepo interface {
 	UpdateCovers(ctx context.Context, id, coverPath, thumbPath string) error
 	// UpdateMetadata applies editable metadata fields and rebuilds search_text.
 	UpdateMetadata(ctx context.Context, id string, patch VideoPatch) error
-	// AssignEpisode groups v under a show/season/episode and rebuilds search_text.
-	AssignEpisode(ctx context.Context, id, showID string, seasonNumber, episodeNumber int, episodeTitle string) error
-	// AssignMovie marks v as a standalone movie (clears show linkage).
-	AssignMovie(ctx context.Context, id string) error
+	// AssignStandalone clears the series linkage of every given video in one
+	// statement (used by the scan-end grouping pass).
+	AssignStandalone(ctx context.Context, ids []string) error
 	// SetTags replaces the tag set for a video and rebuilds search_text.
 	SetTags(ctx context.Context, id string, tags []string) error
 	// Tags returns the tags of a video.
 	Tags(ctx context.Context, id string) ([]string, error)
 	// AllTags returns every tag with its usage count (for filters).
 	AllTags(ctx context.Context) ([]TagCount, error)
-	// ListByStorage returns all videos of one storage.
-	ListByStorage(ctx context.Context, storageID string) ([]Video, error)
+	// ListAll returns every indexed video (used by the source scanner for
+	// global file_id move detection).
+	ListAll(ctx context.Context) ([]Video, error)
+	// ListBySource returns all videos of one media source.
+	ListBySource(ctx context.Context, sourceID string) ([]Video, error)
 	// ListSegmented returns all videos flagged as segmented (hls.js-assembled
 	// MP4), used by the remux management API.
 	ListSegmented(ctx context.Context) ([]Video, error)
 	// ContinueWatching returns videos with in-progress playback, most recently
 	// active first (used by the home rows).
 	ContinueWatching(ctx context.Context, limit int) ([]Video, error)
-	// MarkMissing deletes videos in storage whose last_scanned_at is older
-	// than since, returning their IDs (for deletion events).
-	MarkMissing(ctx context.Context, storageID, since string) ([]string, error)
+	// MarkMissingBySource deletes videos owned by source whose last_scanned_at
+	// is older than since, except those whose absolute path falls under any of
+	// excludeRoots (child sources claim those). It returns the deleted IDs (for
+	// deletion events).
+	MarkMissingBySource(ctx context.Context, sourceID, since string, excludeRoots []string) ([]string, error)
 }
 
 // TagCount is a tag and how many videos carry it.

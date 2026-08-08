@@ -176,11 +176,9 @@ func (r *showRepo) GetSeasons(ctx context.Context, showID string) ([]domain.Seas
 func (r *showRepo) GetEpisodes(ctx context.Context, showID string, seasonNumber int) ([]domain.Episode, error) {
 	query := `
 		SELECT v.id, v.show_id, v.season_number, v.episode_number, v.title, v.episode_title,
-			v.relative_path, v.duration, v.thumb_path, v.storage_id,
-			COALESCE(st.available, 0) AS available,
+			v.relative_path, v.duration, v.thumb_path,
 			COALESCE(h.progress, 0) AS progress
 		FROM videos v
-		LEFT JOIN storages st ON st.id = v.storage_id
 		LEFT JOIN history h ON h.video_id = v.id AND h.user = 'local'
 		WHERE v.show_id = ? AND v.kind = 'episode'`
 	args := []any{showID}
@@ -188,7 +186,7 @@ func (r *showRepo) GetEpisodes(ctx context.Context, showID string, seasonNumber 
 		query += ` AND v.season_number = ?`
 		args = append(args, seasonNumber)
 	}
-	query += ` ORDER BY v.season_number, v.episode_number`
+	query += ` ORDER BY v.season_number, v.episode_number, v.title`
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -201,11 +199,9 @@ func (r *showRepo) GetEpisodes(ctx context.Context, showID string, seasonNumber 
 			title    sql.NullString
 			thumb    sql.NullString
 			duration sql.NullFloat64
-			avail    bool
 		)
 		if err := rows.Scan(&ep.VideoID, &ep.ShowID, &ep.SeasonNumber, &ep.EpisodeNumber,
-			&title, &ep.EpisodeTitle, &ep.RelativePath, &duration, &thumb, &ep.StorageID,
-			&avail, &ep.Progress); err != nil {
+			&title, &ep.EpisodeTitle, &ep.RelativePath, &duration, &thumb, &ep.Progress); err != nil {
 			return nil, err
 		}
 		if title.Valid {
@@ -217,7 +213,6 @@ func (r *showRepo) GetEpisodes(ctx context.Context, showID string, seasonNumber 
 		if thumb.Valid {
 			ep.ThumbPath = thumb.String
 		}
-		ep.StorageAvailable = avail
 		out = append(out, ep)
 	}
 	return out, rows.Err()
@@ -248,19 +243,13 @@ func (r *showRepo) Create(ctx context.Context, s domain.Show) error {
 	return err
 }
 
-func (r *showRepo) EnsureSeason(ctx context.Context, showID string, number int, kind string) (domain.Season, error) {
-	if kind == "" {
-		kind = "tv"
-	}
+func (r *showRepo) EnsureSeason(ctx context.Context, showID string, number int) (domain.Season, error) {
 	id := ulid.Make().String()
 	seasonName := defaultSeasonName(number)
-	if kind == "movie" {
-		seasonName = "第 " + strconv.Itoa(number) + "部"
-	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO seasons (id, show_id, number, name, kind) VALUES (?, ?, ?, ?, ?)
+		INSERT INTO seasons (id, show_id, number, name, kind) VALUES (?, ?, ?, ?, 'tv')
 		ON CONFLICT(show_id, number) DO NOTHING`,
-		id, showID, number, seasonName, kind)
+		id, showID, number, seasonName)
 	if err != nil {
 		return domain.Season{}, err
 	}
@@ -304,7 +293,7 @@ func (r *showRepo) UpdateMetadata(ctx context.Context, s domain.Show) error {
 		WHERE id = ?`,
 		s.Name, nullString(s.Overview), nullInt(s.Year), nullFloat(s.Rating),
 		nullString(s.Genre), nullString(s.PosterPath), nullString(s.BackdropPath),
-		s.MetadataSource, nowRFC3339(), s.ID); err != nil {
+		s.MetadataSource, domain.Now(), s.ID); err != nil {
 		return err
 	}
 	if oldName != "" && oldName != s.Name {
@@ -341,4 +330,62 @@ func (r *showRepo) RemoveEmptyShow(ctx context.Context, id string) error {
 		DELETE FROM shows WHERE id = ? AND NOT EXISTS (SELECT 1 FROM videos WHERE show_id = ?)`,
 		id, id)
 	return err
+}
+
+// AssignSeason groups a set of already-existing videos under one show/season in
+// a single transaction (create show + ensure season + assign every member), so
+// a series never appears in the library half-formed. It returns the show id.
+func (r *showRepo) AssignSeason(ctx context.Context, showName string, seasonNumber int, members []domain.EpisodeAssign) (string, error) {
+	now := domain.Now()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var showID string
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM shows WHERE LOWER(TRIM(name)) = LOWER(?) LIMIT 1`, showName).Scan(&showID)
+	if errors.Is(err, sql.ErrNoRows) {
+		showID = ulid.Make().String()
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO shows (id, name, overview, year, rating, genre, poster_path,
+				backdrop_path, metadata_source, created_at, updated_at)
+			VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'manual', ?, ?)`,
+			showID, showName, now, now); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+
+	seasonName := defaultSeasonName(seasonNumber)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO seasons (id, show_id, number, name, kind) VALUES (?, ?, ?, ?, 'tv')
+		ON CONFLICT(show_id, number) DO NOTHING`,
+		ulid.Make().String(), showID, seasonNumber, seasonName); err != nil {
+		return "", err
+	}
+	var seasonID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM seasons WHERE show_id = ? AND number = ?`, showID, seasonNumber).Scan(&seasonID); err != nil {
+		return "", err
+	}
+
+	for _, m := range members {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE videos SET kind = 'episode', show_id = ?, season_number = ?,
+				episode_number = ?, episode_title = ?, updated_at = ?
+			WHERE id = ?`,
+			showID, seasonNumber, m.EpisodeNumber, nullString(m.Title), now, m.VideoID); err != nil {
+			return "", err
+		}
+		if err := rebuildSearchText(ctx, tx, m.VideoID); err != nil {
+			return "", err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return showID, nil
 }

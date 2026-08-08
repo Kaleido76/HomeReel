@@ -50,3 +50,24 @@ func TestParseEpisode(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleKeyOf(t *testing.T) {
+	cases := map[string]string{
+		"Foo.S01E01.mkv":            "Foo",
+		"Foo.S01E02.720p.x264.mkv":  "Foo",
+		"Foo.S01E01.10bit.mkv":      "Foo",
+		"Foo.S01E02.1080p.hevc.mkv": "Foo",
+		"Foo 2011.mkv":              "Foo", // a bare year must not truncate to "Foo 20"
+		"Foo (2011) S1E2.mkv":       "Foo",
+		"Breaking.Bad.S01E01.720p":  "Breaking Bad",
+		"凡人修仙传/第01集.mkv":            "凡人修仙传",
+		"Bar 1.mkv":                 "Bar",
+		"Bar 2.mkv":                 "Bar",
+		"XX冒险记：北京.mkv":              "XX冒险记：北京",
+	}
+	for rel, want := range cases {
+		if got := titleKeyOf(rel); got != want {
+			t.Errorf("titleKeyOf(%q) = %q, want %q", rel, got, want)
+		}
+	}
+}

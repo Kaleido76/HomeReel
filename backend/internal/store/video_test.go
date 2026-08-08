@@ -9,7 +9,7 @@ import (
 	"homereel/backend/internal/domain"
 )
 
-func newVideoTestRepo(t *testing.T) (domain.VideoRepo, domain.StorageRepo) {
+func newVideoTestRepo(t *testing.T) (domain.VideoRepo, domain.SourceRepo) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -19,21 +19,27 @@ func newVideoTestRepo(t *testing.T) (domain.VideoRepo, domain.StorageRepo) {
 	if err := db.Migrate(database); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return NewVideoRepo(database), NewStorageRepo(database)
+	return NewVideoRepo(database), NewSourceRepo(database)
+}
+
+func seedSource(t *testing.T, sources domain.SourceRepo, id, path string) {
+	t.Helper()
+	if err := sources.Create(context.Background(), domain.MediaSource{
+		ID: id, Path: path, CreatedAt: "2026-01-01T00:00:00.000000000Z",
+	}); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
 }
 
 func TestVideoCRUDAndFingerprint(t *testing.T) {
-	repo, storages := newVideoTestRepo(t)
+	repo, sources := newVideoTestRepo(t)
 	ctx := context.Background()
 
-	st := domain.Storage{ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "2026-01-01T00:00:00Z"}
-	if err := storages.Create(ctx, st); err != nil {
-		t.Fatalf("create storage: %v", err)
-	}
+	seedSource(t, sources, "s1", `C:\x`)
 
 	v := domain.Video{
-		ID: "v1", StorageID: "s1", FileID: "100", RelativePath: "a.mp4",
-		Path: "C:\\x\\a.mp4", Size: 100, MTime: 1000,
+		ID: "v1", SourceID: "s1", FileID: "100", RelativePath: "a.mp4",
+		Path: `C:\x\a.mp4`, Size: 100, MTime: 1000,
 		Title: "a", CreatedAt: "t", UpdatedAt: "t", LastScannedAt: "t",
 	}
 	if err := repo.Create(ctx, v); err != nil {
@@ -44,11 +50,11 @@ func TestVideoCRUDAndFingerprint(t *testing.T) {
 		t.Fatalf("get = %+v err=%v", got, err)
 	}
 
-	if err := repo.UpdateFingerprint(ctx, "v1", "C:\\x\\b.mp4", "b.mp4", 120, 2000, "scan2"); err != nil {
+	if err := repo.UpdateFingerprint(ctx, "v1", "s1", `C:\x\b.mp4`, "b.mp4", 120, 2000, "scan2"); err != nil {
 		t.Fatalf("fingerprint: %v", err)
 	}
 	got, _ = repo.Get(ctx, "v1")
-	if got.Path != "C:\\x\\b.mp4" || got.RelativePath != "b.mp4" || got.LastScannedAt != "scan2" {
+	if got.Path != `C:\x\b.mp4` || got.RelativePath != "b.mp4" || got.LastScannedAt != "scan2" {
 		t.Fatalf("fingerprint not applied: %+v", got)
 	}
 
@@ -84,13 +90,12 @@ func TestVideoCRUDAndFingerprint(t *testing.T) {
 }
 
 func TestVideoMarkMissing(t *testing.T) {
-	repo, storages := newVideoTestRepo(t)
+	repo, sources := newVideoTestRepo(t)
 	ctx := context.Background()
-	st := domain.Storage{ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "t"}
-	_ = storages.Create(ctx, st)
+	seedSource(t, sources, "s1", `C:\x`)
 
 	base := domain.Video{
-		StorageID: "s1", FileID: "1", Path: "C:\\x\\a.mp4",
+		SourceID: "s1", FileID: "1", Path: `C:\x\a.mp4`,
 		Size: 1, MTime: 1, Title: "a",
 	}
 	v1 := base
@@ -104,7 +109,7 @@ func TestVideoMarkMissing(t *testing.T) {
 	_ = repo.Create(ctx, v1)
 	_ = repo.Create(ctx, v2)
 
-	ids, err := repo.MarkMissing(ctx, "s1", "2026-01-02T00:00:00Z")
+	ids, err := repo.MarkMissingBySource(ctx, "s1", "2026-01-02T00:00:00Z", nil)
 	if err != nil {
 		t.Fatalf("mark missing: %v", err)
 	}
@@ -119,13 +124,41 @@ func TestVideoMarkMissing(t *testing.T) {
 	}
 }
 
-func TestVideoUniquePath(t *testing.T) {
-	repo, storages := newVideoTestRepo(t)
+func TestVideoMarkMissingSkipsExcludedRoots(t *testing.T) {
+	repo, sources := newVideoTestRepo(t)
 	ctx := context.Background()
-	st := domain.Storage{ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "t"}
-	_ = storages.Create(ctx, st)
+	seedSource(t, sources, "s1", `C:\Videos`)
+
+	base := domain.Video{
+		SourceID: "s1", FileID: "1", Path: `C:\Videos\child\a.mp4`,
+		Size: 1, MTime: 1, Title: "a",
+		CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z", LastScannedAt: "2026-01-01T00:00:00Z",
+	}
+	base.ID = "v1"
+	base.RelativePath = "child/a.mp4"
+	if err := repo.Create(ctx, base); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// A descendant source claims the subtree, so MarkMissing must leave it.
+	ids, err := repo.MarkMissingBySource(ctx, "s1", "2026-01-02T00:00:00Z", []string{`C:\Videos\child`})
+	if err != nil {
+		t.Fatalf("mark missing: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("ids = %v, want none", ids)
+	}
+	if _, err := repo.Get(ctx, "v1"); err != nil {
+		t.Fatalf("v1 should remain: %v", err)
+	}
+}
+
+func TestVideoUniquePath(t *testing.T) {
+	repo, sources := newVideoTestRepo(t)
+	ctx := context.Background()
+	seedSource(t, sources, "s1", `C:\x`)
 	base := func(id, rel string) domain.Video {
-		return domain.Video{ID: id, StorageID: "s1", FileID: id, RelativePath: rel, Path: "p", Size: 1, MTime: 1, Title: "t", CreatedAt: "t", UpdatedAt: "t", LastScannedAt: "t"}
+		return domain.Video{ID: id, SourceID: "s1", FileID: id, RelativePath: rel, Path: "p", Size: 1, MTime: 1, Title: "t", CreatedAt: "t", UpdatedAt: "t", LastScannedAt: "t"}
 	}
 	if err := repo.Create(ctx, base("v1", "a.mp4")); err != nil {
 		t.Fatalf("create: %v", err)
@@ -136,14 +169,13 @@ func TestVideoUniquePath(t *testing.T) {
 }
 
 func TestVideoListPaginationAndFilter(t *testing.T) {
-	repo, storages := newVideoTestRepo(t)
+	repo, sources := newVideoTestRepo(t)
 	ctx := context.Background()
-	st := domain.Storage{ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "t"}
-	_ = storages.Create(ctx, st)
+	seedSource(t, sources, "s1", `C:\x`)
 
 	base := func(id, rel, title string, dur float64) domain.Video {
 		return domain.Video{
-			ID: id, StorageID: "s1", FileID: id, RelativePath: rel, Path: "p",
+			ID: id, SourceID: "s1", FileID: id, RelativePath: rel, Path: "p",
 			Size: 1, MTime: 1, Title: title, Duration: dur,
 			Codec: "h264", Container: "mp4",
 			CreatedAt:     "2026-01-0" + id[1:] + "T00:00:00.000000000Z",
@@ -154,19 +186,6 @@ func TestVideoListPaginationAndFilter(t *testing.T) {
 	_ = repo.Create(ctx, base("v1", "a/alpha.mp4", "Alpha", 100))
 	_ = repo.Create(ctx, base("v2", "b/beta.mp4", "Beta", 200))
 	_ = repo.Create(ctx, base("v3", "c/gamma.mp4", "Gamma", 300))
-	// Create only stores the fingerprint columns; duration/codec come from
-	// UpdateProbe, so persist them the way the scanner would.
-	durations := map[string]float64{"v1": 100, "v2": 200, "v3": 300}
-	for id, dur := range durations {
-		v, _ := repo.Get(ctx, id)
-		upd := v
-		upd.Duration = dur
-		upd.Codec = "h264"
-		upd.Container = "mp4"
-		if err := repo.UpdateProbe(ctx, upd); err != nil {
-			t.Fatalf("probe %s: %v", id, err)
-		}
-	}
 
 	t.Run("default newest first", func(t *testing.T) {
 		page, err := repo.List(ctx, domain.VideoQuery{Page: 1, PageSize: 2})
@@ -217,14 +236,13 @@ func TestVideoListPaginationAndFilter(t *testing.T) {
 }
 
 func TestVideoListAdvancedFilter(t *testing.T) {
-	repo, storages := newVideoTestRepo(t)
+	repo, sources := newVideoTestRepo(t)
 	ctx := context.Background()
-	st := domain.Storage{ID: "s1", Name: "x", Type: domain.StorageTypeInternal, RootPath: "C:\\x", CreatedAt: "t"}
-	_ = storages.Create(ctx, st)
+	seedSource(t, sources, "s1", `C:\x`)
 
 	base := func(id, title string) domain.Video {
 		return domain.Video{
-			ID: id, StorageID: "s1", FileID: id, RelativePath: id + ".mp4", Path: "p",
+			ID: id, SourceID: "s1", FileID: id, RelativePath: id + ".mp4", Path: "p",
 			Size: 1, MTime: 1, Title: title,
 			CreatedAt: "t", UpdatedAt: "t", LastScannedAt: "t",
 		}

@@ -27,8 +27,6 @@ export interface SeriesMember {
   duration: number
   thumb_path?: string
   relative_path: string
-  storage_id: string
-  storage_available: boolean
   progress: number
 }
 

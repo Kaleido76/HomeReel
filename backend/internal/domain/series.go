@@ -10,7 +10,7 @@ type Series struct {
 	ShowID         string  `json:"show_id"`
 	Title          string  `json:"title"` // 标题（show.name）
 	Name           string  `json:"name"`  // 显示名：标题 + 季/部
-	Kind           string  `json:"kind"`  // tv=剧集季 | movie=电影部
+	Kind           string  `json:"kind"`  // 恒为 "tv"（历史列，无电影/tv 结构类型；区分走标签）
 	SeasonNumber   int     `json:"season_number"`
 	Overview       string  `json:"overview,omitempty"`
 	Year           int     `json:"year,omitempty"`
@@ -26,16 +26,14 @@ type Series struct {
 
 // SeriesMember is one video inside a series, with playback progress.
 type SeriesMember struct {
-	VideoID          string  `json:"video_id"`
-	Title            string  `json:"title"`
-	EpisodeNumber    int     `json:"episode_number"`
-	EpisodeTitle     string  `json:"episode_title,omitempty"`
-	Duration         float64 `json:"duration"`
-	ThumbPath        string  `json:"thumb_path,omitempty"`
-	RelativePath     string  `json:"relative_path"`
-	StorageID        string  `json:"storage_id"`
-	StorageAvailable bool    `json:"storage_available"`
-	Progress         float64 `json:"progress"`
+	VideoID       string  `json:"video_id"`
+	Title         string  `json:"title"`
+	EpisodeNumber int     `json:"episode_number"`
+	EpisodeTitle  string  `json:"episode_title,omitempty"`
+	Duration      float64 `json:"duration"`
+	ThumbPath     string  `json:"thumb_path,omitempty"`
+	RelativePath  string  `json:"relative_path"`
+	Progress      float64 `json:"progress"`
 }
 
 // SeriesLink is a weak, unnamed, ordered relation between two series.

@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, FolderCog, Loader2, RefreshCw } from 'lucide-react'
-import { fetchStorages } from '../../api/storages'
-import { fetchRemuxStatus, requestFolderRemux, requestRemux } from '../../api/remux'
+import { CheckCircle2, Loader2, RefreshCw } from 'lucide-react'
+import { fetchRemuxStatus, requestRemux } from '../../api/remux'
+import { jobsKey } from '../jobs/useJobs'
 
 // RemuxPage is the segmented-MP4 remux manager: hls.js-downloaded files (many
 // mdat boxes) make desktop Chrome download the whole file before playing. A
@@ -18,16 +18,6 @@ export function RemuxPage() {
     queryFn: fetchRemuxStatus,
     refetchInterval: 5000,
   })
-  const storages = useQuery({ queryKey: ['storages'], queryFn: fetchStorages })
-  const storageById = useMemo(() => {
-    const map = new Map<string, { name: string }>()
-    for (const s of storages.data?.storages ?? []) map.set(s.id, s)
-    return map
-  }, [storages.data])
-
-  const [folderStorage, setFolderStorage] = useState('')
-  const [folderPath, setFolderPath] = useState('')
-  const [folderMsg, setFolderMsg] = useState('')
 
   const items = status.data?.items ?? []
 
@@ -38,15 +28,8 @@ export function RemuxPage() {
     onSuccess: (_, id) => {
       setRequested((prev) => new Set(prev).add(id))
       void invalidate()
-    },
-  })
-
-  const remuxFolder = useMutation({
-    mutationFn: () => requestFolderRemux(folderStorage, folderPath.trim()),
-    onSuccess: (res) => {
-      setFolderMsg(res.accepted > 0 ? `已提交 ${res.accepted} 个视频的重封请求` : '该文件夹下没有分段视频')
-      setFolderPath('')
-      void invalidate()
+      // 重封是后台任务，立即刷新任务指示器让顶部图标马上旋转。
+      void queryClient.invalidateQueries({ queryKey: jobsKey })
     },
   })
 
@@ -75,50 +58,6 @@ export function RemuxPage() {
         </button>
       </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          setFolderMsg('')
-          remuxFolder.mutate()
-        }}
-        className="flex flex-wrap items-end gap-2 rounded-lg border border-neutral-200 bg-white p-3"
-      >
-        <div className="min-w-40">
-          <label className="mb-1 block text-xs text-neutral-500">存储卷</label>
-          <select
-            value={folderStorage}
-            onChange={(e) => setFolderStorage(e.target.value)}
-            required
-            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-blue-600"
-          >
-            <option value="">选择存储卷…</option>
-            {(storages.data?.storages ?? []).map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="min-w-52 flex-1">
-          <label className="mb-1 block text-xs text-neutral-500">文件夹路径（相对存储卷根目录，留空表示根目录）</label>
-          <input
-            value={folderPath}
-            onChange={(e) => setFolderPath(e.target.value)}
-            placeholder="如 TV/黑袍纠察队 第三季"
-            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-blue-600"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={!folderStorage || remuxFolder.isPending}
-          className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
-        >
-          {remuxFolder.isPending ? <Loader2 className="size-4 animate-spin" /> : <FolderCog className="size-4" />}
-          重封此文件夹
-        </button>
-        {folderMsg && <p className="basis-full text-sm text-neutral-500">{folderMsg}</p>}
-      </form>
-
       {status.isLoading ? (
         <div className="flex h-40 items-center justify-center text-neutral-400">
           <Loader2 className="size-6 animate-spin" />
@@ -137,7 +76,6 @@ export function RemuxPage() {
             {items.map((it) => {
               const done = it.remuxed
               const submitted = requested.has(it.video_id) && !done
-              const storageName = storageById.get(it.storage_id)?.name ?? it.storage_id
               return (
                 <li key={it.video_id} className="flex items-center gap-3 px-3 py-2.5">
                   <div className="min-w-0 flex-1">
@@ -145,7 +83,7 @@ export function RemuxPage() {
                       {it.title}
                     </p>
                     <p className="truncate text-xs text-neutral-400" title={it.relative_path}>
-                      {storageName} / {it.relative_path}
+                      {it.relative_path}
                     </p>
                   </div>
                   <span

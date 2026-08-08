@@ -15,10 +15,9 @@ type AnyRouter = ReturnType<typeof createRouter>
 const HomePage = lazy(() => import('../features/home/HomePage').then((m) => ({ default: m.HomePage })))
 const LibraryLayout = lazy(() => import('../features/library/LibraryLayout').then((m) => ({ default: m.LibraryLayout })))
 const SearchPage = lazy(() => import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })))
-const ExplorerPage = lazy(() => import('../features/explorer/ExplorerPage').then((m) => ({ default: m.ExplorerPage })))
 const RemuxPage = lazy(() => import('../features/remux/RemuxPage').then((m) => ({ default: m.RemuxPage })))
-const FilesNewPage = lazy(() =>
-  import('../features/filesnew/FilesNewPage').then((m) => ({ default: m.FilesNewPage })),
+const FilesPage = lazy(() =>
+  import('../features/files/FilesPage').then((m) => ({ default: m.FilesPage })),
 )
 
 // initialEntry seeds each tab's memory history. The tab matching the current URL
@@ -131,30 +130,6 @@ export const searchRouter = createRouter({
   defaultPreload: 'intent',
 })
 
-// ---- explorer tab ----
-const explorerRoot = createRootRoute()
-const explorerIndex = createRoute({
-  getParentRoute: () => explorerRoot,
-  path: '/explorer',
-  component: ExplorerPage,
-  validateSearch: (search) => ({
-    storageId: typeof search.storageId === 'string' ? search.storageId : '',
-    path: typeof search.path === 'string' ? search.path : '',
-  }),
-})
-const explorerNotFound = createRoute({
-  getParentRoute: () => explorerRoot,
-  path: '*',
-  beforeLoad: () => redirect({ to: '/explorer' }),
-  component: () => null,
-})
-const explorerTree = explorerRoot.addChildren([explorerIndex, explorerNotFound])
-export const explorerRouter = createRouter({
-  routeTree: explorerTree,
-  history: createMemoryHistory({ initialEntries: [initialEntry('explorer')] }),
-  defaultPreload: 'intent',
-})
-
 // ---- remux tab (segmented-MP4 remux management) ----
 const remuxRoot = createRootRoute()
 const remuxIndex = createRoute({
@@ -175,26 +150,26 @@ export const remuxRouter = createRouter({
   defaultPreload: 'intent',
 })
 
-// ---- filesnew tab (generic machine-wide file browser) ----
+// ---- files tab (generic machine-wide file browser) ----
 // The current absolute directory is kept in the URL so refresh/deep-link
 // restores the exact folder being browsed.
-const filesnewRoot = createRootRoute()
-const filesnewIndex = createRoute({
-  getParentRoute: () => filesnewRoot,
-  path: '/filesnew',
-  component: FilesNewPage,
+const filesRoot = createRootRoute()
+const filesIndex = createRoute({
+  getParentRoute: () => filesRoot,
+  path: '/files',
+  component: FilesPage,
   validateSearch: (search) => ({ path: typeof search.path === 'string' ? search.path : '' }),
 })
-const filesnewNotFound = createRoute({
-  getParentRoute: () => filesnewRoot,
+const filesNotFound = createRoute({
+  getParentRoute: () => filesRoot,
   path: '*',
-  beforeLoad: () => redirect({ to: '/filesnew' }),
+  beforeLoad: () => redirect({ to: '/files' }),
   component: () => null,
 })
-const filesnewTree = filesnewRoot.addChildren([filesnewIndex, filesnewNotFound])
-export const filesnewRouter = createRouter({
-  routeTree: filesnewTree,
-  history: createMemoryHistory({ initialEntries: [initialEntry('filesnew')] }),
+const filesTree = filesRoot.addChildren([filesIndex, filesNotFound])
+export const filesRouter = createRouter({
+  routeTree: filesTree,
+  history: createMemoryHistory({ initialEntries: [initialEntry('files')] }),
   defaultPreload: 'intent',
 })
 
@@ -204,7 +179,6 @@ export const routers: Record<TabId, AnyRouter> = {
   home: homeRouter as unknown as AnyRouter,
   library: libraryRouter as unknown as AnyRouter,
   search: searchRouter as unknown as AnyRouter,
-  explorer: explorerRouter as unknown as AnyRouter,
   remux: remuxRouter as unknown as AnyRouter,
-  filesnew: filesnewRouter as unknown as AnyRouter,
+  files: filesRouter as unknown as AnyRouter,
 }

@@ -31,12 +31,12 @@ HomeReel 是**个人视频资料管理平台**（DAM，Digital Asset Management�
 - **认证（多终端并发会话）**：单口令 + 会话 Cookie；每终端独立登录/独立会话，登出只清自身，互不挤占（ADR-002）
 - **数据库**：SQLite（纯 Go 驱动 + WAL），演进路线 WAL → FTS5 → 队列 → 缓存，**不默认迁移 PostgreSQL**（ADR-005）
 - **播放策略**：能力探测三层——可直连 → HTTP Range；不可直连 → HLS 转码；仍不可 → 转码兜底；HLS 默认 `auto`（ADR-006）
-- **文件身份**：`(storage_id, file_id, relative_path)` 三元组 + `(file_id, size, mtime)` 指纹（ADR-007）
-- **多数据源**：`storages` 抽象（type: internal/external/network），外接卷热插拔、盘符重映射、离线不删元数据（ADR-011 / ADR-014）
+- **文件身份**：`(source_id, file_id, relative_path)` 三元组 + `(file_id, size, mtime)` 指纹；**file_id 全局匹配**（跨源移动保持同一视频）（ADR-007）
+- **多媒体源**：视频库入库单位是用户标记的**多媒体源**目录（`media_sources`，轻量持久化标记 + 扫描单位，不参与文件浏览生命周期）；嵌套源按路由表由子源优先；源根不可达时扫描中止、不动库（ADR-011 / ADR-014，2026-08 替换原 storages 多数据源/热插拔模型）
 - **系列组织**：视频库统一为「单集 + 系列」（一季/一部一个系列，`seasons.kind`=tv/movie，成员按位次排序允许缺失）；系列间弱关联 `series_links`；目录/文件名规则识别（ADR-015）。**元数据刮削（ADR-016，TMDB 在线 + NFO 侧边文件）已整体移除（2026-08）**，仅剩手动编辑。
 - **AI 解耦**：事件总线（`VideoImported` 等），AI/OCR/转写作为 Listener（ADR-010）
 - **搜索隔离**：`SearchProvider` 接口，当前 FTS5，Meilisearch 后续替换（ADR-009）
-- **前端形态**：Explorer 与 Library 是两个共享 API/播放器/元数据的 App（ADR-013）
+- **前端形态**：文件浏览器（files）与 Library 是两个共享 API/播放器/元数据的 App（ADR-013）
 
 ## 4. 技术栈
 

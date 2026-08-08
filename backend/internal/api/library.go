@@ -78,25 +78,8 @@ func (s *Server) handleVideoPatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVideoDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	v, ok := s.videoOrError(w, r, id)
-	if !ok {
+	if _, ok := s.videoOrError(w, r, id); !ok {
 		return
-	}
-	if r.URL.Query().Get("deleteFile") == "true" {
-		st, ok := s.storageOrError(w, r, v.StorageID)
-		if !ok {
-			return
-		}
-		if st.Readonly {
-			writeError(w, http.StatusForbidden, "readonly", "只读存储卷，拒绝删除文件")
-			return
-		}
-		res := s.files.Delete(st.RootPath, []string{v.RelativePath})
-		if len(res.Errors) > 0 {
-			writeError(w, http.StatusInternalServerError, "internal",
-				"删除源文件失败："+res.Errors[0].Message)
-			return
-		}
 	}
 	if err := s.videos.Delete(r.Context(), id); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
