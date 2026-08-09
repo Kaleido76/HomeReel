@@ -21,8 +21,8 @@ func TestGetPinsNeverNil(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(nil, store.NewSettingsRepo(database), nil)
-	ctx := context.Background()
 
+	ctx := context.Background()
 	pins, err := svc.GetPins(ctx)
 	if err != nil {
 		t.Fatalf("GetPins: %v", err)
@@ -44,8 +44,8 @@ func TestGetPinsMigratesLegacyKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(nil, store.NewSettingsRepo(database), nil)
-	ctx := context.Background()
 
+	ctx := context.Background()
 	want := []string{`C:\a`, `D:\b`}
 	if err := svc.pins.Set(ctx, "fs2.pins", `["C:\\a","D:\\b"]`); err != nil {
 		t.Fatal(err)

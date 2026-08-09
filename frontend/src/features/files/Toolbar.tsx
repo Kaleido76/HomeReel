@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronRight, ClipboardCopy, ClipboardPaste, Computer, Film, Pencil, Pin, Scissors, Trash2, Video } from 'lucide-react'
+import { ArrowDownUp, ArrowUp, ChevronRight, ClipboardCopy, ClipboardPaste, Computer, Film, Layers, ListChecks, Pencil, Pin, ReplaceAll, Scissors, Trash2, Video } from 'lucide-react'
 import { pathSegments } from './path'
 import { Tooltip } from './Tooltip'
 
@@ -45,6 +45,11 @@ export function Toolbar({
   onPaste,
   onRename,
   onDelete,
+  onSelectAll,
+  onInvertSelection,
+  onBatchRename,
+  onMarkSeries,
+  canMarkSeries,
   onPin,
   pinned,
   isSource,
@@ -65,6 +70,11 @@ export function Toolbar({
   onPaste: () => void
   onRename: () => void
   onDelete: () => void
+  onSelectAll: () => void
+  onInvertSelection: () => void
+  onBatchRename: () => void
+  onMarkSeries: () => void
+  canMarkSeries: boolean
   onPin: () => void
   pinned: boolean
   isSource: boolean
@@ -131,7 +141,7 @@ export function Toolbar({
             <Pin className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip={isSource ? '取消多媒体源标记（已入库内容不会移除）' : '将当前目录标记为多媒体源并触发扫描'}>
+        <Tooltip tip={isSource ? '取消多媒体源标记（其下已入库的单集与系列将从库中移除）' : '将当前目录标记为多媒体源并触发扫描'}>
           <button
             onClick={onToggleSource}
             disabled={!path}
@@ -167,6 +177,11 @@ export function Toolbar({
             <Pencil className="size-4" />
           </button>
         </Tooltip>
+        <Tooltip tip="批量重命名（需至少选择 2 项）">
+          <button onClick={onBatchRename} disabled={selectedCount < 2} className={btnCls}>
+            <ReplaceAll className="size-4" />
+          </button>
+        </Tooltip>
         <Tooltip tip="永久删除">
           <button
             onClick={onDelete}
@@ -174,6 +189,25 @@ export function Toolbar({
             className="flex items-center rounded-lg border border-red-200 px-2.5 py-1.5 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Trash2 className="size-4" />
+          </button>
+        </Tooltip>
+
+        <Tooltip tip="全选当前目录所有条目">
+          <button onClick={onSelectAll} disabled={entryCount === 0} className={btnCls}>
+            <ListChecks className="size-4" />
+          </button>
+        </Tooltip>
+        <Tooltip tip="反选（反转当前勾选）">
+          <button onClick={onInvertSelection} disabled={entryCount === 0} className={btnCls}>
+            <ArrowDownUp className="size-4" />
+          </button>
+        </Tooltip>
+
+        <span className="mx-1 h-5 w-px shrink-0 bg-neutral-200" />
+
+        <Tooltip tip="标记为系列：所选文件夹整体打包为系列（须位于媒体源内）；未选文件夹时把当前目录打包为系列">
+          <button onClick={onMarkSeries} disabled={!canMarkSeries} className={btnCls}>
+            <Layers className="size-4" />
           </button>
         </Tooltip>
 

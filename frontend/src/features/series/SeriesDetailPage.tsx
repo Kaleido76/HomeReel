@@ -1,13 +1,17 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Calendar, Layers, Loader2, Play, Plus, Star, X } from 'lucide-react'
-import { addSeriesLink, fetchSeries, fetchSeriesDetail, removeSeriesLink, seriesPosterUrl } from '../../api/series'
+import { AlertTriangle, Calendar, Layers, Loader2, Play, Plus, RefreshCw, Star, X } from 'lucide-react'
+import { addSeriesLink, fetchSeries, fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, syncSeries } from '../../api/series'
 import { formatDuration } from '../../lib/format'
 
 // SeriesDetailPage renders the series detail for the middle column of the
 // wide-screen library. It receives the id as a prop (the route is matched by
 // LibraryLayout, not rendered through <Outlet/>), so useParams is unnecessary.
+//
+// The detail response carries an on-demand disk check (check): when the series
+// root is missing, a member file vanished, or new files were dropped into the
+// folder, a warning is shown with a manual sync action (系列详情同步).
 export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const id = seriesId
   const queryClient = useQueryClient()
@@ -28,6 +32,14 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
     mutationFn: (linkedId: string) => removeSeriesLink(id, linkedId),
     onSuccess: invalidate,
   })
+  const sync = useMutation({
+    mutationFn: () => syncSeries(id),
+    onSuccess: () => {
+      invalidate()
+      void queryClient.invalidateQueries({ queryKey: ['series'] })
+      void queryClient.invalidateQueries({ queryKey: ['videos'] })
+    },
+  })
 
   if (detail.isLoading) {
     return (
@@ -45,12 +57,35 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
     )
   }
 
-  const { series, members, links } = detail.data
+  const { series, members, links, check } = detail.data
   const linkedIds = new Set(links.map((l) => l.linked_id))
   const candidates = (allSeries.data?.series ?? []).filter((s) => s.id !== id && !linkedIds.has(s.id))
 
   return (
     <div className="space-y-4 p-4 sm:p-5">
+      {check?.out_of_sync && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+          <p className="flex items-center gap-1.5 text-sm text-amber-800">
+            <AlertTriangle className="size-4 shrink-0" />
+            该系列与磁盘上的文件夹不一致。
+          </p>
+          {!check.root_exists && <p className="mt-1 text-sm text-amber-700">系列根目录已不存在（可能被改名或删除）。</p>}
+          {(check.missing ?? []).length > 0 && (
+            <p className="mt-1 text-sm text-amber-700">已消失的成员：{(check.missing ?? []).join('、')}</p>
+          )}
+          {(check.new ?? []).length > 0 && (
+            <p className="mt-1 text-sm text-amber-700">尚未入库的新文件：{(check.new ?? []).join('、')}</p>
+          )}
+          <button
+            onClick={() => sync.mutate()}
+            disabled={sync.isPending}
+            className="mt-2 flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+          >
+            <RefreshCw className="size-3.5" /> {sync.isPending ? '同步中…' : '同步'}
+          </button>
+        </div>
+      )}
+
       <div className="relative overflow-hidden rounded-xl border border-neutral-200">
         <div className="relative flex gap-5 bg-white p-5">
           <img
@@ -136,7 +171,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
           关联系列
           <span className="ml-2 text-xs font-normal text-neutral-400">关联无名称，仅用于一起展示与跳转</span>
         </h3>
-        {links.length === 0 && <p className="mb-3 text-sm text-neutral-400">暂无关联。同一标题下的季/部会自动关联，也可手动添加。</p>}
+        {links.length === 0 && <p className="mb-3 text-sm text-neutral-400">暂无关联。可在下方手动添加。</p>}
         <div className="flex flex-wrap gap-2">
           {links.map((l) => (
             <div key={l.linked_id} className="flex items-center gap-1.5 rounded-md border border-neutral-200 py-1 pl-3 pr-1.5">

@@ -57,11 +57,33 @@ func (s *Server) handleSeriesDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
+	// 系列详情按需对照磁盘：根目录是否存在、成员是否还在、根目录下是否有未
+	// 入库的新文件。不一致时由前端显示警告并提供手动同步。
+	check, checkErr := s.scanner.CheckSeries(r.Context(), id)
+	if checkErr != nil {
+		slog.Warn("check series", "id", id, "err", checkErr)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"series":  series,
 		"members": members,
 		"links":   links,
+		"check":   check,
 	})
+}
+
+// handleSeriesSync re-syncs a series against its root folder (import new direct
+// children, bind in file-name order, remove vanished members).
+func (s *Server) handleSeriesSync(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.seriesOrError(w, r, id); !ok {
+		return
+	}
+	if err := s.scanner.SyncSeries(r.Context(), id); err != nil {
+		slog.Error("sync series", "id", id, "err", err)
+		writeError(w, http.StatusBadRequest, "sync_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"synced": true})
 }
 
 func (s *Server) handleSeriesMembers(w http.ResponseWriter, r *http.Request) {

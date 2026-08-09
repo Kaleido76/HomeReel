@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -34,6 +34,7 @@ type ThumbnailFn func(ctx context.Context, ffmpegPath, src, cover, thumb string,
 // media sources — lightweight user-declared scan units — rather than managed
 // storage volumes.
 type Service struct {
+	mu          sync.Mutex // 库写长任务串行化：scan/mark/probe/sync 互斥执行
 	videos      domain.VideoRepo
 	sources     domain.SourceRepo
 	shows       domain.ShowRepo
@@ -51,8 +52,8 @@ type Service struct {
 }
 
 // New builds the scanner service. dataDir hosts covers/, thumbs/ and remux/ output.
-func New(videos domain.VideoRepo, sources domain.SourceRepo, shows domain.ShowRepo,
-	seriesRepo domain.SeriesRepo, jobsSvc *jobs.Service, bus *events.Bus,
+func New(videos domain.VideoRepo, sources domain.SourceRepo,
+	shows domain.ShowRepo, seriesRepo domain.SeriesRepo, jobsSvc *jobs.Service, bus *events.Bus,
 	ffprobePath, ffmpegPath, dataDir string) *Service {
 	return &Service{
 		videos:      videos,
@@ -97,6 +98,8 @@ func (s *Service) ScanSource(ctx context.Context, src domain.MediaSource) (ScanR
 type subtaskFn func(text string, pct float64)
 
 func (s *Service) scan(ctx context.Context, src domain.MediaSource, progress func(done, total int), subtask subtaskFn) (ScanResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var res ScanResult
 	res.SourceID = src.ID
 	if !pathReachable(src.Path, 3*time.Second) {
@@ -226,9 +229,12 @@ func (s *Service) scan(ctx context.Context, src domain.MediaSource, progress fun
 	}
 	res.Missing = len(missingIDs)
 
-	// Phase 2: group directories whose videos share an obvious name pattern
-	// into series. Runs after pruning so deleted files do not affect decisions.
-	s.reconcileGroups(ctx)
+	// Phase 2: maintain membership of existing series (bind files that now sit
+	// under a series root, detach files that no longer do, prune empty series).
+	// Scans never create series — only manual marking and explicit syncs do.
+	if err := s.maintainSeriesMembers(ctx); err != nil {
+		slog.Warn("maintain series members", "err", err)
+	}
 
 	_ = s.sources.TouchLastScan(ctx, src.ID, s.now().UTC().Format(domain.TimeLayout))
 	return res, nil
@@ -304,7 +310,7 @@ func (s *Service) thumbnailFor(ctx context.Context, videoID, src string, duratio
 	}
 }
 
-// HandleJob is the jobs.Worker handler for probe/thumbnail/scan_source/remux jobs.
+// HandleJob is the jobs.Worker handler for probe/thumbnail/scan_source/remux/mark_resource jobs.
 func (s *Service) HandleJob(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
 	switch j.Type {
 	case jobs.TypeProbe:
@@ -315,6 +321,8 @@ func (s *Service) HandleJob(ctx context.Context, j jobs.Job, report jobs.Reporte
 		return s.handleScanSource(ctx, j, report)
 	case jobs.TypeRemux:
 		return s.handleRemux(ctx, j, report)
+	case jobs.TypeMarkResource:
+		return s.handleMarkResource(ctx, j, report)
 	}
 	return fmt.Errorf("unknown job type %q", j.Type)
 }
@@ -467,6 +475,8 @@ func truncate(s string, n int) string {
 }
 
 func (s *Service) handleProbe(ctx context.Context, j jobs.Job, _ jobs.Reporter) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var meta struct {
 		VideoID string `json:"video_id"`
 	}
@@ -495,7 +505,7 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job, _ jobs.Reporter) 
 	if err := s.videos.UpdateProbe(ctx, upd); err != nil {
 		return err
 	}
-	s.reconcileGroups(ctx)
+	s.maintainSeriesMembers(ctx)
 	s.bus.Publish(events.Event{Type: events.VideoImported, Data: map[string]string{"video_id": v.ID}})
 	return nil
 }
@@ -515,63 +525,185 @@ func (s *Service) handleThumbnail(ctx context.Context, j jobs.Job, _ jobs.Report
 	return nil
 }
 
+// SourceStatus describes whether a video's source file is still findable.
+type SourceStatus struct {
+	Status string `json:"status"` // ok | moved | missing
+	Path   string `json:"path,omitempty"`
+}
+
+// CheckVideo inspects a single video's source file (single-episode detail
+// check): it first stats the recorded path, and when the path is gone it walks
+// the owning media source looking for the file by file_id — a match means the
+// file was renamed/moved (syncable), no match means it is gone.
+func (s *Service) CheckVideo(ctx context.Context, videoID string) (SourceStatus, error) {
+	v, err := s.videos.Get(ctx, videoID)
+	if err != nil {
+		return SourceStatus{}, err
+	}
+	if _, err := os.Stat(v.Path); err == nil {
+		return SourceStatus{Status: "ok"}, nil
+	}
+	if v.SourceID == "" {
+		return SourceStatus{Status: "missing"}, nil
+	}
+	src, err := s.sources.Get(ctx, v.SourceID)
+	if err != nil {
+		return SourceStatus{Status: "missing"}, nil
+	}
+	cands, err := s.collect(src.Path, nil)
+	if err != nil {
+		return SourceStatus{Status: "missing"}, nil
+	}
+	for _, c := range cands {
+		if c.fileID == v.FileID {
+			return SourceStatus{Status: "moved", Path: c.path}, nil
+		}
+	}
+	return SourceStatus{Status: "missing"}, nil
+}
+
+// ErrVideoMissing reports that a video's source file could not be found
+// anywhere in its media source.
+var ErrVideoMissing = errors.New("video source file not found")
+
+// SyncVideo re-locates a single video's source file by file_id inside its media
+// source (handles a rename/move) and then converges its series membership. It
+// returns ErrVideoMissing when the file is gone.
+func (s *Service) SyncVideo(ctx context.Context, videoID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, err := s.videos.Get(ctx, videoID)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(v.Path); err == nil {
+		s.maintainSeriesMembers(ctx)
+		return nil
+	}
+	if v.SourceID == "" {
+		return ErrVideoMissing
+	}
+	src, err := s.sources.Get(ctx, v.SourceID)
+	if err != nil {
+		return err
+	}
+	cands, err := s.collect(src.Path, nil)
+	if err != nil {
+		return err
+	}
+	for _, c := range cands {
+		if c.fileID != v.FileID {
+			continue
+		}
+		now := s.now().UTC().Format(domain.TimeLayout)
+		if err := s.videos.UpdateFingerprint(ctx, v.ID, src.ID, c.path, c.rel, c.size, c.mtime, now); err != nil {
+			return err
+		}
+		s.processInline(ctx, v.ID, nil)
+		s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": v.ID}})
+		if err := s.maintainSeriesMembers(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
+	return ErrVideoMissing
+}
+
+// SeriesCheck describes how a series' folder compares to its database members.
+type SeriesCheck struct {
+	RootExists bool     `json:"root_exists"`
+	OutOfSync  bool     `json:"out_of_sync"`
+	Missing    []string `json:"missing,omitempty"` // 磁盘上已消失的成员（相对路径）
+	New        []string `json:"new,omitempty"`     // 文件夹里尚未入库的文件（相对路径）
+}
+
+// CheckSeries compares a series' root folder against its database members
+// (series detail check): root existence, members still on disk, and any new
+// files that have not been indexed yet.
+func (s *Service) CheckSeries(ctx context.Context, seriesID string) (SeriesCheck, error) {
+	check := SeriesCheck{RootExists: true}
+	se, err := s.series.Get(ctx, seriesID)
+	if err != nil {
+		return check, err
+	}
+	if se.RootPath == "" {
+		check.OutOfSync = true
+		check.RootExists = false
+		return check, nil
+	}
+	if _, err := os.Stat(se.RootPath); err != nil {
+		check.RootExists = false
+		check.OutOfSync = true
+		check.Missing = append(check.Missing, "系列根目录已不存在")
+		return check, nil
+	}
+	members, err := s.series.GetMembers(ctx, seriesID)
+	if err != nil {
+		return check, err
+	}
+	// 成员的 relative_path 基准不固定（标记入库=文件名；扫描入库=相对媒体源
+	// 根的完整路径）。成员必是系列根目录直接子文件，因此用文件名（Base）作磁盘
+	// 对比键，两边一致。
+	onDisk := map[string]bool{}
+	for _, m := range members {
+		name := filepath.Base(m.RelativePath)
+		abs := filepath.Join(se.RootPath, name)
+		if _, err := os.Stat(abs); err != nil {
+			check.Missing = append(check.Missing, name)
+		}
+		onDisk[name] = true
+	}
+	cands, err := s.collectDirectChildren(se.RootPath)
+	if err != nil {
+		return check, err
+	}
+	for _, c := range cands {
+		if !onDisk[c.rel] {
+			check.New = append(check.New, c.rel)
+		}
+	}
+	check.OutOfSync = len(check.Missing) > 0 || len(check.New) > 0
+	return check, nil
+}
+
+// SyncSeries re-runs the manual "add series" logic for an existing series: it
+// imports new direct children, binds them in file-name order, removes vanished
+// members, and prunes empty series (series-level sync).
+func (s *Service) SyncSeries(ctx context.Context, seriesID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	se, err := s.series.Get(ctx, seriesID)
+	if err != nil {
+		return err
+	}
+	if se.RootPath == "" {
+		return errors.New("series has no root path")
+	}
+	if _, err := os.Stat(se.RootPath); err != nil {
+		return fmt.Errorf("系列根目录不存在: %w", err)
+	}
+	srcID, ok := s.containingSource(ctx, se.RootPath)
+	if !ok {
+		return errors.New("系列根目录不在任何媒体源内")
+	}
+	cands, err := s.collectDirectChildren(se.RootPath)
+	if err != nil {
+		return err
+	}
+	ids, err := s.importCandidates(ctx, cands, srcID, nil)
+	if err != nil {
+		return err
+	}
+	_, err = s.syncSeriesFolder(ctx, se.RootPath, cands, ids, false)
+	return err
+}
+
 type candidate struct {
 	path   string
 	rel    string
 	fileID string
 	size   int64
 	mtime  int64
-}
-
-// collect walks a source root for video candidates. Directories that are the
-// root of a descendant source are skipped whole (routing table), as are Windows
-// hidden/system entries — mirroring what the file browser shows.
-func (s *Service) collect(root string, skipSet map[string]bool) ([]candidate, error) {
-	var out []candidate
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		if skipSet[path] {
-			return filepath.SkipDir
-		}
-		if d.IsDir() {
-			if info, ierr := d.Info(); ierr == nil && files.IsHiddenOrSystem(info) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !files.IsVideo(d.Name()) {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		if files.IsHiddenOrSystem(info) {
-			return nil
-		}
-		fid, err := files.FileID(path)
-		if err != nil {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		out = append(out, candidate{
-			path:   path,
-			rel:    filepath.ToSlash(rel),
-			fileID: fmt.Sprintf("%d", fid),
-			size:   info.Size(),
-			mtime:  info.ModTime().UnixMilli(),
-		})
-		return nil
-	})
-	return out, err
 }
 
 func titleFromPath(rel string) string {

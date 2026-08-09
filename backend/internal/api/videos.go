@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/streaming"
 )
 
@@ -74,13 +75,44 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("find video series", "video_id", v.ID, "err", err)
 		}
 	}
+	// 单集详情按需检查源文件：路径在 → ok；路径不在但能在媒体源内按 file_id
+	// 找到（改名/移动）→ moved（可同步）；找不到 → missing（可移除）。
+	status, checkErr := s.scanner.CheckVideo(r.Context(), v.ID)
+	sourceStatus := "ok"
+	if checkErr == nil {
+		sourceStatus = status.Status
+	} else {
+		slog.Warn("check video source", "video_id", v.ID, "err", checkErr)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"video":           v,
 		"tags":            tags,
 		"series_id":       seriesID,
 		"direct_playable": s.streaming.DirectPlayable(*v),
 		"hls_enabled":     s.streaming.HLSEnabled(*v),
+		"source_status":   sourceStatus,
+		"new_path":        status.Path,
 	})
+}
+
+// handleVideoSync re-locates a video's source file by file_id in its media
+// source (rename/move) and converges its series membership. A file that cannot
+// be found returns 404 so the UI can offer removing the record.
+func (s *Server) handleVideoSync(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.videoOrError(w, r, id); !ok {
+		return
+	}
+	if err := s.scanner.SyncVideo(r.Context(), id); err != nil {
+		if errors.Is(err, scanner.ErrVideoMissing) {
+			writeError(w, http.StatusNotFound, "not_found", "源文件不存在，请移除该单集")
+			return
+		}
+		slog.Error("sync video", "video_id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "同步失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"synced": true})
 }
 
 // streamOrError resolves the video for any source-dependent streaming work.

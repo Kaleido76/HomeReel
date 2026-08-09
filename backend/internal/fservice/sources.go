@@ -63,8 +63,11 @@ func (s *Service) AddSource(ctx context.Context, path string) (domain.MediaSourc
 	return src, nil
 }
 
-// RemoveSource removes a source marker only; the library keeps every video it
-// already indexed until real files change.
+// MediaSource CRUD for the generic file browser. A multimedia source is a
+// lightweight, persistent marker on a directory: it never becomes a browsable
+// object and is only ever a scan unit for the video library. This service only
+// manages the marker itself; the api layer deletes the source's library rows
+// when the marker is removed (取消多媒体源 → 其下所有单集与系列从库中消失).
 func (s *Service) RemoveSource(ctx context.Context, path string) error {
 	path = normalizeSourcePath(path)
 	src, err := s.sources.GetByPath(ctx, path)

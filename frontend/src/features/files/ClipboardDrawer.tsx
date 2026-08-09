@@ -20,7 +20,7 @@ export function ClipboardDrawer({
   const ModeIcon = mode === 'cut' ? Scissors : Copy
   return (
     <div className="flex flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-neutral-100 bg-neutral-50 px-3 py-1.5">
+      <div className="flex shrink-0 items-center gap-2 border-b border-neutral-100 bg-neutral-50 px-3 py-2">
         <ModeIcon className="size-3.5 text-neutral-500" />
         <span className="text-xs font-medium text-neutral-700">
           {mode === 'cut' ? '待移动' : '待复制'} · {items.length} 项
@@ -35,11 +35,13 @@ export function ClipboardDrawer({
           <X className="size-3.5" /> 全部清除
         </button>
       </div>
-      <div className="max-h-40 overflow-y-auto">
+      {/* min-h keeps a comfortable drawer for 1-3 selections (≈5 rows), while
+          many selections scroll inside max-h. */}
+      <div className="max-h-52 min-h-40 overflow-y-auto">
         {items.map((it) => {
           const style = fileStyle(it.name)
           return (
-            <div key={it.path} className="flex items-center gap-2 border-b border-neutral-50 px-3 py-1 hover:bg-neutral-50">
+            <div key={it.path} className="flex items-center gap-2 border-b border-neutral-50 px-3 py-1.5 hover:bg-neutral-50">
               {it.is_dir ? (
                 <Folder className="size-3.5 shrink-0 text-neutral-400" />
               ) : (

@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRef, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Check, ImageUp, Pencil, Star, X } from 'lucide-react'
 import type { Video } from '../../api/videos'
 import { updateVideo, uploadVideoCover } from '../../api/videos'
-import { fetchSeries } from '../../api/series'
 
 export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTags: string[] }) {
   const queryClient = useQueryClient()
@@ -125,8 +124,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
         </div>
       </div>
 
-      <SeriesAssign video={video} save={save.mutate} />
-
       {meta.length > 0 && (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
           {video.year && (
@@ -183,73 +180,3 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
   )
 }
 
-// SeriesAssign lets a standalone video be joined into an existing series (show +
-// season) or removed from one. It PATCHes show_id / season_number /
-// episode_number, which the backend treats as the authoritative grouping source.
-function SeriesAssign({ video, save }: { video: Video; save: (patch: Parameters<typeof updateVideo>[1]) => void }) {
-  const seriesQuery = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
-  const [showId, setShowId] = useState(video.show_id ?? '')
-  const [episode, setEpisode] = useState(video.episode_number ?? 1)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    setShowId(video.show_id ?? '')
-    setEpisode(video.episode_number ?? 1)
-  }, [video.show_id, video.episode_number])
-
-  const series = seriesQuery.data?.series ?? []
-  const selected = series.find((s) => s.show_id === showId)
-
-  function apply() {
-    if (!showId) {
-      save({ show_id: '' })
-      return
-    }
-    if (!selected) return
-    setSaving(true)
-    save({ show_id: selected.show_id, season_number: selected.season_number, episode_number: episode })
-    // saving is transient; the panel refreshes from the invalidated queries
-    setTimeout(() => setSaving(false), 0)
-  }
-
-  return (
-    <div className="rounded-md border border-neutral-200 bg-neutral-50 p-2 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5">
-          <span className="shrink-0 text-neutral-500">归属系列</span>
-          <select
-            value={showId}
-            onChange={(e) => setShowId(e.target.value)}
-            className="rounded border border-neutral-300 bg-white px-2 py-1 text-sm text-neutral-700 outline-none focus:border-blue-600"
-          >
-            <option value="">未归入系列</option>
-            {series.map((s) => (
-              <option key={s.id} value={s.show_id}>
-                {s.name}（第 {s.season_number} 季）
-              </option>
-            ))}
-          </select>
-        </label>
-        {selected && (
-          <label className="flex items-center gap-1.5">
-            <span className="shrink-0 text-neutral-500">集号</span>
-            <input
-              type="number"
-              min={1}
-              value={episode}
-              onChange={(e) => setEpisode(Number(e.target.value) || 1)}
-              className="w-16 rounded border border-neutral-300 bg-white px-2 py-1 text-sm text-neutral-700 outline-none focus:border-blue-600"
-            />
-          </label>
-        )}
-        <button
-          onClick={apply}
-          disabled={saving || seriesQuery.isLoading}
-          className="rounded bg-blue-600 px-2.5 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
-        >
-          应用
-        </button>
-      </div>
-    </div>
-  )
-}

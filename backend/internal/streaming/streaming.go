@@ -272,8 +272,9 @@ func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Vide
 	return ErrNotFound
 }
 
-// RemoveCache deletes a video's HLS transcode and remuxed copy (called when the
-// video is deleted or its file changes so stale caches are never served).
+// RemoveCache deletes a video's HLS transcode, remuxed copy and generated
+// cover/thumb files (called when the video is deleted or its file changes so
+// stale caches and orphaned images are never served or left behind).
 func (s *Service) RemoveCache(videoID string) {
 	s.mu.Lock()
 	if tr, ok := s.active[videoID]; ok {
@@ -284,6 +285,11 @@ func (s *Service) RemoveCache(videoID string) {
 	_ = os.RemoveAll(filepath.Join(s.hlsDir, videoID))
 	_ = os.Remove(filepath.Join(s.remuxDir, videoID+".mp4"))
 	_ = os.Remove(filepath.Join(s.remuxDir, videoID+".mp4.tmp"))
+	covers := filepath.Join(s.dataDir, "covers")
+	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
+		_ = os.Remove(filepath.Join(covers, videoID+ext))
+	}
+	_ = os.Remove(filepath.Join(s.dataDir, "thumbs", videoID+".thumb.jpg"))
 }
 
 type transcode struct {

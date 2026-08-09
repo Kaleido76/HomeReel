@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"homereel/backend/internal/domain"
+	"homereel/backend/internal/store"
 )
 
 func mustJSON(t *testing.T, v any) string {
@@ -90,6 +94,84 @@ func TestFilesList(t *testing.T) {
 }
 
 // TestFilesRenameDelete verifies synchronous rename and permanent delete.
+// TestRemoveSourceWipesLibrary verifies that removing a media source marker
+// deletes every video it owned from the library — the whole subtree's single
+// episodes and series disappear with it, while other sources keep their rows.
+func TestRemoveSourceWipesLibrary(t *testing.T) {
+	ts, cookie, database := newTestServerDB(t, "secret")
+	cookie = loginCookie(t, ts, "secret")
+	ctx := context.Background()
+	root := t.TempDir()
+	otherRoot := filepath.Join(t.TempDir(), "other")
+	if err := os.MkdirAll(otherRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sources := store.NewSourceRepo(database)
+	if err := sources.Create(ctx, domain.MediaSource{ID: "s1", Path: root, CreatedAt: ts2026}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sources.Create(ctx, domain.MediaSource{ID: "s2", Path: otherRoot, CreatedAt: ts2026}); err != nil {
+		t.Fatal(err)
+	}
+	videos := store.NewVideoRepo(database)
+	mk := func(id, srcID, rel string) {
+		if err := videos.Create(ctx, domain.Video{
+			ID: id, SourceID: srcID, FileID: "f" + id, RelativePath: rel,
+			Path: filepath.Join(srcID, rel), Size: 1, MTime: 1, Title: titleOf(rel),
+			CreatedAt: ts2026, UpdatedAt: ts2026, LastScannedAt: ts2026,
+		}); err != nil {
+			t.Fatalf("seed video %s: %v", id, err)
+		}
+	}
+	mk("e1", "s1", "Show/Show.S01E01.mkv")
+	mk("e2", "s1", "Show/Show.S01E02.mkv")
+	mk("m1", "s2", "Other.mkv")
+
+	series := store.NewSeriesRepo(database)
+	s, err := series.CreateAtRoot(ctx, "Show", filepath.Join(root, "Show"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := series.BindMembers(ctx, s.ID, []domain.EpisodeAssign{
+		{VideoID: "e1", EpisodeNumber: 1, Title: "Show.S01E01"},
+		{VideoID: "e2", EpisodeNumber: 2, Title: "Show.S01E02"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := doJSON(t, "DELETE", ts.URL+"/api/files/sources?path="+url.QueryEscape(root), "", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("remove source = %d, want 200 (body %s)", resp.StatusCode, body)
+	}
+	var out struct {
+		Removed       bool `json:"removed"`
+		VideosRemoved int  `json:"videos_removed"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Removed || out.VideosRemoved != 2 {
+		t.Fatalf("remove source response = %+v, want removed + 2 videos", out)
+	}
+
+	all, err := videos.ListAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].ID != "m1" {
+		t.Fatalf("remaining videos = %+v, want only m1 (other source kept)", all)
+	}
+	// The emptied series disappears with its videos.
+	slist, err := series.List(ctx, domain.SeriesQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slist) != 0 {
+		t.Fatalf("series after source removal = %+v, want none", slist)
+	}
+}
+
 func TestFilesRenameDelete(t *testing.T) {
 	ts, cookie := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
@@ -116,6 +198,56 @@ func TestFilesRenameDelete(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "new.txt")); !os.IsNotExist(err) {
 		t.Fatalf("deleted file still exists: %v", err)
+	}
+}
+
+// TestFilesRenamesBatch verifies the batch rename endpoint renames every entry
+// and reports partial failures per-item (OpResult).
+func TestFilesRenamesBatch(t *testing.T) {
+	ts, cookie := newTestServer(t, "secret")
+	cookie = loginCookie(t, ts, "secret")
+
+	root := t.TempDir()
+	a := filepath.Join(root, "a.txt")
+	b := filepath.Join(root, "b.txt")
+	for _, f := range []string{a, b} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/renames",
+		mustJSON(t, map[string]any{"renames": []map[string]string{
+			{"path": a, "newName": "renamed-a.txt"},
+			{"path": b, "newName": "bad/name.txt"}, // invalid name → per-item error
+		}}), cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("batch rename status = %d, want 200 (body %s)", resp.StatusCode, body)
+	}
+	var out struct {
+		Done   int `json:"done"`
+		Errors []struct {
+			Path    string `json:"path"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("decode batch rename body: %v", err)
+	}
+	if out.Done != 1 || len(out.Errors) != 1 {
+		t.Fatalf("batch rename result = %+v, want done=1 + 1 error", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "renamed-a.txt")); err != nil {
+		t.Fatalf("renamed file missing: %v", err)
+	}
+	if _, err := os.Stat(b); err != nil {
+		t.Fatalf("invalid rename must not touch original: %v", err)
+	}
+
+	resp, body = doJSON(t, "POST", ts.URL+"/api/files/renames",
+		mustJSON(t, map[string]any{"renames": []map[string]string{}}), cookie)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty batch rename status = %d, want 400 (body %s)", resp.StatusCode, body)
 	}
 }
 

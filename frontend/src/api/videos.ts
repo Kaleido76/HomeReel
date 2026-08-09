@@ -61,13 +61,16 @@ export interface VideoQuery {
 }
 
 // VideoDetailResponse is the shape of GET /api/videos/:id: the video plus the
-// backend-computed playability flags (single source of truth, ADR-006).
+// backend-computed playability flags and the on-demand source-file status
+// (ok | moved | missing, 单集详情同步提示用).
 export interface VideoDetailResponse {
   video: Video
   tags: string[]
   series_id?: string
   direct_playable: boolean
   hls_enabled: boolean
+  source_status: 'ok' | 'moved' | 'missing'
+  new_path?: string
 }
 
 export interface HistoryEntry {
@@ -87,10 +90,6 @@ export interface VideoPatch {
   overview?: string
   studio?: string
   cast_text?: string
-  show_id?: string
-  season_number?: number
-  episode_number?: number
-  episode_title?: string
   tags?: string[]
 }
 
@@ -134,6 +133,10 @@ export function deleteVideo(id: string): Promise<{ deleted: boolean }> {
 
 export function refreshVideo(id: string): Promise<{ queued: boolean }> {
   return api<{ queued: boolean }>(`/api/videos/${id}/refresh`, { method: 'POST' })
+}
+
+export function syncVideo(id: string): Promise<{ synced: boolean }> {
+  return api<{ synced: boolean }>(`/api/videos/${id}/sync`, { method: 'POST' })
 }
 
 export function uploadVideoCover(id: string, file: File): Promise<{ cover_path: string }> {

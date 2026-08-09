@@ -60,6 +60,13 @@ export function filesRename(path: string, newName: string): Promise<{ ok: boolea
   })
 }
 
+export function filesRenames(renames: { path: string; newName: string }[]): Promise<OpResult> {
+  return api<OpResult>('/api/files/renames', {
+    method: 'POST',
+    body: JSON.stringify({ renames }),
+  })
+}
+
 export function filesDelete(paths: string[]): Promise<OpResult> {
   return api<OpResult>('/api/files/delete', {
     method: 'POST',
@@ -116,5 +123,18 @@ export function scanSource(path: string): Promise<{ job_id: string }> {
   return api<{ job_id: string }>('/api/files/sources/scan', {
     method: 'POST',
     body: JSON.stringify({ path }),
+  })
+}
+
+// Manual series marking (文件页签「标记为系列」): enqueues a background job that
+// turns a folder inside a media source into a series (direct children become
+// members). Paths outside every media source are rejected by the backend —
+// discrete resources no longer exist.
+export type ResourceKind = 'series'
+
+export function markResources(paths: string[], kind: ResourceKind): Promise<{ job_ids: string[] }> {
+  return api<{ job_ids: string[] }>('/api/files/resources', {
+    method: 'POST',
+    body: JSON.stringify({ paths, kind }),
   })
 }

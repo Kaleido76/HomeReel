@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,12 +15,15 @@ import (
 
 const ts2026 = "2026-01-01T00:00:00.000000000Z"
 
-func seedLibrary(t *testing.T, database *sql.DB) {
+// seedLibrary seeds one media source, two movies and one series (Breaking Bad,
+// two episodes). It returns the created series' show id.
+func seedLibrary(t *testing.T, database *sql.DB) string {
 	t.Helper()
 	ctx := context.Background()
+	root := t.TempDir()
 	sources := store.NewSourceRepo(database)
 	if err := sources.Create(ctx, domain.MediaSource{
-		ID: "s1", Path: t.TempDir(), CreatedAt: ts2026,
+		ID: "s1", Path: root, CreatedAt: ts2026,
 	}); err != nil {
 		t.Fatalf("seed source: %v", err)
 	}
@@ -27,7 +31,7 @@ func seedLibrary(t *testing.T, database *sql.DB) {
 	mk := func(id, rel string) domain.Video {
 		return domain.Video{
 			ID: id, SourceID: "s1", FileID: "f" + id, RelativePath: rel,
-			Path: t.TempDir() + "\\" + rel, Size: 1, MTime: 1, Title: titleOf(rel),
+			Path: root + "\\" + rel, Size: 1, MTime: 1, Title: titleOf(rel),
 			CreatedAt: ts2026, UpdatedAt: ts2026, LastScannedAt: ts2026,
 		}
 	}
@@ -39,28 +43,24 @@ func seedLibrary(t *testing.T, database *sql.DB) {
 	if err := videos.SetTags(ctx, "m1", []string{"科幻"}); err != nil {
 		t.Fatalf("seed tags: %v", err)
 	}
-	shows := store.NewShowRepo(database)
-	if err := shows.Create(ctx, domain.Show{
-		ID: "show1", Name: "Breaking Bad", MetadataSource: "manual",
-		CreatedAt: ts2026, UpdatedAt: ts2026,
-	}); err != nil {
-		t.Fatalf("seed show: %v", err)
+	for _, e := range []struct {
+		id  string
+		rel string
+	}{{"e1", "Breaking.Bad.S01E01.mkv"}, {"e2", "Breaking.Bad.S01E02.mkv"}} {
+		if err := videos.Create(ctx, mk(e.id, e.rel)); err != nil {
+			t.Fatalf("seed episode %s: %v", e.id, err)
+		}
 	}
-	episodes := []domain.EpisodeAssign{
+	series := store.NewSeriesRepo(database)
+	s, err := series.CreateAtRoot(ctx, "Breaking Bad", filepath.Join(root, "Breaking Bad"))
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	if err := series.BindMembers(ctx, s.ID, []domain.EpisodeAssign{
 		{VideoID: "e1", EpisodeNumber: 1, Title: "Ep e1"},
 		{VideoID: "e2", EpisodeNumber: 2, Title: "Ep e2"},
-	}
-	for _, e := range episodes {
-		rel := "Breaking.Bad.S01E01.mkv"
-		if e.EpisodeNumber == 2 {
-			rel = "Breaking.Bad.S01E02.mkv"
-		}
-		if err := videos.Create(ctx, mk(e.VideoID, rel)); err != nil {
-			t.Fatalf("seed episode %s: %v", e.VideoID, err)
-		}
-	}
-	if _, err := shows.AssignSeason(ctx, "Breaking Bad", 1, episodes); err != nil {
-		t.Fatalf("assign season: %v", err)
+	}); err != nil {
+		t.Fatalf("bind members: %v", err)
 	}
 	history := store.NewHistoryRepo(database)
 	if err := history.Upsert(ctx, domain.History{VideoID: "m1", User: "local", Progress: 40, UpdatedAt: "2026-01-02T00:00:00.000000000Z"}); err != nil {
@@ -69,6 +69,7 @@ func seedLibrary(t *testing.T, database *sql.DB) {
 	if err := videos.UpdateProbe(ctx, domain.Video{ID: "m1", Title: "Interstellar", Duration: 100}); err != nil {
 		t.Fatalf("seed probe: %v", err)
 	}
+	return s.ShowID
 }
 
 func titleOf(rel string) string {
@@ -83,7 +84,6 @@ func TestShowsWall(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
-
 	resp, body := doJSON(t, "GET", ts.URL+"/api/shows", "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("shows = %d, want 200 (body %s)", resp.StatusCode, body)
@@ -110,10 +110,10 @@ func TestShowsWall(t *testing.T) {
 
 func TestShowDetailAndEpisodes(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
-	seedLibrary(t, database)
+	showID := seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
-	resp, body := doJSON(t, "GET", ts.URL+"/api/shows/show1", "", cookie)
+	resp, body := doJSON(t, "GET", ts.URL+"/api/shows/"+showID, "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("show detail = %d (body %s)", resp.StatusCode, body)
 	}
@@ -133,7 +133,7 @@ func TestShowDetailAndEpisodes(t *testing.T) {
 		t.Errorf("detail = %+v", detail)
 	}
 
-	resp, body = doJSON(t, "GET", ts.URL+"/api/shows/show1/seasons/1/episodes", "", cookie)
+	resp, body = doJSON(t, "GET", ts.URL+"/api/shows/"+showID+"/seasons/1/episodes", "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("episodes = %d (body %s)", resp.StatusCode, body)
 	}

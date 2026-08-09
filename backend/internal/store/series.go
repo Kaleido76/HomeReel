@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
 	"strings"
+
+	"github.com/oklog/ulid/v2"
 
 	"homereel/backend/internal/domain"
 )
@@ -20,7 +21,7 @@ func NewSeriesRepo(database *sql.DB) domain.SeriesRepo {
 	return &seriesRepo{db: database}
 }
 
-const seriesCols = `se.id, se.show_id, s.name AS title, se.number AS season_number, se.kind,
+const seriesCols = `se.id, se.show_id, s.name AS title, se.number AS season_number, se.kind, se.root_path,
 	s.overview, s.year, s.rating, s.genre, s.poster_path, s.backdrop_path, s.metadata_source,
 	s.created_at, s.updated_at`
 
@@ -32,6 +33,7 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 		genre         sql.NullString
 		poster        sql.NullString
 		backdrop      sql.NullString
+		rootPath      sql.NullString
 		createdAt     string
 		updatedAt     string
 		memberCount   int
@@ -39,9 +41,12 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 		totalDuration sql.NullFloat64
 	)
 	if err := row.Scan(&series.ID, &series.ShowID, &series.Title, &series.SeasonNumber, &series.Kind,
-		&overview, &year, &rating, &genre, &poster, &backdrop, &series.MetadataSource,
+		&rootPath, &overview, &year, &rating, &genre, &poster, &backdrop, &series.MetadataSource,
 		&createdAt, &updatedAt, &memberCount, &linkCount, &totalDuration); err != nil {
 		return domain.Series{}, err
+	}
+	if rootPath.Valid {
+		series.RootPath = rootPath.String
 	}
 	if overview.Valid {
 		series.Overview = overview.String
@@ -70,11 +75,12 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 	return series, nil
 }
 
-// seriesDisplayName renders a series name as "标题 第 N 季". There is no
-// movie/tv structural type, so every numbered unit reads as a 季; any
-// movie/tv distinction is a tag on the videos instead.
-func seriesDisplayName(title string, number int) string {
-	return title + " 第" + strconv.Itoa(number) + "季"
+// seriesDisplayName renders the series display name as just the series title
+// (the folder name it came from). There is no season numbering on a series — a
+// series has only a name that mirrors its folder, so "第 N 季" is not appended
+// (2026-08: 不要给系列添加编号).
+func seriesDisplayName(title string, _ int) string {
+	return title
 }
 
 func (r *seriesRepo) List(ctx context.Context, q domain.SeriesQuery) ([]domain.Series, error) {
@@ -144,6 +150,97 @@ func (r *seriesRepo) Get(ctx context.Context, id string) (domain.Series, error) 
 		return domain.Series{}, domain.ErrNotFound
 	}
 	return series, err
+}
+
+// FindByRoot resolves the series bound to a root directory. Series identity is
+// the root path — this is how scans and manual marking decide membership.
+func (r *seriesRepo) FindByRoot(ctx context.Context, rootPath string) (domain.Series, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+seriesCols+`,
+			(SELECT COUNT(*) FROM videos v
+				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode') AS member_count,
+			(SELECT COUNT(*) FROM series_links sl
+				WHERE sl.series_id = se.id OR sl.linked_series_id = se.id) AS link_count,
+			COALESCE((SELECT SUM(v.duration) FROM videos v
+				WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode'), 0) AS total_duration
+		FROM seasons se JOIN shows s ON s.id = se.show_id
+		WHERE se.root_path = ?`, rootPath)
+	series, err := scanSeries(row, domain.Series{})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Series{}, domain.ErrNotFound
+	}
+	return series, err
+}
+
+// CreateAtRoot creates a dedicated show+season bound to rootPath (series name =
+// folder name, season number 1) in one transaction. Series are never merged by
+// name — every root gets its own show — so two folders with the same name stay
+// two independent series. Idempotent per root path.
+func (r *seriesRepo) CreateAtRoot(ctx context.Context, name, rootPath string) (domain.Series, error) {
+	if existing, err := r.FindByRoot(ctx, rootPath); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Series{}, err
+	}
+	now := domain.Now()
+	showID := ulid.Make().String()
+	seasonID := ulid.Make().String()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Series{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO shows (id, name, overview, year, rating, genre, poster_path,
+			backdrop_path, metadata_source, created_at, updated_at)
+		VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'manual', ?, ?)`,
+		showID, name, now, now); err != nil {
+		return domain.Series{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO seasons (id, show_id, number, name, kind, root_path)
+		VALUES (?, ?, 1, ?, 'tv', ?)`,
+		seasonID, showID, defaultSeasonName(1), rootPath); err != nil {
+		return domain.Series{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Series{}, err
+	}
+	return r.FindByRoot(ctx, rootPath)
+}
+
+// BindMembers assigns the given videos to the series in one transaction: each
+// member is set kind='episode' with its position and file-derived title and is
+// re-pointed at the series' show (detaching it from whatever series it was in).
+func (r *seriesRepo) BindMembers(ctx context.Context, seriesID string, members []domain.EpisodeAssign) error {
+	if len(members) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var showID string
+	var season int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT show_id, number FROM seasons WHERE id = ?`, seriesID).Scan(&showID, &season); err != nil {
+		return err
+	}
+	now := domain.Now()
+	for _, m := range members {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE videos SET kind = 'episode', title = ?, show_id = ?, season_number = ?,
+				episode_number = ?, episode_title = ?, updated_at = ?
+			WHERE id = ?`,
+			m.Title, showID, season, m.EpisodeNumber, nullString(m.Title), now, m.VideoID); err != nil {
+			return err
+		}
+		if err := rebuildSearchText(ctx, tx, m.VideoID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *seriesRepo) FindID(ctx context.Context, showID string, seasonNumber int) (string, error) {

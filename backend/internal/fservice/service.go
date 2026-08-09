@@ -130,6 +130,27 @@ func (s *Service) Rename(_ context.Context, path, newName string) error {
 	return os.Rename(filepath.Clean(path), filepath.Join(filepath.Dir(filepath.Clean(path)), newName))
 }
 
+// Rename describes a single in-place rename for the batch endpoint.
+type Rename struct {
+	Path    string `json:"path"`
+	NewName string `json:"newName"`
+}
+
+// RenameMany renames each entry in place, collecting per-item errors into an
+// OpResult instead of aborting on the first failure. Renames are synchronous
+// (rename is fast and not worth a background job).
+func (s *Service) RenameMany(ctx context.Context, renames []Rename) OpResult {
+	var res OpResult
+	for _, rn := range renames {
+		if err := s.Rename(ctx, rn.Path, rn.NewName); err != nil {
+			res.Errors = append(res.Errors, OpError{Path: rn.Path, Message: err.Error()})
+			continue
+		}
+		res.Done++
+	}
+	return res
+}
+
 // Delete permanently removes each path (files and directories recursively).
 // It is the caller's duty to have confirmed with the user first.
 func (s *Service) Delete(_ context.Context, paths []string) OpResult {

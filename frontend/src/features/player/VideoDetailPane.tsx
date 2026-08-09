@@ -1,20 +1,29 @@
+import { useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, Play } from 'lucide-react'
-import { fetchVideo } from '../../api/videos'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { ApiError } from '../../api/client'
+import { deleteVideo, fetchVideo, syncVideo } from '../../api/videos'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
 
 // VideoDetailPane is the single-video detail shown in the middle column. It is
-// deliberately compact: a play action, the editable metadata panel (title,
-// tags, series assignment) and a technical summary line. The heavy player lives
-// in the right-hand column (PlayerPane), which opens on play.
+// deliberately compact: a play action, the editable metadata panel and a
+// technical summary line. The heavy player lives in the right-hand column
+// (PlayerPane), which opens on play.
 //
 // playHref is resolved by the caller from the column stack: a detail opened
 // inside a series plays within the series (/series/:id/play/:videoId), a
 // standalone detail plays via /library/video/:id/play.
+//
+// The detail page also checks the source file on demand (单集详情检查): a file
+// that was renamed/moved (found by file_id) shows a sync warning; a file that
+// is gone shows a Not-Found warning with the option to remove the record (the
+// removal only deletes metadata, never the file).
 export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHref: string }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [error, setError] = useState('')
   const detail = useQuery({ queryKey: ['video', videoId], queryFn: () => fetchVideo(videoId) })
 
   if (detail.isLoading) {
@@ -35,6 +44,32 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
 
   if (!detail.data) return null
   const video = detail.data.video
+  const status = detail.data.source_status
+
+  async function doSync() {
+    setError('')
+    try {
+      await syncVideo(video.id)
+      queryClient.invalidateQueries({ queryKey: ['video', video.id] })
+      queryClient.invalidateQueries({ queryKey: ['videos'] })
+      queryClient.invalidateQueries({ queryKey: ['series'] })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '同步失败')
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm('该单集的源文件已不存在。移除将删除其已入库元数据，磁盘文件不受影响。')) return
+    setError('')
+    try {
+      await deleteVideo(video.id)
+      queryClient.invalidateQueries({ queryKey: ['videos'] })
+      queryClient.invalidateQueries({ queryKey: ['series'] })
+      navigate({ to: '/library' })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '移除失败')
+    }
+  }
 
   return (
     <div className="space-y-4 p-4 sm:p-5">
@@ -47,6 +82,33 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
           <Play className="size-4" /> 播放
         </button>
       </div>
+
+      {status === 'moved' && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm text-amber-800">
+            源文件已改名或移动（{detail.data.new_path ? `现位于 ${detail.data.new_path}` : '位置已变化'}）。
+            点击同步以更新库中的路径与归属。
+          </p>
+          <button
+            onClick={() => void doSync()}
+            className="mt-2 flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+          >
+            <RefreshCw className="size-3.5" /> 同步
+          </button>
+        </div>
+      )}
+
+      {status === 'missing' && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3">
+          <p className="text-sm text-red-700">源文件不存在（可能已被移动或删除）。</p>
+          <button
+            onClick={() => void remove()}
+            className="mt-2 flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+          >
+            <Trash2 className="size-3.5" /> 移除这个单集
+          </button>
+        </div>
+      )}
 
       <div className="rounded-md border border-neutral-200 bg-white p-4">
         <VideoMetaPanel video={video} initialTags={detail.data.tags ?? []} />
@@ -64,6 +126,8 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
           ) : null}
         </p>
       </div>
+
+      {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { api } from './client'
 export interface Series {
   id: string
   show_id: string
+  root_path?: string
   title: string
   name: string
   kind: 'tv' | 'movie'
@@ -38,10 +39,18 @@ export interface SeriesLink {
   sort_index: number
 }
 
+export interface SeriesCheck {
+  root_exists: boolean
+  out_of_sync: boolean
+  missing?: string[]
+  new?: string[]
+}
+
 export interface SeriesDetail {
   series: Series
   members: SeriesMember[]
   links: SeriesLink[]
+  check: SeriesCheck
 }
 
 export interface SeriesQuery {
@@ -63,6 +72,10 @@ export function fetchSeries(query: SeriesQuery = {}): Promise<{ series: Series[]
 
 export function fetchSeriesDetail(id: string): Promise<SeriesDetail> {
   return api<SeriesDetail>(`/api/series/${id}`)
+}
+
+export function syncSeries(id: string): Promise<{ synced: boolean }> {
+  return api<{ synced: boolean }>(`/api/series/${id}/sync`, { method: 'POST' })
 }
 
 export function fetchSeriesLinks(id: string): Promise<{ links: SeriesLink[] }> {

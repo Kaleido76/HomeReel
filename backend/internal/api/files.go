@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/events"
+	"homereel/backend/internal/files"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 )
@@ -85,7 +88,25 @@ func (s *Server) handleFilesRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleFilesDelete permanently deletes the given paths.
+// handleFilesRenames renames multiple entries in place (batch). It returns the
+// same OpResult shape as delete so partial failures surface per-item.
+func (s *Server) handleFilesRenames(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Renames []fservice.Rename `json:"renames"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if len(req.Renames) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_input", "没有需要重命名的项")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.fsvc.RenameMany(r.Context(), req.Renames))
+}
+
+// handleFilesDelete permanently deletes the given paths. Library rows whose
+// source file was just deleted are removed right away (publishing VideoDeleted),
+// so the file browser and the video library stay consistent.
 func (s *Server) handleFilesDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Paths []string `json:"paths"`
@@ -93,7 +114,30 @@ func (s *Server) handleFilesDelete(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.fsvc.Delete(r.Context(), req.Paths))
+	res := s.fsvc.Delete(r.Context(), req.Paths)
+	s.pruneVideosUnderPaths(r.Context(), req.Paths)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// pruneVideosUnderPaths removes library rows whose source file was just deleted
+// in the file browser (and is no longer on disk). Deleting a folder prunes all
+// its video rows.
+func (s *Server) pruneVideosUnderPaths(ctx context.Context, paths []string) {
+	all, err := s.videos.ListAll(ctx)
+	if err != nil {
+		return
+	}
+	for _, v := range all {
+		if !files.UnderAnyRoot(v.Path, paths) {
+			continue
+		}
+		if _, err := os.Stat(v.Path); err == nil {
+			continue
+		}
+		if err := s.videos.Delete(ctx, v.ID); err == nil {
+			s.bus.Publish(events.Event{Type: events.VideoDeleted, Data: map[string]string{"video_id": v.ID}})
+		}
+	}
 }
 
 // handleFilesPinsList returns the pinned favorite paths.
@@ -209,20 +253,37 @@ func (s *Server) handleFilesSourcesAdd(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"source": src, "job_id": jobID})
 }
 
-// handleFilesSourcesRemove removes a source marker only; the video library keeps
-// everything it already indexed.
+// handleFilesSourcesRemove removes a source marker and deletes every video it
+// owned from the library (the whole subtree's single episodes and series
+// disappear with it — VideoDeleted events clear the caches). Nested child
+// sources keep their own rows.
 func (s *Server) handleFilesSourcesRemove(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	if err := s.fsvc.RemoveSource(r.Context(), path); err != nil {
+	src, err := s.fsvc.SourceByPath(r.Context(), path)
+	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "该目录不是多媒体源")
 			return
 		}
+		slog.Error("get source", "path", path, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	ids, delErr := s.videos.DeleteBySource(r.Context(), src.ID)
+	if delErr != nil {
+		slog.Error("delete source videos", "source_id", src.ID, "err", delErr)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	if err := s.fsvc.RemoveSource(r.Context(), path); err != nil {
 		slog.Error("remove source", "path", path, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"removed": true})
+	for _, id := range ids {
+		s.bus.Publish(events.Event{Type: events.VideoDeleted, Data: map[string]string{"video_id": id}})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"removed": true, "videos_removed": len(ids)})
 }
 
 // handleFilesSourcesScan enqueues a manual re-scan of a multimedia source.

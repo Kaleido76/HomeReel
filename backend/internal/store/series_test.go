@@ -26,25 +26,19 @@ func TestSeriesListFilter(t *testing.T) {
 	ctx := context.Background()
 	seedSource(t, sources, "s1", `C:\x`)
 
-	for _, show := range []domain.Show{
-		{ID: "show1", Name: "星际穿越", Overview: "太空之旅", Genre: "科幻", Year: 2020, MetadataSource: "manual", CreatedAt: "t", UpdatedAt: "t"},
-		{ID: "show2", Name: "爱情公寓", Overview: "都市日常", Genre: "喜剧", Year: 2015, MetadataSource: "manual", CreatedAt: "t", UpdatedAt: "t"},
-	} {
-		if err := shows.Create(ctx, show); err != nil {
-			t.Fatalf("create show: %v", err)
+	// Each series is a show+season bound to its own root path; two roots with
+	// the same name stay two independent series.
+	mk := func(id, name, root, tag, overview string, genre string, year int) domain.Series {
+		s, err := series.CreateAtRoot(ctx, name, root)
+		if err != nil {
+			t.Fatalf("create series: %v", err)
 		}
-	}
-	for _, season := range []struct {
-		show string
-		num  int
-	}{
-		{"show1", 1}, {"show1", 2}, {"show2", 1},
-	} {
-		if _, err := shows.EnsureSeason(ctx, season.show, season.num); err != nil {
-			t.Fatalf("ensure season: %v", err)
+		if err := shows.UpdateMetadata(ctx, domain.Show{
+			ID: s.ShowID, Name: name, Overview: overview, Genre: genre, Year: year,
+			MetadataSource: "manual", CreatedAt: "t", UpdatedAt: "t",
+		}); err != nil {
+			t.Fatalf("update show metadata: %v", err)
 		}
-	}
-	ep := func(id, show string, season int, tag string) {
 		v := domain.Video{
 			ID: id, SourceID: "s1", FileID: id, RelativePath: id + ".mp4", Path: "p",
 			Size: 1, MTime: 1, Title: id,
@@ -53,18 +47,21 @@ func TestSeriesListFilter(t *testing.T) {
 		if err := videos.Create(ctx, v); err != nil {
 			t.Fatalf("create video: %v", err)
 		}
-		showName := map[string]string{"show1": "星际穿越", "show2": "爱情公寓"}[show]
-		if _, err := shows.AssignSeason(ctx, showName, season,
+		if err := series.BindMembers(ctx, s.ID,
 			[]domain.EpisodeAssign{{VideoID: id, EpisodeNumber: 1, Title: id + ".mp4"}}); err != nil {
-			t.Fatalf("assign: %v", err)
+			t.Fatalf("bind member: %v", err)
 		}
 		if err := videos.SetTags(ctx, id, []string{tag}); err != nil {
 			t.Fatalf("set tags: %v", err)
 		}
+		return s
 	}
-	ep("e1", "show1", 1, "科幻")
-	ep("e2", "show1", 2, "科幻")
-	ep("e3", "show2", 1, "喜剧")
+	s1 := mk("e1", "星际穿越", `C:\x\inter1`, "科幻", "太空之旅", "科幻", 2020)
+	s2 := mk("e2", "星际穿越", `C:\x\inter2`, "科幻", "太空之旅", "科幻", 2020)
+	mk("e3", "爱情公寓", `C:\x\apt`, "喜剧", "都市日常", "喜剧", 2015)
+	if s1.ID == s2.ID {
+		t.Fatalf("two same-named series must be independent, got %s", s1.ID)
+	}
 
 	all, err := series.List(ctx, domain.SeriesQuery{})
 	if err != nil {

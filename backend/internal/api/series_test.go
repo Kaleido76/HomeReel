@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,48 +18,59 @@ import (
 func seedSeries(t *testing.T, database *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
+	root := t.TempDir()
 	sources := store.NewSourceRepo(database)
 	if err := sources.Create(ctx, domain.MediaSource{
-		ID: "s1", Path: t.TempDir(), CreatedAt: ts2026,
+		ID: "s1", Path: root, CreatedAt: ts2026,
 	}); err != nil {
 		t.Fatalf("seed source: %v", err)
 	}
 	videos := store.NewVideoRepo(database)
-	shows := store.NewShowRepo(database)
 	series := store.NewSeriesRepo(database)
-
-	for _, show := range []domain.Show{
-		{ID: "show1", Name: "Breaking Bad", MetadataSource: "manual", CreatedAt: ts2026, UpdatedAt: ts2026},
-		{ID: "show2", Name: "Better Call Saul", MetadataSource: "manual", CreatedAt: ts2026, UpdatedAt: ts2026},
-	} {
-		if err := shows.Create(ctx, show); err != nil {
-			t.Fatalf("seed show: %v", err)
-		}
-	}
-	for _, ep := range []struct {
-		id, show string
-		season   int
-		rel      string
-	}{
-		{"e1", "show1", 1, "Breaking.Bad.S01E01.mkv"},
-		{"e2", "show1", 2, "Breaking.Bad.S02E01.mkv"},
-		{"e3", "show2", 1, "Better.Call.Saul.S01E01.mkv"},
-	} {
+	mk := func(id, rel string) {
 		if err := videos.Create(ctx, domain.Video{
-			ID: ep.id, SourceID: "s1", FileID: "f" + ep.id, RelativePath: ep.rel,
-			Path: t.TempDir() + "\\" + ep.rel, Title: titleOf(ep.rel),
+			ID: id, SourceID: "s1", FileID: "f" + id, RelativePath: rel,
+			Path: root + "\\" + rel, Title: titleOf(rel),
 			CreatedAt: ts2026, UpdatedAt: ts2026, LastScannedAt: ts2026,
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := shows.AssignSeason(ctx, map[string]string{"show1": "Breaking Bad", "show2": "Better Call Saul"}[ep.show],
-			ep.season, []domain.EpisodeAssign{{VideoID: ep.id, EpisodeNumber: 1, Title: ep.rel}}); err != nil {
+	}
+	mk("e1", "Breaking.Bad.S01E01.mkv")
+	mk("e2", "Breaking.Bad.S02E01.mkv")
+	mk("e3", "Better.Call.Saul.S01E01.mkv")
+
+	// 三个独立系列（每个根目录一个 show）：同名目录也是独立系列。
+	bcRoot := filepath.Join(root, "Better Call Saul")
+	bbARoot := filepath.Join(root, "Breaking Bad A")
+	bbBRoot := filepath.Join(root, "Breaking Bad B")
+	for _, d := range []string{bcRoot, bbARoot, bbBRoot} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := series.SyncShowLinks(ctx, "show1"); err != nil {
+	bc := mustSeries(t, series, ctx, "Better Call Saul", bcRoot)
+	bb1 := mustSeries(t, series, ctx, "Breaking Bad", bbARoot)
+	bb2 := mustSeries(t, series, ctx, "Breaking Bad", bbBRoot)
+	if err := series.BindMembers(ctx, bc.ID, []domain.EpisodeAssign{{VideoID: "e3", EpisodeNumber: 1, Title: "e3"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := series.BindMembers(ctx, bb1.ID, []domain.EpisodeAssign{{VideoID: "e1", EpisodeNumber: 1, Title: "e1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := series.BindMembers(ctx, bb2.ID, []domain.EpisodeAssign{{VideoID: "e2", EpisodeNumber: 1, Title: "e2"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = bb2
+}
+
+func mustSeries(t *testing.T, series domain.SeriesRepo, ctx context.Context, name, root string) domain.Series {
+	t.Helper()
+	s, err := series.CreateAtRoot(ctx, name, root)
+	if err != nil {
+		t.Fatalf("create series %s: %v", name, err)
+	}
+	return s
 }
 
 func TestSeriesListAndDetail(t *testing.T) {
@@ -85,15 +98,16 @@ func TestSeriesListAndDetail(t *testing.T) {
 	if len(out.Series) != 3 {
 		t.Fatalf("series = %d, want 3", len(out.Series))
 	}
-	// Series are ordered by show name then season number.
+	// Series are ordered by show name then season number; same-named roots are
+	// independent series (no merged show).
 	if out.Series[0].Title != "Better Call Saul" || out.Series[0].MemberCount != 1 {
 		t.Errorf("series[0] = %+v", out.Series[0])
 	}
-	if out.Series[2].Title != "Breaking Bad" || out.Series[2].SeasonNumber != 2 {
-		t.Errorf("series[2] = %+v", out.Series[2])
+	if out.Series[1].Title != "Breaking Bad" || out.Series[1].SeasonNumber != 1 {
+		t.Errorf("series[1] = %+v", out.Series[1])
 	}
 
-	// Detail includes members and the auto link to season 2.
+	// Detail includes members and the on-demand disk check.
 	resp, body = doJSON(t, "GET", ts.URL+"/api/series/"+out.Series[1].ID, "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("series detail = %d (body %s)", resp.StatusCode, body)
@@ -105,9 +119,9 @@ func TestSeriesListAndDetail(t *testing.T) {
 		Members []struct {
 			VideoID string `json:"video_id"`
 		} `json:"members"`
-		Links []struct {
-			LinkedID string `json:"linked_id"`
-		} `json:"links"`
+		Check struct {
+			RootExists bool `json:"root_exists"`
+		} `json:"check"`
 	}
 	if err := json.Unmarshal([]byte(body), &detail); err != nil {
 		t.Fatal(err)
@@ -115,8 +129,8 @@ func TestSeriesListAndDetail(t *testing.T) {
 	if len(detail.Members) != 1 {
 		t.Errorf("members = %d, want 1", len(detail.Members))
 	}
-	if len(detail.Links) != 1 || detail.Links[0].LinkedID != out.Series[2].ID {
-		t.Errorf("links = %+v", detail.Links)
+	if !detail.Check.RootExists {
+		t.Errorf("seeded root folder should exist on disk")
 	}
 }
 
@@ -132,9 +146,10 @@ func TestSeriesListFilter(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Breaking Bad") || strings.Contains(body, "Better Call Saul") {
 		t.Fatalf("series q = %d %s", resp.StatusCode, body)
 	}
-	// Only season 1 of Breaking Bad carries the tagged episode e1.
+	// Only season 1 of Breaking Bad carries the tagged episode e1; the series
+	// display name is just the title (no "第 N 季" suffix).
 	resp, body = doJSON(t, "GET", ts.URL+"/api/series?tag="+url.QueryEscape("犯罪"), "", cookie)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "第1季") || strings.Contains(body, "第2季") || strings.Contains(body, "Better Call Saul") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Breaking Bad") || strings.Contains(body, "Better Call Saul") || strings.Contains(body, "第") {
 		t.Fatalf("series tag = %d %s", resp.StatusCode, body)
 	}
 }

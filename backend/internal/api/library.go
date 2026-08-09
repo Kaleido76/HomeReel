@@ -32,29 +32,21 @@ func (s *Server) handleVideoPatch(w http.ResponseWriter, r *http.Request) {
 		Overview      *string   `json:"overview"`
 		Studio        *string   `json:"studio"`
 		CastText      *string   `json:"cast_text"`
-		ShowID        *string   `json:"show_id"`
-		SeasonNumber  *int      `json:"season_number"`
-		EpisodeNumber *int      `json:"episode_number"`
-		EpisodeTitle  *string   `json:"episode_title"`
 		Tags          *[]string `json:"tags"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
 	patch := domain.VideoPatch{
-		Title:         body.Title,
-		Description:   body.Description,
-		Kind:          body.Kind,
-		Year:          body.Year,
-		Rating:        body.Rating,
-		Genre:         body.Genre,
-		Overview:      body.Overview,
-		Studio:        body.Studio,
-		CastText:      body.CastText,
-		ShowID:        body.ShowID,
-		SeasonNumber:  body.SeasonNumber,
-		EpisodeNumber: body.EpisodeNumber,
-		EpisodeTitle:  body.EpisodeTitle,
+		Title:        body.Title,
+		Description:  body.Description,
+		Kind:         body.Kind,
+		Year:         body.Year,
+		Rating:       body.Rating,
+		Genre:        body.Genre,
+		Overview:     body.Overview,
+		Studio:       body.Studio,
+		CastText:     body.CastText,
 	}
 	if err := s.videos.UpdateMetadata(r.Context(), id, patch); err != nil {
 		slog.Error("update video metadata", "video_id", id, "err", err)

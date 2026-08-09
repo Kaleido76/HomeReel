@@ -9,7 +9,7 @@ import (
 	"homereel/backend/internal/search"
 )
 
-func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.HistoryRepo) {
+func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.SeriesRepo, domain.HistoryRepo) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -20,7 +20,7 @@ func newPhase3Store(t *testing.T) (domain.VideoRepo, domain.ShowRepo, domain.His
 		t.Fatalf("migrate: %v", err)
 	}
 	seedSource(t, NewSourceRepo(database), "s1", `C:\Videos`)
-	return NewVideoRepo(database), NewShowRepo(database), NewHistoryRepo(database)
+	return NewVideoRepo(database), NewShowRepo(database), NewSeriesRepo(database), NewHistoryRepo(database)
 }
 
 func mkVideo(id, title string) domain.Video {
@@ -33,7 +33,7 @@ func mkVideo(id, title string) domain.Video {
 }
 
 func TestEpisodeGroupingAndSearch(t *testing.T) {
-	videos, shows, _ := newPhase3Store(t)
+	videos, shows, seriesRepo, _ := newPhase3Store(t)
 	ctx := context.Background()
 
 	if err := videos.Create(ctx, mkVideo("e1", "GoT.S01E01")); err != nil {
@@ -46,12 +46,15 @@ func TestEpisodeGroupingAndSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Group both episodes under one show/season atomically.
-	showID, err := shows.AssignSeason(ctx, "Game of Thrones", 1, []domain.EpisodeAssign{
+	// Create a series bound to a root folder, then bind both episodes.
+	s, err := seriesRepo.CreateAtRoot(ctx, "Game of Thrones", `C:\Videos\GoT`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.BindMembers(ctx, s.ID, []domain.EpisodeAssign{
 		{VideoID: "e1", EpisodeNumber: 1, Title: "Winter Is Coming"},
 		{VideoID: "e2", EpisodeNumber: 2, Title: "The Kingsroad"},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,16 +68,13 @@ func TestEpisodeGroupingAndSearch(t *testing.T) {
 	}
 
 	// Show derived counts: 2 episodes, 1 season, 2 unwatched.
-	show, err := shows.Get(ctx, showID)
+	show, err := shows.Get(ctx, s.ShowID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if show.EpisodeCount != 2 || show.SeasonCount != 1 || show.UnwatchedCount != 2 {
 		t.Errorf("show counts wrong: %+v", show)
 	}
-
-	// FTS search hits the show name via an episode's search_text (covered in
-	// TestFTS5SearchIntegration).
 
 	// Verify movie kind.
 	m1, err := videos.Get(ctx, "m1")
@@ -87,7 +87,7 @@ func TestEpisodeGroupingAndSearch(t *testing.T) {
 }
 
 func TestTagsContinueWatching(t *testing.T) {
-	videos, _, history := newPhase3Store(t)
+	videos, _, _, history := newPhase3Store(t)
 	ctx := context.Background()
 
 	if err := videos.Create(ctx, mkVideo("v1", "Movie A")); err != nil {
@@ -147,7 +147,7 @@ func TestFTS5SearchIntegration(t *testing.T) {
 	}
 	ctx := context.Background()
 	videos := NewVideoRepo(database)
-	shows := NewShowRepo(database)
+	seriesRepo := NewSeriesRepo(database)
 	seedSource(t, NewSourceRepo(database), "s1", `C:\Videos`)
 	if err := videos.Create(ctx, mkVideo("a", "Interstellar")); err != nil {
 		t.Fatal(err)
@@ -158,7 +158,11 @@ func TestFTS5SearchIntegration(t *testing.T) {
 	if err := videos.Create(ctx, mkVideo("c", "Movie C")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := shows.AssignSeason(ctx, "The Dark Knight", 1,
+	s, err := seriesRepo.CreateAtRoot(ctx, "The Dark Knight", `C:\Videos\DarkKnight`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.BindMembers(ctx, s.ID,
 		[]domain.EpisodeAssign{{VideoID: "c", EpisodeNumber: 1, Title: "Episode One"}}); err != nil {
 		t.Fatal(err)
 	}

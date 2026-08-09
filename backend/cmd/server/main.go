@@ -81,7 +81,7 @@ func run() error {
 	)
 	// Generic machine-wide file browser (文件 tab): absolute-path listing,
 	// clipboard-style copy/move behind its own background jobs, and the
-	// multimedia-source markers that feed the video library.
+	// multimedia-source + manual-resource markers that feed the video library.
 	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo)
 
 	// VideoImported → enqueue thumbnail generation (ADR-010, ADR-012).

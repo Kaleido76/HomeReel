@@ -19,30 +19,34 @@
 - `db.go` migrations 数组尾部追加；一条迁移可含多语句。
 - `splitStatements` 感知字符串字面量与 `BEGIN…END` 块（触发器内分号不会误切分）。
 
-## 4. 剧集/系列组织
+## 4. 单集 / 系列组织（2026-08 管理面定稿）
 
-- 库 = 单集（`show_id IS NULL`）+ 系列（`seasons` 行，一季一个，`kind` 恒 `tv`），成员按
-  `(season_number, episode_number)` 位次排序；缺失编号不显示占位（前端只列实际成员）。**无电影/tv
-  结构类型**，任何区分走标签。
-- 分组分两阶段（`scanner`）：先全部以单集入库并记住含 ≥2 视频的目录，再对这类目录做**严格**判定
-  `classifyDir`——**系列 ↔ 物理目录严格对应**：目录内**每个视频**都必须匹配同一模式才成系列，任一不匹配
-  的视频对象（特典/无关文件）使整个目录不归组；非多媒体文件（字幕、nfo、封面）不参与判定：
-  - 编号系列：**全部视频标题键一致**（`titleKeyOf` 去 SxxEyy/第x集/Part N/质量标签/年份/尾部数字，无标题
-    时回退父目录名）+ 每文件有数值标记（`scanner.ParseEpisode`/`ParseMoviePart` 统一取 `(season, episode)`）；
-    `Season N` 目录即系列关系（季号取目录、剧名取上级目录）。
-  - 未编号系列：共享以分隔符结尾的较长公共前缀、每文件后缀互不相同（如「XX冒险记：北京/上海」），
-    排序号按文件名序 1..N。
-  - 任一视频不匹配 → 该目录不自动分组（宁漏不误）。
-- **只增不拆**：自动分组仅归组、绝不拆散既有分组（为手动归组预留）；`reconcileGroups` 在扫描剪除缺失后
-  统一执行，分配走 `shows.AssignSeason`（创建 show+season+全员单事务），已归组数据跳过不重写。
-- `series_links` 无名称、`sort_index` 排序，同 show 相邻季 `SyncShowLinks` 自动关联，
-  `/api/series/{id}/links` 手动增删。
-- `videos_bd` 触发器删光某 show 最后一集时删空 show；删空 season 由扫描/后续兜底。
+**管理面定稿**：单集是唯一基本实体（必须归属媒体源）；系列是用户显式创建的管理容器，绑定根目录
+（`seasons.root_path`），成员 = 根目录**直接一级子文件**（不得嵌套），系列名 = 文件夹名（无季号），成员
+标题 = 文件名。**系列只能手动创建**；自动扫描不建不删不改名系列定义，只维护既有系列成员关系。归属判定以
+「路径 + FileID」为唯一事实源。
+
+- **扫描（媒体源级）**：先同步文件（新增 / 未变 Touch / 变更 UpdateFingerprint+probe / file_id 移动改路径 /
+  `MarkMissingBySource` 删消失行），再 `maintainSeriesMembers` 收敛成员关系（根目录直接子文件 → `BindMembers`
+  文件名序 1..N；移出根目录 → `AssignStandalone` 脱离；空系列 `pruneEmptyShows` 清理）。
+- **手动添加系列（文件夹级，`markSeries`）**：路径须在媒体源内（否则拒绝）；不得位于/包含既有系列（防
+  嵌套）；对根目录直接一级子文件 `importCandidates` + `syncSeriesFolder`（`FindByRoot`/`CreateAtRoot` 幂等
+  绑定 + `pruneVanishedMembers` 刷新消失成员 + 空系列清理）。
+- **详情页按需检查**：单集 `CheckVideo`（ok | moved | missing）+ `SyncVideo`（按 file_id 定位改名/移动）；
+  系列 `CheckSeries`（根目录存在性 + 成员存在性 + 新文件）+ `SyncSeries`（对根目录执行一次与标记相同的局部
+  同步）。
+- **单写权**：scan / mark / probe / sync 经 `scanner` 互斥锁串行；同步 API 短写由 SQLite 单连接 +
+  busy_timeout 保证。
+- **覆盖规则**：路径 / 归属 / 文件名字段同步时一律覆盖为磁盘现状；标题 / 描述 / 标签等手动编辑字段保留。
+- `series_links` 无名称、`sort_index` 排序，手动增删（`/api/series/{id}/links`）。
+- `videos_bd` 触发器删光某 show 最后一集时删空 show；空系列由 `pruneEmptyShows` 兜底。
+- 数据结构：`seasons.root_path` 唯一（NULL 除外）；`manual_resources` / `videos.resource_id` 已移除
+  （离散概念清除）。
 
 ## 5. FTS5（search_text）
 
 - `videos_fts` external content + `ai/ad/au` 触发器，bm25 排序，`search_text` 由 store 层维护。
-- 写入侧统一 `rebuildSearchText`（Create/UpdateProbe/UpdateMetadata/AssignEpisode/AssignMovie/SetTags/show 改名）。
+- 写入侧统一 `rebuildSearchText`（Create/UpdateProbe/UpdateMetadata/BindMembers/SetTags/show 改名）。
 - **新增影响搜索内容的写路径都要重建**。
 
 ## 6. 封面
@@ -75,10 +79,10 @@
 - **扫描 = 串行内联**：`ScanSource(ctx, src)`；内部 `scan(ctx, src, progress(done,total), subtask)`。
   每个待处理文件在**主循环内串行**执行「探测 → 生成缩略图」（新增文件在探测后**单条 INSERT 全量元数据**，
   原子；变更文件走 UpdateProbe 单条 UPDATE），并逐文件上报子任务「探测 X」「生成 X 的缩略图」。
-  扫描结束对 `toGroup` 做**按 show 的原子归组**（`shows.AssignSeason` 单事务建 show/季 + 分配全部成员；
-  无归属单集走 `videos.AssignStandalone` 单条 UPDATE）。内联路径不发布 `VideoImported`
-  （避免监听器重复生成缩略图）；手动 refresh 仍走队列 + 监听器。代价：首次全量扫描明显变慢
-  （串行避免并行 ffmpeg 抢占卡顿），增量扫描仅处理变更文件。
+  扫描结束执行 `maintainSeriesMembers`（对既有系列维护成员关系，不创建系列）；内联路径不发布
+  `VideoImported`（避免监听器重复生成缩略图）。手动 refresh 仍走队列 + 监听器。代价：首次全量扫描明显
+  变慢（串行避免并行 ffmpeg 抢占卡顿），增量扫描仅处理变更文件。库写长任务（scan/mark/probe/sync）经
+  `scanner` 互斥锁串行（单写权）。
 - **生命周期通知**：`Worker.SetNotify` 在任务落库后回调 `(job, err)`，`main.go` 据此发布
   `events.JobDone` / `events.JobFailed`（ADR-010 事件总线）。
 - **多媒体源路由表**：扫描父源时遇到子源（`files.UnderRoot(o.Path, src.Path)` 且非自身）根目录
@@ -98,9 +102,11 @@
   列表，非名称过滤；junction 取其自身属性而非目标；再 Stat 取目录/尺寸/时间）；`/api/files/rename|delete`
    （同步）；`/api/files/copy|move`（**入 jobs** `fscopy`/`fsmove`，后台任务带字节进度，跨卷 move 自动
    copy+delete，复制跳过符号链接/junction 防环路）；`/api/files/pins`（增删查，settings 键 `files.pins`）。
- - **多媒体源**（`media_sources` 表，见 plan §5.2/6.2）：`/api/files/sources`（GET 列表，附每源
-   `available`=根可达性、`scanning`=有无进行中 scan_source 任务）、`POST`（标记 + 入队 `scan_source`
-   Job）、`DELETE`（仅移除标记，**不删库**）、`/api/files/sources/scan`（手动重扫）。源路径在
-  `fservice.sources.go` 做规范化（`filepath.Clean`，盘符根保留尾分隔符）以便路由前缀比较。
+  - **多媒体源**（`media_sources` 表，见 plan §5.2/6.2）：`/api/files/sources`（GET 列表，附每源
+    `available`=根可达性、`scanning`=有无进行中 scan_source 任务）、`POST`（标记 + 入队 `scan_source`
+    Job）、`DELETE`（取消标记：**先按源删除其下全部视频** `videos.DeleteBySource`，逐视频发布
+    `VideoDeleted` 清缓存，再删标记——该源的单集与系列随之全部从库中消失；`videos_bd` 触发器随最后成员
+    清空系列；磁盘文件不受影响）、`/api/files/sources/scan`（手动重扫）。源路径在
+    `fservice.sources.go` 做规范化（`filepath.Clean`，盘符根保留尾分隔符）以便路由前缀比较。
 - worker 分发：main.go 把 `fscopy`/`fsmove` 交给 `fsvc.HandleJob`，其余（probe/thumbnail/scan_source/
   remux）交给 `scannerSvc.HandleJob`。

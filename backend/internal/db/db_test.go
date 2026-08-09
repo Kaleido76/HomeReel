@@ -23,9 +23,9 @@ func TestMigrateFresh(t *testing.T) {
 			t.Errorf("table %s missing after migration", table)
 		}
 	}
-	for _, gone := range []string{"collections", "collection_videos", "storages"} {
+	for _, gone := range []string{"collections", "collection_videos", "storages", "manual_resources"} {
 		if tableExists(t, database, gone) {
-			t.Errorf("table %s should have been dropped (collections / storages removed)", gone)
+			t.Errorf("table %s should have been dropped (collections / storages / manual resources removed)", gone)
 		}
 	}
 
@@ -38,8 +38,14 @@ func TestMigrateFresh(t *testing.T) {
 			t.Errorf("videos.%s missing after migration", col)
 		}
 	}
+	if columnExists(t, database, "videos", "resource_id") {
+		t.Errorf("videos.resource_id should have been dropped (management model change)")
+	}
 	if columnExists(t, database, "videos", "storage_id") {
 		t.Errorf("videos.storage_id should have been replaced by source_id")
+	}
+	if !columnExists(t, database, "seasons", "root_path") {
+		t.Errorf("seasons.root_path missing after migration")
 	}
 }
 
@@ -116,10 +122,10 @@ func TestMigrateUpgrade(t *testing.T) {
 	}
 }
 
-// TestMigrateClearsLibrary upgrades a pre-refactor database that already holds
-// shows/seasons/videos and asserts the multimedia-source migration (applied
-// last) wipes every library table — videos, shows, seasons and links alike.
-// This guards the ordering bug where dropping videos left orphaned shows behind.
+// TestMigrateClearsLibrary simulates a database built by every migration except
+// the final management-model change (which carries the dev-time clear), seeds
+// library rows, then applies the last migration and asserts it wipes every
+// library table and drops the discrete-resource machinery.
 func TestMigrateClearsLibrary(t *testing.T) {
 	database, err := Open(t.TempDir())
 	if err != nil {
@@ -137,6 +143,7 @@ func TestMigrateClearsLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 应用除最后一条（管理面换代清库迁移）之外的全部迁移。
 	for i := 0; i < len(migrations)-1; i++ {
 		for _, stmt := range splitStatements(migrations[i]) {
 			if _, err := tx.Exec(stmt); err != nil {
@@ -148,8 +155,10 @@ func TestMigrateClearsLibrary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO storages (id, name, type, root_path, readonly, enabled, available, created_at)
-		VALUES ('s1', 'test', 'internal', 'C:\\Videos', 0, 1, 1, '2026-01-01T00:00:00.000000000Z')`); err != nil {
+	if _, err := tx.Exec(`INSERT INTO media_sources (id, path, created_at) VALUES ('ms1', 'C:\\Videos', '2026-01-01T00:00:00.000000000Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO manual_resources (id, path, kind, created_at) VALUES ('r1', 'C:\\Videos\\Clip', 'discrete', '2026-01-01T00:00:00.000000000Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(`INSERT INTO shows (id, name, metadata_source, created_at, updated_at)
@@ -159,9 +168,9 @@ func TestMigrateClearsLibrary(t *testing.T) {
 	if _, err := tx.Exec(`INSERT INTO seasons (id, show_id, number, kind) VALUES ('sea1', 'show1', 1, 'tv')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(`INSERT INTO videos (id, storage_id, file_id, relative_path, path, size, mtime,
+	if _, err := tx.Exec(`INSERT INTO videos (id, source_id, resource_id, file_id, relative_path, path, size, mtime,
 		title, kind, created_at, updated_at, last_scanned_at)
-		VALUES ('v1', 's1', 'f1', 'Show.S01E01.mkv', 'C:\\Videos\\Show.S01E01.mkv', 1000, 100,
+		VALUES ('v1', 'ms1', 'r1', 'f1', 'Show.S01E01.mkv', 'C:\\Videos\\Show.S01E01.mkv', 1000, 100,
 		'Show', 'episode', '2026-01-01T00:00:00.000000000Z', '2026-01-01T00:00:00.000000000Z',
 		'2026-01-01T00:00:00.000000000Z')`); err != nil {
 		t.Fatal(err)
@@ -174,7 +183,8 @@ func TestMigrateClearsLibrary(t *testing.T) {
 		t.Fatalf("upgrade migrate: %v", err)
 	}
 
-	for _, table := range []string{"videos", "shows", "seasons", "series_links", "video_tags", "history", "media_sources"} {
+	// 库内容表全部清空；media_sources 是扫描单元注册表，不属于库内容，保留。
+	for _, table := range []string{"videos", "shows", "seasons", "series_links", "video_tags", "history"} {
 		var n int
 		if err := database.QueryRow(`SELECT count(*) FROM ` + table).Scan(&n); err != nil {
 			t.Fatalf("count %s: %v", table, err)
@@ -182,6 +192,12 @@ func TestMigrateClearsLibrary(t *testing.T) {
 		if n != 0 {
 			t.Errorf("%s should be empty after the clearing migration, got %d rows", table, n)
 		}
+	}
+	if tableExists(t, database, "manual_resources") {
+		t.Errorf("manual_resources should have been dropped")
+	}
+	if columnExists(t, database, "videos", "resource_id") {
+		t.Errorf("videos.resource_id should have been dropped")
 	}
 }
 

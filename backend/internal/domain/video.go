@@ -45,7 +45,9 @@ type Video struct {
 }
 
 // VideoPatch carries editable metadata fields for PATCH /api/videos/:id.
-// Nil pointers leave the corresponding column untouched.
+// Nil pointers leave the corresponding column untouched. Structure fields
+// (show/season/episode linkage) are not editable here — membership and order
+// follow the on-disk layout and are maintained by scans and manual series sync.
 type VideoPatch struct {
 	Title          *string
 	Description    *string
@@ -56,10 +58,6 @@ type VideoPatch struct {
 	Overview       *string
 	Studio         *string
 	CastText       *string
-	ShowID         *string // *"" clears the show linkage
-	SeasonNumber   *int
-	EpisodeNumber  *int
-	EpisodeTitle   *string
 	BackdropPath   *string
 	MetadataSource *string
 }
@@ -110,14 +108,19 @@ type VideoRepo interface {
 	// Delete removes a video record (FK cascades clear tags/history
 	// and the FTS/empty-show triggers run).
 	Delete(ctx context.Context, id string) error
+	// DeleteBySource removes every video owned by a media source and returns the
+	// deleted ids (for deletion events). Used when a source marker is removed:
+	// its whole library disappears with it.
+	DeleteBySource(ctx context.Context, sourceID string) ([]string, error)
 	// UpdateProbe stores ffprobe-derived metadata.
 	UpdateProbe(ctx context.Context, v Video) error
 	// UpdateCovers stores the generated cover/thumb paths.
 	UpdateCovers(ctx context.Context, id, coverPath, thumbPath string) error
 	// UpdateMetadata applies editable metadata fields and rebuilds search_text.
 	UpdateMetadata(ctx context.Context, id string, patch VideoPatch) error
-	// AssignStandalone clears the series linkage of every given video in one
-	// statement (used by the scan-end grouping pass).
+	// AssignStandalone detaches every given video from its series in a single
+	// statement (kind=movie, series linkage cleared), used when a video no
+	// longer lives inside any series folder.
 	AssignStandalone(ctx context.Context, ids []string) error
 	// SetTags replaces the tag set for a video and rebuilds search_text.
 	SetTags(ctx context.Context, id string, tags []string) error

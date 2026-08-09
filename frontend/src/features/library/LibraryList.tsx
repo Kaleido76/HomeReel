@@ -79,8 +79,8 @@ export function LibraryList({
 
   function emptyHint(): string {
     if (q || state.tags.length > 0 || state.desc || state.genre || state.year) return '没有匹配的视频或系列'
-    if (state.view === 'series') return '暂无系列。同一目录下多个相近命名的视频（如 S01E01、S01E02 或「第1部」「第2部」）会被自动归为一季/一部的系列。'
-    if (state.view === 'standalone') return '暂无单集视频。归入系列的视频会显示在「系列」中。'
+    if (state.view === 'series') return '暂无系列。系列只能手动创建：在「文件」页签对媒体源内的文件夹点「标记为系列」，其直接一级视频文件即成为系列成员。'
+    if (state.view === 'standalone') return '暂无单集视频。扫描会先以单集入库；归入系列的视频显示在「系列」中。'
     return '暂无视频。请先在「文件」页签中把存放媒体的目录标记为多媒体源并等待扫描完成。'
   }
 

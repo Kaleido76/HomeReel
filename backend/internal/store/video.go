@@ -52,6 +52,7 @@ func qualify(cols, alias string) string {
 func scanVideo(row scanner) (domain.Video, error) {
 	var (
 		v             domain.Video
+		sourceID      sql.NullString
 		duration      sql.NullFloat64
 		codec         sql.NullString
 		audioCodec    sql.NullString
@@ -75,13 +76,16 @@ func scanVideo(row scanner) (domain.Video, error) {
 		studio        sql.NullString
 		castText      sql.NullString
 	)
-	if err := row.Scan(&v.ID, &v.SourceID, &v.FileID, &v.RelativePath, &v.Path,
+	if err := row.Scan(&v.ID, &sourceID, &v.FileID, &v.RelativePath, &v.Path,
 		&v.Size, &v.MTime, &v.Title, &v.Kind, &v.Description, &duration, &codec,
 		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
 		&year, &rating, &genre, &overview, &studio, &castText, &v.MetadataSource,
 		&v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt); err != nil {
 		return domain.Video{}, err
+	}
+	if sourceID.Valid {
+		v.SourceID = sourceID.String
 	}
 	if duration.Valid {
 		v.Duration = duration.Float64
@@ -314,6 +318,36 @@ func (r *videoRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteBySource removes every video owned by a media source and returns the
+// deleted ids so callers can publish deletion events. Empty shows/seasons are
+// cleaned by the videos_bd trigger (a show dies with its last episode).
+func (r *videoRepo) DeleteBySource(ctx context.Context, sourceID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM videos WHERE source_id = ?`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		if _, err := r.db.ExecContext(ctx,
+			`DELETE FROM videos WHERE source_id = ?`, sourceID); err != nil {
+			return nil, err
+		}
+	}
+	return ids, nil
+}
+
 func (r *videoRepo) UpdateProbe(ctx context.Context, v domain.Video) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE videos SET title = ?, duration = ?, codec = ?, container = ?,
@@ -398,26 +432,6 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 		sets = append(sets, "backdrop_path = ?")
 		args = append(args, nullString(*patch.BackdropPath))
 	}
-	if patch.ShowID != nil {
-		if *patch.ShowID == "" {
-			sets = append(sets, "show_id = NULL, season_number = NULL, episode_number = NULL, episode_title = NULL")
-		} else {
-			sets = append(sets, "show_id = ?")
-			args = append(args, *patch.ShowID)
-		}
-	}
-	if patch.SeasonNumber != nil {
-		sets = append(sets, "season_number = ?")
-		args = append(args, *patch.SeasonNumber)
-	}
-	if patch.EpisodeNumber != nil {
-		sets = append(sets, "episode_number = ?")
-		args = append(args, *patch.EpisodeNumber)
-	}
-	if patch.EpisodeTitle != nil {
-		sets = append(sets, "episode_title = ?")
-		args = append(args, *patch.EpisodeTitle)
-	}
 	if patch.MetadataSource != nil {
 		sets = append(sets, "metadata_source = ?")
 		args = append(args, *patch.MetadataSource)
@@ -433,9 +447,9 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 	return rebuildSearchText(ctx, r.db, id)
 }
 
-// AssignStandalone marks every given video as a standalone movie in a single
-// statement (used by the scan-end grouping pass), then rebuilds each row's
-// search text. Clearing the series linkage is atomic as one UPDATE.
+// AssignStandalone detaches every given video from its series in a single
+// statement (kind='movie', series linkage cleared), then rebuilds each row's
+// search text. Used when a video no longer lives inside any series folder.
 func (r *videoRepo) AssignStandalone(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil

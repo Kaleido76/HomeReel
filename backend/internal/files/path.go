@@ -38,3 +38,18 @@ func UnderAnyRoot(path string, roots []string) bool {
 	}
 	return false
 }
+
+// ContainingRoot returns the deepest (smallest) of the given roots that
+// contains path — for nested media sources this picks the most specific one —
+// and whether any matched.
+func ContainingRoot(path string, roots []string) (string, bool) {
+	best := ""
+	bestLen := -1
+	for _, root := range roots {
+		if UnderRoot(path, root) && len(root) > bestLen {
+			best = root
+			bestLen = len(root)
+		}
+	}
+	return best, bestLen >= 0
+}

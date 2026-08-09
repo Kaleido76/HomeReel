@@ -279,19 +279,20 @@ function RenameForm({
         ev.preventDefault()
         if (value.trim()) onSubmit()
       }}
-      className="flex items-center gap-1"
+      className="flex min-w-0 flex-1 items-center gap-1.5"
     >
       <input
         value={value}
         onChange={(ev) => onChange(ev.target.value)}
         autoFocus
         onFocus={(ev) => ev.target.select()}
-        className="rounded-md border border-neutral-300 px-1.5 py-0.5 text-sm outline-none focus:border-blue-600"
+        placeholder="输入新名称"
+        className="min-w-0 flex-1 rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-blue-600"
       />
-      <button type="submit" disabled={!value.trim()} title="确认" className="rounded p-1 text-emerald-600 hover:bg-emerald-50">
+      <button type="submit" disabled={!value.trim()} title="确认" className="shrink-0 rounded-md p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
         <Check className="size-4" />
       </button>
-      <button type="button" onClick={onCancel} title="取消" className="rounded p-1 text-neutral-400 hover:bg-neutral-100">
+      <button type="button" onClick={onCancel} title="取消" className="shrink-0 rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100">
         <X className="size-4" />
       </button>
     </form>

@@ -22,12 +22,14 @@ type Show struct {
 	UnwatchedCount int `json:"unwatched_count"`
 }
 
-// Season is one numbered season of a show.
+// Season is one series of a show. A series = a season bound to a root path;
+// number is always 1 for the folder-as-series model, root_path is its identity.
 type Season struct {
 	ID           string `json:"id"`
 	ShowID       string `json:"show_id"`
 	Number       int    `json:"number"`
 	Name         string `json:"name"`
+	RootPath     string `json:"root_path,omitempty"` // 系列根目录
 	Overview     string `json:"overview,omitempty"`
 	PosterPath   string `json:"poster_path,omitempty"`
 	EpisodeCount int    `json:"episode_count"` // derived
@@ -61,11 +63,6 @@ type ShowRepo interface {
 	Create(ctx context.Context, s Show) error
 	// EnsureSeason returns the season, creating it if missing.
 	EnsureSeason(ctx context.Context, showID string, number int) (Season, error)
-	// AssignSeason groups a set of already-existing videos under one
-	// show/season atomically: it creates the show and season when missing and
-	// assigns every member in a single transaction, so a series never appears
-	// in the library half-formed. It returns the show id.
-	AssignSeason(ctx context.Context, showName string, seasonNumber int, members []EpisodeAssign) (string, error)
 	// UpdateMetadata applies editable show metadata.
 	UpdateMetadata(ctx context.Context, s Show) error
 	// RemoveEmptyShow deletes a show that no longer has episodes.

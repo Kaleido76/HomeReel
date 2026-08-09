@@ -13,16 +13,19 @@ import {
   filesDelete,
   filesMove,
   filesRename,
+  filesRenames,
+  markResources,
   removePin,
   removeSource,
   scanSource,
 } from '../../api/files'
 import { DriveRail } from './DriveRail'
-import { Toolbar, type ClipMode, type Clipboard, type SortState } from './Toolbar'
+import { Toolbar, type ClipMode, type Clipboard, type ClipboardItem, type SortState } from './Toolbar'
 import { FileListView } from './FileListView'
 import { ConfirmDelete } from './ConfirmDelete'
 import { ToolDrawerShell } from './ToolDrawerShell'
 import { ClipboardDrawer } from './ClipboardDrawer'
+import { RenameDrawer } from './RenameDrawer'
 import { isMediaName } from './fileType'
 import { parentPath } from './path'
 import { jobsKey } from '../jobs/useJobs'
@@ -44,7 +47,8 @@ export function FilesPage() {
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' })
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [clipboard, setClipboard] = useState<Clipboard | null>(null)
-  const [activeDrawer, setActiveDrawer] = useState<'clipboard' | null>(null)
+  const [renameTargets, setRenameTargets] = useState<ClipboardItem[] | null>(null)
+  const [activeDrawer, setActiveDrawer] = useState<'clipboard' | 'rename' | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string[] | null>(null)
   const [notice, setNotice] = useState('')
@@ -109,16 +113,62 @@ export function FilesPage() {
     setSelected(new Set([p]))
   }
 
-  function setClipboardMode(mode: ClipMode) {
-    if (selected.size === 0) return
-    const items = Array.from(selected).map((p) => {
+  function selectAll() {
+    setSelected(new Set(visibleEntries.map((e) => e.path)))
+  }
+
+  function invertSelection() {
+    const all = new Set(visibleEntries.map((e) => e.path))
+    setSelected((prev) => {
+      const next = new Set<string>()
+      for (const p of all) if (!prev.has(p)) next.add(p)
+      return next
+    })
+  }
+
+  // selectedItems snapshots the checked rows into display metadata so drawers
+  // keep rendering name/icon even if checkboxes change while they are open.
+  function selectedItems(): ClipboardItem[] {
+    return Array.from(selected).map((p) => {
       const e = entries.find((x) => x.path === p)
       return e
         ? { path: e.path, name: e.name, is_dir: e.is_dir }
         : { path: p, name: p.split(/[\\/]/).pop() ?? p, is_dir: false }
     })
-    setClipboard({ mode, items })
+  }
+
+  function setClipboardMode(mode: ClipMode) {
+    if (selected.size === 0) return
+    setClipboard({ mode, items: selectedItems() })
     setActiveDrawer('clipboard')
+  }
+
+  function openBatchRename() {
+    if (selected.size < 2) return
+    setRenameTargets(selectedItems())
+    setActiveDrawer('rename')
+  }
+
+  function closeRenameDrawer() {
+    setRenameTargets(null)
+    setActiveDrawer(null)
+  }
+
+  async function commitRenames(renames: { path: string; newName: string }[]) {
+    setError('')
+    try {
+      const res = await filesRenames(renames)
+      if (res.errors && res.errors.length > 0) {
+        setError(res.errors.map((e) => `${e.path}: ${e.message}`).join('；'))
+      } else {
+        flash(`已重命名 ${renames.length} 项`)
+      }
+      closeRenameDrawer()
+      setSelected(new Set())
+      invalidate()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '批量重命名失败')
+    }
   }
 
   function removeClipboardItem(p: string) {
@@ -213,8 +263,17 @@ export function FilesPage() {
     setError('')
     try {
       if (isSource) {
+        if (
+          !window.confirm(
+            '取消多媒体源标记会将该源下所有已入库的单集与系列从视频库中移除（磁盘文件不受影响）。确认取消？'
+          )
+        ) {
+          return
+        }
         await removeSource(path)
-        flash('已取消多媒体源标记，已入库视频不会移除')
+        flash('已取消多媒体源标记，其下视频已从库中移除')
+        void queryClient.invalidateQueries({ queryKey: ['videos'] })
+        void queryClient.invalidateQueries({ queryKey: ['series'] })
       } else {
         const res = await addSource(path)
         flash(res.job_id ? '已标记为多媒体源，开始扫描…' : '已标记为多媒体源')
@@ -238,9 +297,38 @@ export function FilesPage() {
     }
   }
 
+  // 标记所选文件夹为手动系列（系列必须位于媒体源内；后端拒绝源外路径）。
+  async function markSelected() {
+    const paths = !hasDirSelected && entries.some((e) => !e.is_dir && e.is_video) ? [path] : Array.from(selected)
+    if (paths.length === 0 || paths.some((p) => !p)) return
+    setError('')
+    try {
+      const res = await markResources(paths, 'series')
+      const label = hasDirSelected ? '系列' : '当前目录为系列'
+      flash(`已标记 ${paths.length} 个${label}，开始入库…`)
+      if (res.job_ids.length > 0) void queryClient.invalidateQueries({ queryKey: jobsKey })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '标记失败')
+    }
+  }
+
   const pinned = pins.data?.pins?.includes(path) ?? false
   const isSource = sources.data?.sources?.some((s) => s.path === path) ?? false
   const selectedCount = selected.size
+  // 系列标记：所选条目全部是文件夹时标记所选（系列 ↔ 物理文件夹严格对应）；
+  // 否则若当前目录含多媒体，标记当前所在文件夹。
+  const hasDirSelected =
+    selectedCount > 0 &&
+    Array.from(selected).some((p) => {
+      const e = entries.find((x) => x.path === p)
+      return e?.is_dir
+    })
+  const canMarkSeries = hasDirSelected
+    ? Array.from(selected).every((p) => {
+        const e = entries.find((x) => x.path === p)
+        return e?.is_dir
+      })
+    : entries.some((e) => !e.is_dir && e.is_video)
 
   return (
     <div className="flex h-full min-h-0">
@@ -272,6 +360,11 @@ export function FilesPage() {
           onDelete={() => {
             if (selectedCount > 0) setDeleting(Array.from(selected))
           }}
+          onSelectAll={selectAll}
+          onInvertSelection={invertSelection}
+          onBatchRename={openBatchRename}
+          onMarkSeries={() => void markSelected()}
+          canMarkSeries={canMarkSeries}
           onPin={togglePin}
           pinned={pinned}
           isSource={isSource}
@@ -310,6 +403,10 @@ export function FilesPage() {
               onClear={clearClipboard}
             />
           )}
+        </ToolDrawerShell>
+
+        <ToolDrawerShell open={activeDrawer === 'rename' && renameTargets !== null} heightClass="max-h-[26rem]">
+          {renameTargets && <RenameDrawer items={renameTargets} onClose={closeRenameDrawer} onApply={commitRenames} />}
         </ToolDrawerShell>
       </div>
 

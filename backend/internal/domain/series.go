@@ -2,15 +2,18 @@ package domain
 
 import "context"
 
-// Series is one organizational unit of the library: a season of a show or one
-// part of a movie franchise. Members (videos) are ordered by position, which
-// may have gaps (missing episodes are normal; ordering never relies on DB IDs).
+// Series is one organizational unit of the library: a user-created container
+// bound to a root directory (RootPath). Its members are exactly the videos
+// living as direct children of that folder, ordered by file name 1..N. A series
+// has only a name (the folder name) — there is no season numbering, and it is
+// purely a database concept (it never changes unless the user syncs it).
 type Series struct {
 	ID             string  `json:"id"`
 	ShowID         string  `json:"show_id"`
-	Title          string  `json:"title"` // 标题（show.name）
-	Name           string  `json:"name"`  // 显示名：标题 + 季/部
-	Kind           string  `json:"kind"`  // 恒为 "tv"（历史列，无电影/tv 结构类型；区分走标签）
+	RootPath       string  `json:"root_path,omitempty"` // 系列根目录（成员必须是其直接一级子文件）
+	Title          string  `json:"title"`               // 标题（show.name）
+	Name           string  `json:"name"`                // 显示名 = 标题（无季/部）
+	Kind           string  `json:"kind"`                // 恒为 "tv"（历史列，无电影/tv 结构类型；区分走标签）
 	SeasonNumber   int     `json:"season_number"`
 	Overview       string  `json:"overview,omitempty"`
 	Year           int     `json:"year,omitempty"`
@@ -53,13 +56,24 @@ type SeriesQuery struct {
 	Tags  []string // every tag present on at least one member video
 }
 
-// SeriesRepo persists series (seasons) and their weak links.
+// SeriesRepo persists series (a show + a season bound to a root path) and their
+// weak links.
 type SeriesRepo interface {
 	List(ctx context.Context, q SeriesQuery) ([]Series, error)
 	// Get returns the series identified by its season id.
 	Get(ctx context.Context, id string) (Series, error)
 	// FindID resolves the series (season) id for a show/season pair.
 	FindID(ctx context.Context, showID string, seasonNumber int) (string, error)
+	// FindByRoot resolves the series bound to a root directory (ErrNotFound
+	// when none). Series identity is the root path.
+	FindByRoot(ctx context.Context, rootPath string) (Series, error)
+	// CreateAtRoot creates the show+season bound to rootPath (name = folder
+	// name, season number 1) and returns the series. Idempotent per root path.
+	CreateAtRoot(ctx context.Context, name, rootPath string) (Series, error)
+	// BindMembers assigns the given videos to the series in one transaction:
+	// each member is set kind='episode' with its position and file-derived
+	// title, and is detached from any other series it currently belongs to.
+	BindMembers(ctx context.Context, seriesID string, members []EpisodeAssign) error
 	GetMembers(ctx context.Context, id string) ([]SeriesMember, error)
 	GetLinks(ctx context.Context, id string) ([]SeriesLink, error)
 	// AddLink creates a weak relation (directed; lookups are symmetric).

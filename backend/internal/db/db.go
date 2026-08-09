@@ -290,6 +290,41 @@ var migrations = []string{
 		DELETE FROM shows WHERE id = OLD.show_id
 			AND NOT EXISTS (SELECT 1 FROM videos WHERE show_id = OLD.show_id);
 	END;`,
+	// 手动资源（离散/手动系列）：用户在文件页签标记的路径，独立于媒体源维护。
+	// videos.resource_id 指向标记；释放标记经 ON DELETE CASCADE 释放全部元数据。
+	`CREATE TABLE manual_resources (
+		id            TEXT PRIMARY KEY,
+		path          TEXT NOT NULL UNIQUE,
+		kind          TEXT NOT NULL,   -- discrete（离散单集）| series（手动系列）
+		created_at    TEXT NOT NULL,
+		last_check_at TEXT
+	);
+	ALTER TABLE videos ADD COLUMN resource_id TEXT REFERENCES manual_resources(id) ON DELETE CASCADE;
+	CREATE INDEX idx_videos_resource ON videos(resource_id);`,
+	// 离散资源不维护存在性（惰性提示由详情页承担）：库内删除某个离散视频（释放）
+	// 后，若其所属手动资源不再有成员，自动清理空资源标记（与 videos_bd 删空
+	// show 一致）。
+	`CREATE TRIGGER manual_resources_bd AFTER DELETE ON videos BEGIN
+		DELETE FROM manual_resources WHERE id = OLD.resource_id
+			AND NOT EXISTS (SELECT 1 FROM videos WHERE resource_id = OLD.resource_id);
+	END`,
+	// 2026-08 管理面换代：单集为唯一基本实体（必须归属媒体源），系列是用户
+	// 显式创建的管理容器（绑定根目录，成员 = 根目录直接一级子文件），系列只
+	// 能手动创建、扫描只维护成员关系。彻底清除离散单集/离散系列概念。
+	// 开发期清库重建（用户决策）；manual_resources/resource_id 整体移除；
+	// seasons.root_path 承载系列↔根目录绑定。
+	`DELETE FROM videos;
+	DELETE FROM series_links;
+	DELETE FROM seasons;
+	DELETE FROM shows;
+	DELETE FROM video_tags;
+	DELETE FROM history;
+	DROP TRIGGER IF EXISTS manual_resources_bd;
+	DROP TABLE IF EXISTS manual_resources;
+	DROP INDEX IF EXISTS idx_videos_resource;
+	ALTER TABLE videos DROP COLUMN resource_id;
+	ALTER TABLE seasons ADD COLUMN root_path TEXT;
+	CREATE UNIQUE INDEX idx_seasons_root ON seasons(root_path) WHERE root_path IS NOT NULL;`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in
