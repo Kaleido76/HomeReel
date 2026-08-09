@@ -19,6 +19,37 @@ func TestIsVideo(t *testing.T) {
 	}
 }
 
+func TestIsConvertible(t *testing.T) {
+	cases := map[string]bool{
+		// The library video set is always convertible.
+		"a.mp4": true,
+		"b.MKV": true,
+		"c.ts":  true,
+		// Extra ffmpeg-readable containers the format factory accepts.
+		"old.rmvb":   true,
+		"old.RM":     true,
+		"dvd.vob":    true,
+		"cam.asf":    true,
+		"rec.mts":    true,
+		"bcast.trp":  true,
+		"bcast.tp":   true,
+		"movie.dat":  true,
+		"x.divx":     true,
+		"web.f4v":    true,
+		"flash.swf":  true,
+		"legacy.ogm": true,
+		// Non-media is never convertible.
+		"e.txt":   false,
+		"noext":   false,
+		"archive": false,
+	}
+	for name, want := range cases {
+		if got := IsConvertible(name); got != want {
+			t.Errorf("IsConvertible(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestValidName(t *testing.T) {
 	cases := map[string]bool{
 		"file.mkv": true,

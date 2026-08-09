@@ -18,6 +18,9 @@ export interface FileEntry {
   size: number
   mtime: number // unix seconds
   is_video: boolean
+  // is_convertible marks files the format factory can hand to ffmpeg (the
+  // library's video set plus extra ffmpeg-readable containers like rmvb).
+  is_convertible: boolean
 }
 
 export interface FileListResult {

@@ -15,10 +15,10 @@ const (
 	TypeProbe        = "probe"
 	TypeThumbnail    = "thumbnail"
 	TypeScanSource   = "scan_source"
-	TypeRemux        = "remux"
 	TypeMarkResource = "mark_resource"
 	TypeFsCopy       = "fscopy"
 	TypeFsMove       = "fsmove"
+	TypeConvert      = "convert"
 )
 
 // Job statuses.
@@ -45,8 +45,11 @@ type Job struct {
 	Internal        bool    `json:"internal"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
-	Subtask         string  `json:"subtask,omitempty"`
-	SubtaskProgress float64 `json:"subtask_progress,omitempty"`
+	Subtask         string   `json:"subtask,omitempty"`
+	SubtaskProgress float64  `json:"subtask_progress,omitempty"`
+	// EtaSeconds is the live estimate of remaining work (transient, filled by
+	// AttachLive); nil = unknown.
+	EtaSeconds *float64 `json:"eta_seconds,omitempty"`
 }
 
 // Repo persists jobs (SQLite implementation lives in the store package).
@@ -73,6 +76,7 @@ type LiveStatus struct {
 type subtaskState struct {
 	text string
 	pct  float64 // -1 = unknown
+	eta  float64 // estimated remaining seconds, -1 = unknown
 }
 
 // NewLiveStatus builds an empty live-status registry.
@@ -99,12 +103,28 @@ func (l *LiveStatus) SetSubtaskProgress(id string, pct float64) {
 	l.m[id] = cur
 }
 
-// Get returns the current sub-task line (text) and percentage (-1 unknown).
-func (l *LiveStatus) Get(id string) (text string, pct float64) {
+// SetEta records the estimated remaining seconds of a running job (negative =
+// unknown). It is derived from progress + elapsed time and is transient like
+// the sub-task line.
+func (l *LiveStatus) SetEta(id string, eta float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cur := l.m[id]
+	cur.eta = eta
+	l.m[id] = cur
+}
+
+// Get returns the current sub-task line (text), its percentage (-1 unknown)
+// and the estimated remaining seconds (-1 unknown).
+func (l *LiveStatus) Get(id string) (text string, pct float64, eta float64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := l.m[id]
-	return s.text, s.pct
+	eta = s.eta
+	if eta == 0 {
+		eta = -1
+	}
+	return s.text, s.pct, eta
 }
 
 // Remove drops the live state of a finished job.
@@ -157,12 +177,16 @@ func (s *Service) List(ctx context.Context, limit int) ([]Job, error) {
 }
 
 // AttachLive merges the transient sub-task state onto a job list so handlers
-// can expose the current serial sub-task line alongside each running job.
+// can expose the current serial sub-task line and a remaining-time estimate
+// alongside each running job.
 func (s *Service) AttachLive(list []Job) {
 	for i := range list {
-		text, pct := s.live.Get(list[i].ID)
+		text, pct, eta := s.live.Get(list[i].ID)
 		list[i].Subtask = text
 		list[i].SubtaskProgress = pct
+		if eta >= 0 {
+			list[i].EtaSeconds = &eta
+		}
 	}
 }
 
@@ -292,6 +316,7 @@ type jobReporter struct {
 	repo     Repo
 	id       string
 	live     *LiveStatus
+	started  time.Time
 	mu       sync.Mutex
 	last     float64
 	lastTime time.Time
@@ -303,11 +328,14 @@ const (
 )
 
 func newJobReporter(ctx context.Context, repo Repo, id string, live *LiveStatus) *jobReporter {
-	return &jobReporter{ctx: ctx, repo: repo, id: id, live: live, last: -1}
+	return &jobReporter{ctx: ctx, repo: repo, id: id, live: live, started: time.Now(), last: -1}
 }
 
 // Progress records a new overall value, persisting it if it is far enough
-// from the last written value. Values outside [0,1] are ignored.
+// from the last written value. Values outside [0,1] are ignored. The remaining
+// time is estimated from the elapsed wall time and the current fraction, and is
+// kept fresh in the shared live registry on every report (independent of the
+// throttled DB write).
 func (r *jobReporter) Progress(fraction float64) {
 	if fraction < 0 || fraction > 1 {
 		return
@@ -315,12 +343,28 @@ func (r *jobReporter) Progress(fraction float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
+	if r.live != nil {
+		r.live.SetEta(r.id, computeETA(r.started, now, fraction))
+	}
 	if r.last >= 0 && now.Sub(r.lastTime) < progressInterval && absFloat(fraction-r.last) < progressMinDelta {
 		return
 	}
 	r.last = fraction
 	r.lastTime = now
 	_ = r.repo.MarkProgress(r.ctx, r.id, fraction)
+}
+
+// computeETA estimates the seconds left from the time spent and the fraction
+// completed; unknown (negative) while nothing is done, zero once complete.
+func computeETA(started, now time.Time, fraction float64) float64 {
+	if fraction <= 0 {
+		return -1
+	}
+	if fraction >= 1 {
+		return 0
+	}
+	elapsed := now.Sub(started).Seconds()
+	return elapsed * (1 - fraction) / fraction
 }
 
 // flush persists the most recent value, covering a progress report that was

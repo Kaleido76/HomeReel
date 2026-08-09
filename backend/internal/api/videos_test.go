@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/store"
 )
 
@@ -213,36 +214,125 @@ func TestStreamDirectAndCover(t *testing.T) {
 	}
 }
 
-func TestRemuxEndpoints(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+func TestConvertEndpoints(t *testing.T) {
+	ts, _, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
-	sourceID := newTestSource(t, ts, cookie)
 
-	// One segmented video and one normal video.
-	seedVideo(t, database, sourceID, "v1", "shows/ep1.mp4", "shows/ep1.mp4", "Seg", 10)
-	seedVideo(t, database, sourceID, "v2", "other.mp4", "other.mp4", "Plain", 10)
-	repo := store.NewVideoRepo(database)
-	if err := repo.UpdateProbe(context.Background(), domain.Video{
-		ID: "v1", Title: "Seg", Codec: "h264", Container: "mp4", Segmented: true,
-	}); err != nil {
-		t.Fatalf("mark segmented: %v", err)
+	root := t.TempDir()
+	file := filepath.Join(root, "movie.mkv")
+	dir := filepath.Join(root, "show")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	// Status lists only the segmented video, not remuxed (no cache in test).
-	resp, body := doJSON(t, "GET", ts.URL+"/api/remux/status", "", cookie)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("remux status = %d (body %s)", resp.StatusCode, body)
-	}
-	if !strings.Contains(body, `"v1"`) || strings.Contains(body, `"v2"`) {
-		t.Fatalf("remux status body unexpected: %s", body)
-	}
-	if !strings.Contains(body, `"remuxed":false`) {
-		t.Fatalf("remux status should report not remuxed: %s", body)
+	for _, f := range []string{file, filepath.Join(dir, "ep1.mkv")} {
+		if err := os.WriteFile(f, []byte("fake-video"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Single-video remux accepts.
-	resp, body = doJSON(t, "POST", ts.URL+"/api/videos/v1/remux", "", cookie)
+	body := mustJSON(t, map[string]any{
+		"paths": []string{file, dir, filepath.Join(root, "readme.txt"), filepath.Join(root, "nope.mkv")},
+	})
+	resp, raw := doJSON(t, "POST", ts.URL+"/api/convert", body, cookie)
 	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("single remux = %d (body %s)", resp.StatusCode, body)
+		t.Fatalf("convert = %d (body %s)", resp.StatusCode, raw)
+	}
+	var res struct {
+		Jobs   []fservice.ConvertJob `json:"jobs"`
+		Errors []fservice.OpError    `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		t.Fatalf("decode convert response: %v", err)
+	}
+	if len(res.Jobs) != 2 {
+		t.Fatalf("convert jobs = %d, want 2: %s", len(res.Jobs), raw)
+	}
+	if res.Jobs[0].Kind != "file" || res.Jobs[1].Kind != "dir" {
+		t.Fatalf("convert kinds = %s/%s, want file/dir", res.Jobs[0].Kind, res.Jobs[1].Kind)
+	}
+	if res.Jobs[0].Output != filepath.Join(root, "movie.mp4") ||
+		res.Jobs[1].Output != filepath.Join(root, "show (MP4)") {
+		t.Fatalf("convert outputs = %q/%q", res.Jobs[0].Output, res.Jobs[1].Output)
+	}
+	if len(res.Errors) != 2 {
+		t.Fatalf("convert errors = %d, want 2 (non-video + missing path): %s", len(res.Errors), raw)
+	}
+
+	// Empty selection is rejected.
+	resp, _ = doJSON(t, "POST", ts.URL+"/api/convert", `{"paths":[]}`, cookie)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty convert = %d, want 400", resp.StatusCode)
+	}
+
+	// An operations-panel preset (h264 re-encode) is accepted and the job
+	// payload carries the chosen parameters through to the worker.
+	body = mustJSON(t, map[string]any{
+		"paths": []string{file},
+		"params": map[string]any{
+			"video": "h264", "vcrf": 20, "audio": "aac", "akbps": 128, "burn": true,
+		},
+	})
+	resp, raw = doJSON(t, "POST", ts.URL+"/api/convert", body, cookie)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("convert with params = %d (body %s)", resp.StatusCode, raw)
+	}
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		t.Fatalf("decode convert response: %v", err)
+	}
+	if len(res.Jobs) != 1 || res.Jobs[0].Output != filepath.Join(root, "movie.mp4") {
+		t.Fatalf("convert with params jobs = %v, want 1 file job: %s", res.Jobs, raw)
+	}
+	// All-valid selections must still return errors as an empty array, never
+	// JSON null (a nil slice would crash array-typed consumers).
+	if res.Errors == nil || len(res.Errors) != 0 {
+		t.Fatalf("convert errors = %#v, want empty non-nil array", res.Errors)
+	}
+}
+
+// TestConvertProbeEndpoints verifies the probe endpoint returns one entry per
+// expanded video (a directory expands to its direct-level videos) and that
+// codec lists are always arrays.
+func TestConvertProbeEndpoints(t *testing.T) {
+	ts, _, _ := newTestServerDB(t, "secret")
+	cookie := loginCookie(t, ts, "secret")
+
+	root := t.TempDir()
+	file := filepath.Join(root, "movie.mkv")
+	dir := filepath.Join(root, "show")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{file, filepath.Join(dir, "ep1.mkv")} {
+		if err := os.WriteFile(f, []byte("fake-video"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := mustJSON(t, map[string]any{"paths": []string{file, dir}})
+	resp, raw := doJSON(t, "POST", ts.URL+"/api/convert/probe", body, cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("probe = %d (body %s)", resp.StatusCode, raw)
+	}
+	var res struct {
+		Results []fservice.ConvertProbe `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		t.Fatalf("decode probe response: %v", err)
+	}
+	if len(res.Results) != 2 {
+		t.Fatalf("probe results = %d, want 2: %s", len(res.Results), raw)
+	}
+	if res.Results[0].Kind != "file" || res.Results[1].Kind != "dir" {
+		t.Fatalf("probe kinds = %s/%s", res.Results[0].Kind, res.Results[1].Kind)
+	}
+	for _, r := range res.Results {
+		if r.AudioCodecs == nil || r.SubtitleCodecs == nil {
+			t.Fatalf("probe codec lists must be arrays, got %#v", r)
+		}
+	}
+
+	resp, _ = doJSON(t, "POST", ts.URL+"/api/convert/probe", `{"paths":[]}`, cookie)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty probe = %d, want 400", resp.StatusCode)
 	}
 }

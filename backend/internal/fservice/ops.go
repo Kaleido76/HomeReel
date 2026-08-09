@@ -44,19 +44,22 @@ func (s *Service) enqueueFsJob(ctx context.Context, typ string, sources []string
 	return s.jobs.Enqueue(ctx, typ, dest, verb+" "+filepath.Base(filepath.Clean(dest)), string(extra))
 }
 
-// HandleJob runs fscopy/fsmove jobs. Per-item failures are collected and
-// reported as a job error at the end, so a partially-failed batch still
-// surfaces in the task panel.
+// HandleJob runs fscopy/fsmove/convert jobs. For copy/move, per-item failures
+// are collected and reported as a job error at the end, so a partially-failed
+// batch still surfaces in the task panel.
 func (s *Service) HandleJob(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
-	var meta fscopyMeta
-	if err := json.Unmarshal([]byte(j.Extra), &meta); err != nil || len(meta.Sources) == 0 || meta.Dest == "" {
-		return errors.New("fs job missing sources/dest")
-	}
 	switch j.Type {
-	case jobs.TypeFsCopy:
-		return s.copyJob(ctx, meta.Sources, meta.Dest, report)
-	case jobs.TypeFsMove:
+	case jobs.TypeFsCopy, jobs.TypeFsMove:
+		var meta fscopyMeta
+		if err := json.Unmarshal([]byte(j.Extra), &meta); err != nil || len(meta.Sources) == 0 || meta.Dest == "" {
+			return errors.New("fs job missing sources/dest")
+		}
+		if j.Type == jobs.TypeFsCopy {
+			return s.copyJob(ctx, meta.Sources, meta.Dest, report)
+		}
 		return s.moveJob(ctx, meta.Sources, meta.Dest, report)
+	case jobs.TypeConvert:
+		return s.HandleConvert(ctx, j, report)
 	}
 	return fmt.Errorf("unknown fs job type %q", j.Type)
 }

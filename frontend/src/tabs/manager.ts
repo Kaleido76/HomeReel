@@ -1,5 +1,6 @@
 import { routers } from './routers'
 import { tabFromPath, type TabId } from './config'
+import { setPending, type ConvertTarget } from '../features/tools/format/queue'
 
 // Module-level tab store shared by every tab router. `activeTab` changes are
 // broadcast to React via useSyncExternalStore; routers stay mounted so switching
@@ -53,6 +54,16 @@ export function openSeries(id: string) {
 export function openLibrary() {
   setActive('library')
   void routers.library.navigate({ to: '/library', search: {} })
+}
+
+// openFormat hands the file tab's current selection (files and/or folders) to
+// the 格式工厂 tool inside the 工具 tab. The batch lives in a module store —
+// transient by nature, a selection can be many long paths and a refresh only
+// shows the job queue anyway.
+export function openFormat(items: ConvertTarget[]) {
+  setPending(items)
+  setActive('tools')
+  void routers.tools.navigate({ to: '/tools', search: { tool: 'format' } })
 }
 
 // initTabSync wires the browser history to the per-tab memory histories:

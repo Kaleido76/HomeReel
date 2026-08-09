@@ -215,12 +215,12 @@ func TestReporterSubtask(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if text, _ := live.Get(id); text == "探测 a.mp4" {
+		if text, _, _ := live.Get(id); text == "探测 a.mp4" {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	text, pct := live.Get(id)
+	text, pct, _ := live.Get(id)
 	if text != "探测 a.mp4" || pct != 65 {
 		t.Fatalf("subtask = %q %v, want 探测 a.mp4 65", text, pct)
 	}

@@ -16,6 +16,9 @@ export interface Job {
   updated_at: string
   subtask?: string
   subtask_progress?: number
+  // eta_seconds is the backend's live estimate of remaining work (only present
+  // while the job reports determinate progress).
+  eta_seconds?: number
 }
 
 // A job is "active" while it is still owned by the worker; these are the rows
@@ -24,7 +27,7 @@ export function isActiveJob(j: Job): boolean {
   return j.status === 'queued' || j.status === 'running'
 }
 
-// A "notable" job is a user-facing long task (scan / remux / future tasks).
+// A "notable" job is a user-facing long task (scan / convert / future tasks).
 // Internal maintenance jobs (probe/thumbnail) are hidden from the task panel
 // so a scan's probe burst never floods it.
 export function isNotableJob(j: Job): boolean {

@@ -127,13 +127,6 @@ func (s *Service) remuxed(videoID string) (string, error) {
 	return p, nil
 }
 
-// Remuxed reports whether a remuxed copy is available for a video (used by the
-// remux management API to show per-file state).
-func (s *Service) Remuxed(videoID string) bool {
-	_, err := s.remuxed(videoID)
-	return err == nil
-}
-
 // Cover serves the generated cover or thumb image from data_dir.
 func (s *Service) Cover(w http.ResponseWriter, r *http.Request, v domain.Video, thumb bool) error {
 	rel := v.CoverPath

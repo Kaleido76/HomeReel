@@ -5,7 +5,7 @@
 
 ## 1. 多 Router 页签（keep-alive）
 
-- 顶部 5 个页签（首页/视频库/搜索/重封/文件），每页签一个独立 TanStack Router 实例
+- 顶部 5 个页签（首页/视频库/搜索/工具/文件），每页签一个独立 TanStack Router 实例
   （`createMemoryHistory`，`tabs/`），组件树常驻不卸载（`display:none` 隐藏）＝状态永不丢
   （滚动/筛选/播放器/上传状态切页签不丢）。
 - 页面组件 `React.lazy` 分包懒加载；ARIA tablist 语义 + 方向键切换。
@@ -137,12 +137,30 @@
   非激活 `text-neutral-600 hover:bg-neutral-100`，**不使用蓝色下划线**。
 - 页签文字标签 `<sm` 断点隐藏仅留图标（`hidden sm:inline`），窄屏页签列表 `overflow-x-auto`。
 - Logo 与「退出登录」保持原样。
-- **重封页签（2026-09 新增）**：图标 `Wrench`，root `/remux`，管理分段 MP4 的手动重封（见 [media.md](media.md) §3）。
+- **工具页签（2026-09，替代原「重封」/「格式工厂」独立页签）**：图标 `Wrench`，root `/tools`。布局与文件页签
+  类似：**左侧垂直工具栏 + 右侧工具面板**（`features/tools/ToolsPage.tsx`，`?tool=id` 存于 URL；工具注册表
+  `features/tools/tools.ts`，访问过的工具面板保持挂载，切换不丢状态）。左栏为**硬朗/方角/等宽风格**：
+  按钮无圆角、与栏等宽（无内边距），激活态 `bg-neutral-900 text-white`（呼应 TabBar）。当前含一个工具——
+  **格式工厂**：把任意视频/文件夹转为浏览器可播放的 Faststart MP4 副本（见 [media.md](media.md) §3.1）。
+  文件页签工具栏「格式工厂」按钮把勾选（或含视频的当前目录）经 `manager.openFormat` 移交到工具的
+  **待转换队列**（模块 store `features/tools/format/queue.ts`，用 `usePending` 订阅）。面板自上而下：
+  - **操作面板**（`FormatFactoryPage` 内 `OperationsPanel`）：未选择文件时整体**遮罩禁用**；预设工具
+    **快速 MP4 / H.264 / H.265**（`features/tools/format/presets.ts`）仅作**快速填充**（点击填参数），
+    下方**参数表单持续存在**（视频编码、清晰度 CRF、音频模式、AAC 码率、烧录字幕），改动后标记
+    「已自定义」；`POST /api/convert` 携带当前 `params`。表单字段按上下文**禁用**（无损拷贝→禁用 CRF、
+    保留原音→禁用码率、无字幕轨→禁用烧录、检测到非通用音频→禁用「保留原音」）。
+  - **检测信息**：`POST /api/convert/probe` 逐个探测所选文件（目录展开为直接一级视频），操作面板顶部
+    以引导性文字提示（位图字幕将自动降级、AC3 将转 AAC 等）；**待转换清单每行显示探测徽标**
+    （位图字幕 / 文本字幕 / AC3 等），目录行显示汇总（N 个视频、位图字幕 ×N）。
+  - **待转换清单**（含目标输出路径）+「开始转换」：可随时继续追加批次入队，即使有任务运行中。
+  - **转换队列**（复用 `GET /api/jobs`，按 `type==='convert'` 过滤）：进行中任务在前（进度条 + ETA +
+    子任务），历史在后（成功/失败），每行标注所用预设（解析 `job.extra` 的 params 反查）。
 - **后台任务按钮（JobsIndicator）**：header 右侧、退出登录旁。双鱼箭头图标（`RefreshCw`）在有长时任务
   时 `animate-spin` 并显示数量徽标；点击弹出任务面板（`features/jobs/JobsIndicator.tsx`，轮询
   `GET /api/jobs`，进行中 1s / 空闲 15s）。面板为 `absolute` 覆盖自身区域，**不因点击外部消失**，仅
   再次点击按钮收起。任务行展示名称 + 进度：`progress>=0` 为确定进度条，否则 `.indeterminate-bar`
-  动态滑条（`index.css`）。只显示 `internal=false` 的长时任务（扫描/重封）。
+  动态滑条（`index.css`）。进行中的确定进度任务展示**剩余时间估算**（`job.eta_seconds`，后端按
+  进度×耗时推算，`formatEta` 格式化）。只显示 `internal=false` 的长时任务（扫描/转换/复制/移动）。
 
 ## 6. Explorer 文件页
 

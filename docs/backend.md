@@ -65,9 +65,9 @@
 
 ## 9. jobs（长时任务管理器）与事件总线
 
-- `jobs` 是**长时任务管理器**（ADR-008）：队列 + Worker（probe/thumbnail/scan_source/remux，崩溃恢复）；
+- `jobs` 是**长时任务管理器**（ADR-008）：队列 + Worker（probe/thumbnail/scan_source/convert，崩溃恢复）；
   缩略图 covers 320px + thumbs 160px。
-- **任务分类**：`Enqueue` 创建用户可见长时任务（scan_source/remux，带展示名 `name`）；`EnqueueInternal` 创建
+- **任务分类**：`Enqueue` 创建用户可见长时任务（scan_source/convert，带展示名 `name`）；`EnqueueInternal` 创建
   内部短任务（probe/thumbnail，`internal=true`，前端任务面板隐藏、不触发生命周期通知）。
 - **整体进度**：`Job.Progress` 为 `[0,1]`；`<0` 表示不确定（前端显示动态条）。`Handler` 收到
   `jobs.Reporter`，`report.Progress` 节流写库（≤250ms 或 ≥1% 差值），handler 不调用即保持不确定。
@@ -76,6 +76,9 @@
   **不落库**——存入 `jobs.LiveStatus`（Service 与 Worker 共享的内存注册表），`handleJobsList` 经
   `Service.AttachLive` 合并到 job JSON 的 `subtask`/`subtask_progress`。大任务内部子任务严格串行执行，
   任务完成时从 LiveStatus 移除。
+- **剩余时间估算（仅内存）**：`Reporter.Progress` 每次上报时按「已耗时 × (1−fraction)/fraction」推算剩余秒数，
+  经 `LiveStatus.SetEta` 合并到 job JSON 的 `eta_seconds`（nil=未知）；只在任务报告确定进度时有意义。
+  转换（`-progress pipe:1` + ffprobe 时长/文件大小估算）、扫描（文件数）、复制/移动（字节数）均受益。
 - **扫描 = 串行内联**：`ScanSource(ctx, src)`；内部 `scan(ctx, src, progress(done,total), subtask)`。
   每个待处理文件在**主循环内串行**执行「探测 → 生成缩略图」（新增文件在探测后**单条 INSERT 全量元数据**，
   原子；变更文件走 UpdateProbe 单条 UPDATE），并逐文件上报子任务「探测 X」「生成 X 的缩略图」。
@@ -88,8 +91,11 @@
 - **多媒体源路由表**：扫描父源时遇到子源（`files.UnderRoot(o.Path, src.Path)` 且非自身）根目录
   → `collect` 整棵 `SkipDir`；`MarkMissingBySource` 跳过绝对路径落在任一子源根下的行（防「父源先删、
   子源重建」抖动）。file_id **全局匹配**：跨源移动仅更新 path/source_id/relative_path，不新建记录。
-- **remux 进度**：`handleRemux` 用 `-progress pipe:1` 解析 `out_time_us`，结合 `videos.duration` 得出
-  确定进度；时长未知则保持不确定。
+- **convert 进度**：`fservice.HandleConvert`（`fservice/convert.go`）——先 ffprobe 探测流（音频是否浏览器
+  可播、有无字幕），单文件流拷贝极快进度保持不确定、烧录重编码较慢；文件夹按「已完成文件数/总数」上报
+  确定进度 + 子任务「转换 <名>（n/N）」，逐文件收集失败为任务错误。`convertMeta` 携带操作面板的
+  `ConvertParams`（video/crf/audio/akbps/burn，`norm()` 归一化）；按 `convertAttempts` 尝试链逐级重试
+  （快速 MP4：无损拷贝 → 烧录重编码；H.264/H.265：重编码 → 烧录 → 丢字幕），详见 [media.md](media.md) §3.1。
 - 事件总线（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
 
 ## 10. 泛用文件浏览器（fservice，2026-08 增量）
@@ -108,5 +114,9 @@
     `VideoDeleted` 清缓存，再删标记——该源的单集与系列随之全部从库中消失；`videos_bd` 触发器随最后成员
     清空系列；磁盘文件不受影响）、`/api/files/sources/scan`（手动重扫）。源路径在
     `fservice.sources.go` 做规范化（`filepath.Clean`，盘符根保留尾分隔符）以便路由前缀比较。
-- worker 分发：main.go 把 `fscopy`/`fsmove` 交给 `fsvc.HandleJob`，其余（probe/thumbnail/scan_source/
-  remux）交给 `scannerSvc.HandleJob`。
+- worker 分发：main.go 把 `fscopy`/`fsmove`/`convert` 交给 `fsvc.HandleJob`，其余（probe/thumbnail/
+  scan_source）交给 `scannerSvc.HandleJob`。
+- **格式工厂（2026-09，替代原「重封」页签）**：`POST /api/convert`（body 含 `paths` + 可选 `params`）→
+  `fservice.EnqueueConvert` 逐个入队 `convert` 任务；`POST /api/convert/probe` → `fservice.ProbeConvert`
+  逐个 ffprobe 返回流事实供操作面板指引/禁用；单集→同目录 `X.mp4`、系列/文件夹→同级 `X (MP4)\`
+  （collision 时 ` (N)` 递增，绝不覆盖源文件），详见 [media.md](media.md) §3.1。

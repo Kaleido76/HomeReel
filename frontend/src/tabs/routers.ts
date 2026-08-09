@@ -15,7 +15,7 @@ type AnyRouter = ReturnType<typeof createRouter>
 const HomePage = lazy(() => import('../features/home/HomePage').then((m) => ({ default: m.HomePage })))
 const LibraryLayout = lazy(() => import('../features/library/LibraryLayout').then((m) => ({ default: m.LibraryLayout })))
 const SearchPage = lazy(() => import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })))
-const RemuxPage = lazy(() => import('../features/remux/RemuxPage').then((m) => ({ default: m.RemuxPage })))
+const ToolsPage = lazy(() => import('../features/tools/ToolsPage').then((m) => ({ default: m.ToolsPage })))
 const FilesPage = lazy(() =>
   import('../features/files/FilesPage').then((m) => ({ default: m.FilesPage })),
 )
@@ -130,23 +130,24 @@ export const searchRouter = createRouter({
   defaultPreload: 'intent',
 })
 
-// ---- remux tab (segmented-MP4 remux management) ----
-const remuxRoot = createRootRoute()
-const remuxIndex = createRoute({
-  getParentRoute: () => remuxRoot,
-  path: '/remux',
-  component: RemuxPage,
+// ---- tools tab (工具: 左侧工具栏 + 右侧工具面板，如格式工厂) ----
+const toolsRoot = createRootRoute()
+const toolsIndex = createRoute({
+  getParentRoute: () => toolsRoot,
+  path: '/tools',
+  component: ToolsPage,
+  validateSearch: (search) => ({ tool: typeof search.tool === 'string' ? search.tool : '' }),
 })
-const remuxNotFound = createRoute({
-  getParentRoute: () => remuxRoot,
+const toolsNotFound = createRoute({
+  getParentRoute: () => toolsRoot,
   path: '*',
-  beforeLoad: () => redirect({ to: '/remux' }),
+  beforeLoad: () => redirect({ to: '/tools' }),
   component: () => null,
 })
-const remuxTree = remuxRoot.addChildren([remuxIndex, remuxNotFound])
-export const remuxRouter = createRouter({
-  routeTree: remuxTree,
-  history: createMemoryHistory({ initialEntries: [initialEntry('remux')] }),
+const toolsTree = toolsRoot.addChildren([toolsIndex, toolsNotFound])
+export const toolsRouter = createRouter({
+  routeTree: toolsTree,
+  history: createMemoryHistory({ initialEntries: [initialEntry('tools')] }),
   defaultPreload: 'intent',
 })
 
@@ -179,6 +180,6 @@ export const routers: Record<TabId, AnyRouter> = {
   home: homeRouter as unknown as AnyRouter,
   library: libraryRouter as unknown as AnyRouter,
   search: searchRouter as unknown as AnyRouter,
-  remux: remuxRouter as unknown as AnyRouter,
+  tools: toolsRouter as unknown as AnyRouter,
   files: filesRouter as unknown as AnyRouter,
 }

@@ -133,9 +133,6 @@ type VideoRepo interface {
 	ListAll(ctx context.Context) ([]Video, error)
 	// ListBySource returns all videos of one media source.
 	ListBySource(ctx context.Context, sourceID string) ([]Video, error)
-	// ListSegmented returns all videos flagged as segmented (hls.js-assembled
-	// MP4), used by the remux management API.
-	ListSegmented(ctx context.Context) ([]Video, error)
 	// ContinueWatching returns videos with in-progress playback, most recently
 	// active first (used by the home rows).
 	ContinueWatching(ctx context.Context, limit int) ([]Video, error)

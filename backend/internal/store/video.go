@@ -572,24 +572,6 @@ func (r *videoRepo) ListBySource(ctx context.Context, sourceID string) ([]domain
 	return out, rows.Err()
 }
 
-func (r *videoRepo) ListSegmented(ctx context.Context) ([]domain.Video, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+videoCols+` FROM videos WHERE segmented = 1 ORDER BY title`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]domain.Video, 0)
-	for rows.Next() {
-		v, err := scanVideo(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
 func (r *videoRepo) ContinueWatching(ctx context.Context, limit int) ([]domain.Video, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+qualify(videoCols, "v")+` FROM videos v

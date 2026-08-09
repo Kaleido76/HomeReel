@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react'
 import type { Job } from '../../api/jobs'
 import { isActiveJob, isNotableJob } from '../../api/jobs'
+import { formatEta } from '../../lib/format'
 import { useJobs } from './useJobs'
 
 // JobsIndicator is the JetBrains-style task status button in the header. The
@@ -77,6 +78,7 @@ function JobRow({ job }: { job: Job }) {
   const pct = Math.round(job.progress * 100)
   const hasSubtask = active && !!job.subtask
   const subtaskPct = (job.subtask_progress ?? -1) >= 0 ? Math.round(job.subtask_progress ?? 0) : null
+  const eta = job.eta_seconds != null ? formatEta(job.eta_seconds) : ''
 
   return (
     <div className="flex items-start gap-2 px-3 py-2">
@@ -99,7 +101,10 @@ function JobRow({ job }: { job: Job }) {
           </div>
         )}
         {active && determinate && job.status === 'running' && (
-          <p className="mt-1 text-xs text-neutral-400">{pct}%</p>
+          <p className="mt-1 text-xs text-neutral-400">
+            {pct}%
+            {eta ? ` · 预计还需 ${eta}` : ''}
+          </p>
         )}
         {active && !determinate && (
           <p className="mt-1 text-xs text-neutral-400">{job.status === 'queued' ? '排队中…' : '处理中…'}</p>

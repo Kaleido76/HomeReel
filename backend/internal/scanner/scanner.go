@@ -1,17 +1,13 @@
 package scanner
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,13 +41,12 @@ type Service struct {
 	ffmpegPath  string
 	coversDir   string
 	thumbsDir   string
-	remuxDir    string
 	probe       ProbeFn
 	thumbnail   ThumbnailFn
 	now         func() time.Time
 }
 
-// New builds the scanner service. dataDir hosts covers/, thumbs/ and remux/ output.
+// New builds the scanner service. dataDir hosts covers/ and thumbs/.
 func New(videos domain.VideoRepo, sources domain.SourceRepo,
 	shows domain.ShowRepo, seriesRepo domain.SeriesRepo, jobsSvc *jobs.Service, bus *events.Bus,
 	ffprobePath, ffmpegPath, dataDir string) *Service {
@@ -66,7 +61,6 @@ func New(videos domain.VideoRepo, sources domain.SourceRepo,
 		ffmpegPath:  ffmpegPath,
 		coversDir:   filepath.Join(dataDir, "covers"),
 		thumbsDir:   filepath.Join(dataDir, "thumbs"),
-		remuxDir:    filepath.Join(dataDir, "remux"),
 		probe:       media.Probe,
 		thumbnail:   media.Thumbnail,
 		now:         time.Now,
@@ -319,8 +313,6 @@ func (s *Service) HandleJob(ctx context.Context, j jobs.Job, report jobs.Reporte
 		return s.handleThumbnail(ctx, j, report)
 	case jobs.TypeScanSource:
 		return s.handleScanSource(ctx, j, report)
-	case jobs.TypeRemux:
-		return s.handleRemux(ctx, j, report)
 	case jobs.TypeMarkResource:
 		return s.handleMarkResource(ctx, j, report)
 	}
@@ -383,88 +375,6 @@ func (s *Service) EnqueueProbe(ctx context.Context, videoID string) error {
 	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
 	_, err := s.jobs.EnqueueInternal(ctx, jobs.TypeProbe, videoID, string(extra))
 	return err
-}
-
-// EnqueueRemux schedules a remux job that re-wraps a segmented MP4 into a
-// standard faststart MP4 (user-requested long task, ADR-007 cache dir remux/).
-func (s *Service) EnqueueRemux(ctx context.Context, videoID string) error {
-	v, err := s.videos.Get(ctx, videoID)
-	if err != nil {
-		return err
-	}
-	extra, _ := json.Marshal(map[string]string{"video_id": videoID})
-	_, err = s.jobs.Enqueue(ctx, jobs.TypeRemux, videoID, "重封 · "+v.Title, string(extra))
-	return err
-}
-
-// handleRemux re-wraps a segmented MP4 source into a single-mdat faststart MP4
-// using stream copy (-c copy: no re-encode, only container rewrite). The output
-// lives in data/remux/<id>.mp4 and is what the streaming service serves for
-// direct playback, turning a slow Chrome whole-file download into normal
-// progressive playback.
-func (s *Service) handleRemux(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
-	var meta struct {
-		VideoID string `json:"video_id"`
-	}
-	if err := json.Unmarshal([]byte(j.Extra), &meta); err != nil || meta.VideoID == "" {
-		return errors.New("remux job missing video_id")
-	}
-	v, err := s.videos.Get(ctx, meta.VideoID)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(v.Path); err != nil {
-		return fmt.Errorf("source missing: %w", err)
-	}
-	if err := os.MkdirAll(s.remuxDir, 0o755); err != nil {
-		return err
-	}
-	out := filepath.Join(s.remuxDir, v.ID+".mp4")
-	tmp := out + ".tmp"
-	cmd := exec.CommandContext(ctx, s.ffmpegPath,
-		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-		"-i", v.Path,
-		"-map", "0",
-		"-c", "copy",
-		"-movflags", "+faststart",
-		"-progress", "pipe:1",
-		tmp)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	// ffmpeg's machine-readable progress (out_time_us) maps to a determinate
-	// fraction; without a known duration the job stays indeterminate.
-	duration := v.Duration
-	scanOut := bufio.NewScanner(stdout)
-	for scanOut.Scan() {
-		if duration <= 0 {
-			continue
-		}
-		if val, ok := strings.CutPrefix(scanOut.Text(), "out_time_us="); ok {
-			if us, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64); err == nil && us >= 0 {
-				report.Progress(min(float64(us)/1e6/duration, 1))
-			}
-		}
-	}
-	if err := cmd.Wait(); err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("remux failed", "video_id", v.ID, "err", err, "output", truncate(stderr.String(), 500))
-		}
-		_ = os.Remove(tmp)
-		return fmt.Errorf("ffmpeg remux: %w", err)
-	}
-	// Atomic rename so the streaming service never serves a half-written file.
-	if err := os.Rename(tmp, out); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
 }
 
 func truncate(s string, n int) string {

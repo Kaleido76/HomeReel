@@ -58,7 +58,7 @@ backend/
 frontend/
   src/
     api  components  features  lib  styles  tabs
-    # features: auth home files library player series search remux
+    # features: auth home files library player series search tools
     # tabs: 多 Router 页签宿主（config/routers/manager/TabBar/TabHost/TabSync）
 ```
 
@@ -134,6 +134,6 @@ frontend/
 | 项目定位 / 核心原则 / ADR 摘要 / 技术栈 / 部署 / 静态托管 / 启动输出 | [docs/architecture.md](docs/architecture.md) |
 | 开发环境（版本 / 安装 / FFmpeg PATH 陷阱 / go env） | [docs/environment.md](docs/environment.md) |
 | 后端与数据层（时间戳 / SQLite / 迁移 / FTS5 / 剧集系列归组 / 多媒体源 / jobs / 事件总线） | [docs/backend.md](docs/backend.md) |
-| 媒体管线（ffprobe / 容器判定 / 分段 MP4 + 重封 / HLS / 能力探测 / 字幕 / 封面） | [docs/media.md](docs/media.md) |
+| 媒体管线（ffprobe / 容器判定 / 分段 MP4 / 格式工厂 / HLS / 能力探测 / 字幕 / 封面） | [docs/media.md](docs/media.md) |
 | 前端（页签 keep-alive / 栏位栈 / Vidstack / 响应式 / 文件浏览器 / 卡片） | [docs/frontend.md](docs/frontend.md) |
 | 现状清单 / 遗留待办 / 人工验证清单 / 未来方向 | [docs/status.md](docs/status.md) |

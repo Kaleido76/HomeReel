@@ -1,4 +1,4 @@
-import { ArrowDownUp, ArrowUp, ChevronRight, ClipboardCopy, ClipboardPaste, Computer, Film, Layers, ListChecks, Pencil, Pin, ReplaceAll, Scissors, Trash2, Video } from 'lucide-react'
+import { ArrowDownUp, ArrowUp, ChevronRight, ClipboardCopy, ClipboardPaste, Computer, Factory, Film, Layers, ListChecks, Pencil, Pin, ReplaceAll, Scissors, Trash2, Video } from 'lucide-react'
 import { pathSegments } from './path'
 import { Tooltip } from './Tooltip'
 
@@ -50,6 +50,8 @@ export function Toolbar({
   onBatchRename,
   onMarkSeries,
   canMarkSeries,
+  onFormat,
+  canFormat,
   onPin,
   pinned,
   isSource,
@@ -75,6 +77,8 @@ export function Toolbar({
   onBatchRename: () => void
   onMarkSeries: () => void
   canMarkSeries: boolean
+  onFormat: () => void
+  canFormat: boolean
   onPin: () => void
   pinned: boolean
   isSource: boolean
@@ -208,6 +212,17 @@ export function Toolbar({
         <Tooltip tip="标记为系列：所选文件夹整体打包为系列（须位于媒体源内）；未选文件夹时把当前目录打包为系列">
           <button onClick={onMarkSeries} disabled={!canMarkSeries} className={btnCls}>
             <Layers className="size-4" />
+          </button>
+        </Tooltip>
+
+        <Tooltip tip="转到格式工厂：把所选文件/文件夹无损转换为 Faststart MP4 副本">
+          <button
+            onClick={onFormat}
+            disabled={!canFormat}
+            className="flex items-center gap-1.5 rounded-lg border border-blue-200 px-2.5 py-1.5 text-sm text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Factory className="size-4" />
+            格式工厂
           </button>
         </Tooltip>
 

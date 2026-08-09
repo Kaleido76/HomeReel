@@ -80,9 +80,11 @@ func run() error {
 		cfg.Server.DataDir,
 	)
 	// Generic machine-wide file browser (文件 tab): absolute-path listing,
-	// clipboard-style copy/move behind its own background jobs, and the
-	// multimedia-source + manual-resource markers that feed the video library.
-	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo)
+	// clipboard-style copy/move behind its own background jobs, format-factory
+	// conversions, and the multimedia-source + manual-resource markers that
+	// feed the video library.
+	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo,
+		cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
 
 	// VideoImported → enqueue thumbnail generation (ADR-010, ADR-012).
 	go func() {
@@ -110,10 +112,10 @@ func run() error {
 
 	// Background job worker (ADR-008). Job results are published on the bus so
 	// any component can react to a long task finishing. Generic file-browser
-	// jobs (fscopy/fsmove) are dispatched to the fservice handler, everything
-	// else (probe/thumbnail/scan_source/remux) to the scanner.
+	// jobs (fscopy/fsmove/convert) are dispatched to the fservice handler,
+	// everything else (probe/thumbnail/scan_source) to the scanner.
 	worker := jobs.NewWorker(store.NewJobRepo(database), func(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
-		if j.Type == jobs.TypeFsCopy || j.Type == jobs.TypeFsMove {
+		if j.Type == jobs.TypeFsCopy || j.Type == jobs.TypeFsMove || j.Type == jobs.TypeConvert {
 			return fsvc.HandleJob(ctx, j, report)
 		}
 		return scannerSvc.HandleJob(ctx, j, report)

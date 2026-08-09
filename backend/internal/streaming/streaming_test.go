@@ -145,10 +145,6 @@ func TestDirectServesRemuxed(t *testing.T) {
 	if got := serve(segmented); got != "SOURCE-BYTES" {
 		t.Errorf("segmented without remux copy = %q, want SOURCE-BYTES", got)
 	}
-
-	if s.Remuxed("v1") {
-		t.Error("Remuxed(v1) = true after removal, want false")
-	}
 }
 
 func TestCoverServesFromDataDir(t *testing.T) {

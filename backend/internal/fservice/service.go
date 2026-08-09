@@ -36,12 +36,13 @@ type Disk struct {
 
 // Entry is a single filesystem entry listed by absolute path.
 type Entry struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"` // absolute
-	IsDir   bool   `json:"is_dir"`
-	Size    int64  `json:"size"`
-	ModTime int64  `json:"mtime"` // unix seconds
-	IsVideo bool   `json:"is_video"`
+	Name          string `json:"name"`
+	Path          string `json:"path"` // absolute
+	IsDir         bool   `json:"is_dir"`
+	Size          int64  `json:"size"`
+	ModTime       int64  `json:"mtime"` // unix seconds
+	IsVideo       bool   `json:"is_video"`
+	IsConvertible bool   `json:"is_convertible"`
 }
 
 // OpError records a per-item failure during a batch operation.
@@ -58,16 +59,20 @@ type OpResult struct {
 
 // Service implements the generic file browser operations.
 type Service struct {
-	jobs    *jobs.Service
-	pins    domain.SettingsRepo
-	sources domain.SourceRepo
+	jobs        *jobs.Service
+	pins        domain.SettingsRepo
+	sources     domain.SourceRepo
+	ffmpegPath  string
+	ffprobePath string
 }
 
-// New builds the generic file service. jobsSvc backs background copy/move; pins
-// persists favorite paths and sources the multimedia-source markers, both in the
-// settings/DB layer.
-func New(jobsSvc *jobs.Service, pins domain.SettingsRepo, sources domain.SourceRepo) *Service {
-	return &Service{jobs: jobsSvc, pins: pins, sources: sources}
+// New builds the generic file service. jobsSvc backs background copy/move and
+// format-factory conversions; pins persists favorite paths and sources the
+// multimedia-source markers, both in the settings/DB layer. ffmpegPath /
+// ffprobePath are the binaries used by the format-factory convert jobs (empty
+// → rely on PATH).
+func New(jobsSvc *jobs.Service, pins domain.SettingsRepo, sources domain.SourceRepo, ffmpegPath, ffprobePath string) *Service {
+	return &Service{jobs: jobsSvc, pins: pins, sources: sources, ffmpegPath: ffmpegPath, ffprobePath: ffprobePath}
 }
 
 // ListDisks enumerates the host's local drives (Windows) or the root (unix).
@@ -116,6 +121,7 @@ func (s *Service) ListDir(_ context.Context, path string) ([]Entry, error) {
 		}
 		if !e.IsDir {
 			e.IsVideo = files.IsVideo(e.Name)
+			e.IsConvertible = files.IsConvertible(e.Name)
 		}
 		out = append(out, e)
 	}

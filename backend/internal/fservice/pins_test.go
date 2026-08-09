@@ -20,7 +20,7 @@ func TestGetPinsNeverNil(t *testing.T) {
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(nil, store.NewSettingsRepo(database), nil)
+	svc := New(nil, store.NewSettingsRepo(database), nil, "ffmpeg", "ffprobe")
 
 	ctx := context.Background()
 	pins, err := svc.GetPins(ctx)
@@ -43,7 +43,7 @@ func TestGetPinsMigratesLegacyKey(t *testing.T) {
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(nil, store.NewSettingsRepo(database), nil)
+	svc := New(nil, store.NewSettingsRepo(database), nil, "ffmpeg", "ffprobe")
 
 	ctx := context.Background()
 	want := []string{`C:\a`, `D:\b`}

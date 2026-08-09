@@ -29,6 +29,8 @@ import { RenameDrawer } from './RenameDrawer'
 import { isMediaName } from './fileType'
 import { parentPath } from './path'
 import { jobsKey } from '../jobs/useJobs'
+import { openFormat } from '../../tabs/manager'
+import type { ConvertTarget } from '../tools/format/queue'
 
 interface FilesSearch {
   path: string
@@ -312,6 +314,26 @@ export function FilesPage() {
     }
   }
 
+  // 转到格式工厂：有勾选则把勾选的路径（文件=单集、文件夹=系列）整体移交，
+  // 无勾选但当前目录含视频时把当前目录作为系列移交。转换本身在格式工厂页签执行。
+  function goFormat() {
+    const toTarget = (p: string): ConvertTarget => {
+      const e = entries.find((x) => x.path === p)
+      return {
+        path: p,
+        name: e?.name ?? (p.split(/[\\/]/).pop() ?? p),
+        is_dir: e?.is_dir ?? false,
+      }
+    }
+    const items =
+      selectedCount > 0
+        ? Array.from(selected).map(toTarget)
+        : path && entries.some((e) => !e.is_dir && e.is_convertible)
+          ? [{ path, name: path.split(/[\\/]/).pop() ?? path, is_dir: true }]
+          : []
+    if (items.length > 0) openFormat(items)
+  }
+
   const pinned = pins.data?.pins?.includes(path) ?? false
   const isSource = sources.data?.sources?.some((s) => s.path === path) ?? false
   const selectedCount = selected.size
@@ -329,6 +351,7 @@ export function FilesPage() {
         return e?.is_dir
       })
     : entries.some((e) => !e.is_dir && e.is_video)
+  const canFormat = selectedCount > 0 || entries.some((e) => !e.is_dir && e.is_convertible)
 
   return (
     <div className="flex h-full min-h-0">
@@ -365,6 +388,8 @@ export function FilesPage() {
           onBatchRename={openBatchRename}
           onMarkSeries={() => void markSelected()}
           canMarkSeries={canMarkSeries}
+          onFormat={goFormat}
+          canFormat={canFormat}
           onPin={togglePin}
           pinned={pinned}
           isSource={isSource}
