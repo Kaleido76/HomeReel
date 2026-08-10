@@ -36,7 +36,7 @@ const videoCols = `id, source_id, file_id, relative_path, path, size, mtime, tit
 	kind, description, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
 	cover_path, thumb_path, backdrop_path, show_id, season_number, episode_number, episode_title,
 	year, rating, genre, overview, studio, cast_text, metadata_source,
-	created_at, updated_at, last_scanned_at`
+	created_at, updated_at, last_scanned_at, faststart`
 
 // qualify prefixes every column with a table alias so videoCols can be used in
 // JOIN queries without ambiguous names.
@@ -58,7 +58,8 @@ func scanVideo(row scanner) (domain.Video, error) {
 		audioCodec    sql.NullString
 		container     sql.NullString
 		segmented     sql.NullInt64
-		width         sql.NullInt64
+		faststart    sql.NullInt64
+		width        sql.NullInt64
 		height        sql.NullInt64
 		fps           sql.NullFloat64
 		fileSize      sql.NullInt64
@@ -81,7 +82,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
 		&year, &rating, &genre, &overview, &studio, &castText, &v.MetadataSource,
-		&v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt); err != nil {
+		&v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt, &faststart); err != nil {
 		return domain.Video{}, err
 	}
 	if sourceID.Valid {
@@ -101,6 +102,9 @@ func scanVideo(row scanner) (domain.Video, error) {
 	}
 	if segmented.Valid {
 		v.Segmented = segmented.Int64 != 0
+	}
+	if faststart.Valid {
+		v.FastStart = faststart.Int64 != 0
 	}
 	if width.Valid {
 		v.Width = int(width.Int64)
@@ -275,13 +279,13 @@ func (r *videoRepo) Create(ctx context.Context, v domain.Video) error {
 	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO videos (id, source_id, file_id, relative_path, path, size, mtime,
-			title, kind, description, duration, codec, container, segmented, width, height,
-			created_at, updated_at, last_scanned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			title, kind, description, duration, codec, audio_codec, container, segmented, width, height,
+			faststart, created_at, updated_at, last_scanned_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.ID, nullString(v.SourceID), v.FileID, v.RelativePath, v.Path, v.Size, v.MTime,
 		v.Title, v.Kind, v.Description, nullFloat(v.Duration), nullString(v.Codec),
-		nullString(v.Container), segmentedInt(v.Segmented), v.Width, v.Height,
-		v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
+		nullString(v.AudioCodec), nullString(v.Container), segmentedInt(v.Segmented), v.Width, v.Height,
+		faststartInt(v.FastStart), v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
 	if err != nil {
 		return err
 	}
@@ -350,11 +354,11 @@ func (r *videoRepo) DeleteBySource(ctx context.Context, sourceID string) ([]stri
 
 func (r *videoRepo) UpdateProbe(ctx context.Context, v domain.Video) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE videos SET title = ?, duration = ?, codec = ?, container = ?,
-			segmented = ?, width = ?, height = ?, updated_at = ?
+		UPDATE videos SET title = ?, duration = ?, codec = ?, audio_codec = ?, container = ?,
+			segmented = ?, width = ?, height = ?, faststart = ?, updated_at = ?
 		WHERE id = ?`,
-		v.Title, v.Duration, nullString(v.Codec), nullString(v.Container),
-		segmentedInt(v.Segmented), v.Width, v.Height, domain.Now(), v.ID)
+		v.Title, v.Duration, nullString(v.Codec), nullString(v.AudioCodec), nullString(v.Container),
+		segmentedInt(v.Segmented), v.Width, v.Height, faststartInt(v.FastStart), domain.Now(), v.ID)
 	if err != nil {
 		return err
 	}
@@ -362,6 +366,13 @@ func (r *videoRepo) UpdateProbe(ctx context.Context, v domain.Video) error {
 }
 
 func segmentedInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func faststartInt(b bool) int {
 	if b {
 		return 1
 	}

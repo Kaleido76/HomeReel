@@ -256,7 +256,7 @@ func (r *seriesRepo) FindID(ctx context.Context, showID string, seasonNumber int
 func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.SeriesMember, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT v.id, v.title, v.episode_number, v.episode_title, v.duration, v.thumb_path,
-			v.relative_path,
+			v.relative_path, v.codec, v.audio_codec, v.container, v.segmented,
 			COALESCE(h.progress, 0) AS progress
 		FROM videos v
 		JOIN seasons se ON se.id = ?
@@ -275,9 +275,13 @@ func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.Series
 			epTitle  sql.NullString
 			duration sql.NullFloat64
 			thumb    sql.NullString
+			codec    sql.NullString
+			audio    sql.NullString
+			container sql.NullString
+			segmented sql.NullInt64
 		)
 		if err := rows.Scan(&m.VideoID, &title, &m.EpisodeNumber, &epTitle, &duration,
-			&thumb, &m.RelativePath, &m.Progress); err != nil {
+			&thumb, &m.RelativePath, &codec, &audio, &container, &segmented, &m.Progress); err != nil {
 			return nil, err
 		}
 		if title.Valid {
@@ -291,6 +295,18 @@ func (r *seriesRepo) GetMembers(ctx context.Context, id string) ([]domain.Series
 		}
 		if thumb.Valid {
 			m.ThumbPath = thumb.String
+		}
+		if codec.Valid {
+			m.Codec = codec.String
+		}
+		if audio.Valid {
+			m.AudioCodec = audio.String
+		}
+		if container.Valid {
+			m.Container = container.String
+		}
+		if segmented.Valid {
+			m.Segmented = segmented.Int64 != 0
 		}
 		out = append(out, m)
 	}

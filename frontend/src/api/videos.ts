@@ -15,6 +15,8 @@ export interface Video {
   codec: string
   audio_codec?: string
   container: string
+  segmented?: boolean
+  faststart?: boolean
   width: number
   height: number
   fps?: number
@@ -61,14 +63,13 @@ export interface VideoQuery {
 }
 
 // VideoDetailResponse is the shape of GET /api/videos/:id: the video plus the
-// backend-computed playability flags and the on-demand source-file status
+// backend-computed playability fallback and the on-demand source-file status
 // (ok | moved | missing, 单集详情同步提示用).
 export interface VideoDetailResponse {
   video: Video
   tags: string[]
   series_id?: string
   direct_playable: boolean
-  hls_enabled: boolean
   source_status: 'ok' | 'moved' | 'missing'
   new_path?: string
 }
@@ -166,10 +167,6 @@ export function searchVideos(q: string): Promise<{ videos: Video[] }> {
 
 export function streamUrl(id: string): string {
   return `/api/stream/${id}`
-}
-
-export function hlsUrl(id: string): string {
-  return `/api/stream/${id}/hls/master.m3u8`
 }
 
 export function coverUrl(id: string, thumb = false): string {

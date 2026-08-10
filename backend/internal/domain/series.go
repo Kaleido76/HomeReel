@@ -27,7 +27,10 @@ type Series struct {
 	TotalDuration  float64 `json:"total_duration"` // 成员时长合计（秒），供封面时长徽标
 }
 
-// SeriesMember is one video inside a series, with playback progress.
+// SeriesMember is one video inside a series, with playback progress. The probe
+// fields (codec/container/audio_codec/segmented) feed the frontend's runtime
+// canPlayType check for the play button; DirectPlayable is the backend's
+// conservative fallback.
 type SeriesMember struct {
 	VideoID       string  `json:"video_id"`
 	Title         string  `json:"title"`
@@ -37,6 +40,11 @@ type SeriesMember struct {
 	ThumbPath     string  `json:"thumb_path,omitempty"`
 	RelativePath  string  `json:"relative_path"`
 	Progress      float64 `json:"progress"`
+	Codec         string  `json:"codec,omitempty"`
+	AudioCodec    string  `json:"audio_codec,omitempty"`
+	Container     string  `json:"container,omitempty"`
+	Segmented     bool    `json:"segmented,omitempty"`
+	DirectPlayable bool   `json:"direct_playable"`
 }
 
 // SeriesLink is a weak, unnamed, ordered relation between two series.

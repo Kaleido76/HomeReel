@@ -21,6 +21,7 @@ type Video struct {
 	AudioCodec     string  `json:"audio_codec,omitempty"`
 	Container      string  `json:"container"`
 	Segmented      bool    `json:"segmented,omitempty"`
+	FastStart      bool    `json:"faststart"`
 	Width          int     `json:"width"`
 	Height         int     `json:"height"`
 	FPS            float64 `json:"fps,omitempty"`

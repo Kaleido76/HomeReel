@@ -17,13 +17,20 @@ type Info struct {
 	Duration  float64
 	Container string
 	Codec     string
+	AudioCodec string
 	Width     int
 	Height    int
 	// Segmented marks MP4-family files whose media data is split across
 	// multiple top-level mdat boxes or uses moof fragments (hls.js-downloaded
 	// files, fragmented MP4). Chrome's <video src> demuxer downloads such files
-	// in full before playing, so they are routed to HLS instead of direct play.
+	// in full before playing, so they are judged non-direct-playable and the
+	// user is prompted to convert them instead.
 	Segmented bool
+	// FastStart marks MP4-family files whose moov box sits before the first
+	// mdat (the media bytes), i.e. a "faststart" layout the browser can seek
+	// in immediately. A moov-at-tail or fragmented file is shown in the detail
+	// page as non-faststart with a suggestion to convert for smooth seeking.
+	FastStart bool
 }
 
 // Probe runs ffprobe on path and returns media metadata.
@@ -60,14 +67,21 @@ func Probe(ctx context.Context, ffprobePath, path string) (Info, error) {
 	info.Container = primaryContainer(raw.Format.FormatName)
 	info.Duration, _ = strconv.ParseFloat(raw.Format.Duration, 64)
 	for _, s := range raw.Streams {
-		if s.CodecType == "video" {
-			info.Codec = s.CodecName
-			info.Width = s.Width
-			info.Height = s.Height
-			break
+		switch s.CodecType {
+		case "video":
+			if info.Codec == "" {
+				info.Codec = s.CodecName
+				info.Width = s.Width
+				info.Height = s.Height
+			}
+		case "audio":
+			if info.AudioCodec == "" {
+				info.AudioCodec = s.CodecName
+			}
 		}
 	}
 	info.Segmented = mp4Family(info.Container) && isSegmented(path)
+	info.FastStart = mp4Family(info.Container) && isFastStart(path)
 	return info, nil
 }
 
@@ -98,7 +112,7 @@ func mp4Family(container string) bool {
 // "segmented" layout: more than one mdat box, or any moof fragment box. These
 // arise from hls.js download tools (one mdat per HLS segment) and fragmented
 // MP4; desktop Chrome's <video src> demuxer downloads such files in full
-// before playback, so they must go through HLS instead.
+// before playback, so they must be converted (non-direct-playable) instead.
 //
 // The walk reads only each box header (8 or 16 bytes) and seeks past the box,
 // so a normal file (ftyp/moov/single mdat) is resolved in a handful of reads
@@ -141,6 +155,50 @@ func isSegmented(path string) bool {
 			}
 		case "moof":
 			return true
+		}
+		offset += size
+	}
+	return false
+}
+
+// isFastStart walks the top-level boxes of an MP4-family file and reports a
+// faststart layout: the moov box appears before the first mdat box. A moov
+// that comes after mdat (or is missing entirely, as in fragmented MP4) forces
+// browsers to download or buffer before seeking.
+func isFastStart(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	var hdr [16]byte
+	for offset := int64(0); offset < info.Size(); {
+		if _, err := f.ReadAt(hdr[:8], offset); err != nil {
+			return false
+		}
+		size := int64(binary.BigEndian.Uint32(hdr[0:4]))
+		typ := string(hdr[4:8])
+		switch size {
+		case 1: // 64-bit largesize follows the header
+			if _, err := f.ReadAt(hdr[8:16], offset+8); err != nil {
+				return false
+			}
+			size = int64(binary.BigEndian.Uint64(hdr[8:16]))
+		case 0: // box extends to end of file
+			size = info.Size() - offset
+		}
+		if size < 8 {
+			return false
+		}
+		switch typ {
+		case "moov":
+			return true
+		case "mdat":
+			return false
 		}
 		offset += size
 	}

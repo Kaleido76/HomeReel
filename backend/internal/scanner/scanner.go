@@ -190,8 +190,10 @@ func (s *Service) scan(ctx context.Context, src domain.MediaSource, progress fun
 		if info, perr := s.probe(ctx, s.ffprobePath, c.path); perr == nil {
 			v.Duration = info.Duration
 			v.Codec = info.Codec
+			v.AudioCodec = info.AudioCodec
 			v.Container = info.Container
 			v.Segmented = info.Segmented
+			v.FastStart = info.FastStart
 			v.Width = info.Width
 			v.Height = info.Height
 		} else {
@@ -271,8 +273,10 @@ func (s *Service) processInline(ctx context.Context, videoID string, subtask sub
 	upd.Title = titleFromPath(v.RelativePath)
 	upd.Duration = info.Duration
 	upd.Codec = info.Codec
+	upd.AudioCodec = info.AudioCodec
 	upd.Container = info.Container
 	upd.Segmented = info.Segmented
+	upd.FastStart = info.FastStart
 	upd.Width = info.Width
 	upd.Height = info.Height
 	if err := s.videos.UpdateProbe(ctx, upd); err != nil {
@@ -408,8 +412,10 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job, _ jobs.Reporter) 
 	upd.Title = titleFromPath(v.RelativePath)
 	upd.Duration = info.Duration
 	upd.Codec = info.Codec
+	upd.AudioCodec = info.AudioCodec
 	upd.Container = info.Container
 	upd.Segmented = info.Segmented
+	upd.FastStart = info.FastStart
 	upd.Width = info.Width
 	upd.Height = info.Height
 	if err := s.videos.UpdateProbe(ctx, upd); err != nil {

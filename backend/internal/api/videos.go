@@ -89,7 +89,6 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 		"tags":            tags,
 		"series_id":       seriesID,
 		"direct_playable": s.streaming.DirectPlayable(*v),
-		"hls_enabled":     s.streaming.HLSEnabled(*v),
 		"source_status":   sourceStatus,
 		"new_path":        status.Path,
 	})
@@ -147,39 +146,6 @@ func (s *Server) handleStreamCover(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("stream cover", "video_id", v.ID, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-	}
-}
-
-func (s *Server) handleStreamMaster(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.streamOrError(w, r)
-	if !ok {
-		return
-	}
-	if err := s.streaming.MasterM3U8(w, r, *v); err != nil {
-		if errors.Is(err, streaming.ErrUnavailable) {
-			writeError(w, http.StatusConflict, "storage_unavailable", "源文件不可用（存储离线）")
-			return
-		}
-		if r.Context().Err() != nil {
-			return
-		}
-		slog.Error("stream hls master", "video_id", v.ID, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-	}
-}
-
-func (s *Server) handleStreamSegment(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.videoOrError(w, r, r.PathValue("id"))
-	if !ok {
-		return
-	}
-	if err := s.streaming.Segment(w, r, *v, r.PathValue("segment")); err != nil {
-		if errors.Is(err, streaming.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "分片不存在")
-			return
-		}
-		slog.Error("stream hls segment", "video_id", v.ID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}
 }

@@ -5,7 +5,14 @@ import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { deleteVideo, fetchVideo, syncVideo } from '../../api/videos'
 import { formatBytes, formatDuration } from '../../lib/format'
+import { canPlay } from '../../lib/playability'
+import { openFormat } from '../../tabs/manager'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
+
+const MP4_FAMILY = new Set(['mp4', 'm4v', 'mov', 'qt', '3gp', '3g2'])
+function isMp4Family(container?: string): boolean {
+  return MP4_FAMILY.has(container?.toLowerCase() ?? '')
+}
 
 // VideoDetailPane is the single-video detail shown in the middle column. It is
 // deliberately compact: a play action, the editable metadata panel and a
@@ -45,6 +52,9 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
   if (!detail.data) return null
   const video = detail.data.video
   const status = detail.data.source_status
+  const playable = canPlay(video, detail.data.direct_playable)
+  const openConvert = () =>
+    openFormat([{ path: video.path, name: video.path.split(/[\\/]/).pop() ?? video.path, is_dir: false }])
 
   async function doSync() {
     setError('')
@@ -73,15 +83,32 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
 
   return (
     <div className="space-y-4 p-4 sm:p-5">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-neutral-500">播放</span>
-        <button
-          onClick={() => navigate({ href: playHref })}
-          className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-        >
-          <Play className="size-4" /> 播放
-        </button>
-      </div>
+      {playable ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium text-neutral-500">播放</span>
+          <button
+            onClick={() => navigate({ href: playHref })}
+            className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            <Play className="size-4" /> 播放
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-amber-800">
+              该格式不支持直接播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
+            </p>
+            <p className="mt-0.5 text-xs text-amber-700">建议用格式工厂转换为 MP4 后再观看，转换不会修改原文件。</p>
+          </div>
+          <button
+            onClick={openConvert}
+            className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            <Play className="size-4" /> 格式工厂转换
+          </button>
+        </div>
+      )}
 
       {status === 'moved' && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
@@ -119,6 +146,15 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
           {video.width && video.height ? `${video.width}×${video.height} · ` : ''}
           {video.duration > 0 ? `${formatDuration(video.duration)} · ` : ''}
           {formatBytes(video.size)} · {video.container?.toUpperCase()}
+          {video.audio_codec ? ` · 音频 ${video.audio_codec}` : ''}
+          <span className={playable ? 'ml-2 text-emerald-600' : 'ml-2 text-amber-600'}>
+            {playable ? '可直连播放' : '不可直接播放'}
+          </span>
+          {isMp4Family(video.container) && !video.faststart && (
+            <span className="ml-2 text-amber-600" title="moov 位于文件尾部，浏览器需缓冲后才能拖动进度">
+              非快速启动
+            </span>
+          )}
           {detail.data.series_id ? (
             <Link to="/series/$id" params={{ id: detail.data.series_id }} className="ml-2 text-blue-600 hover:underline">
               所属系列 →

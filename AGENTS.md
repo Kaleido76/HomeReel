@@ -39,9 +39,12 @@ HomeReel 是部署在家里 PC 上的**个人视频资料管理平台**（DAM）
 ## 4. 技术栈（速览）
 
 - 前端：**React 19** + TypeScript、Vite、Tailwind CSS 4、TanStack Router / Query、Vidstack（播放器，
-  HLS 用本地 hls.js）。**前端包管理器一律使用 `pnpm`**；**禁止**用 `npm` / `cnpm` / `yarn`。
+  纯 Range 直连，无 HLS / hls.js）。**前端包管理器一律使用 `pnpm`**；**禁止**用 `npm` / `cnpm` / `yarn`。
 - 后端：Go 1.22+、标准库 `net/http`、`modernc.org/sqlite`（免 CGO）、`fsnotify`、`slog`、ULID。
-- 媒体：FFmpeg / ffprobe（探测、缩略图、HLS、字幕）。
+- 媒体：FFmpeg / ffprobe（探测、缩略图、字幕、格式工厂转换）。
+- **播放策略（ADR-006，2026-08 修订）**：纯 HTTP Range 直连，**无 HLS 转码**。可播放性由前端运行期
+  `canPlayType()` 核对（probe 元数据 → MIME/codecs，`lib/playability.ts`）；不可直连 → 播放按钮禁用、
+  引导格式工厂转换。判定机制运行期固化，不逐格式堆硬编码布尔。
 - 部署：`CGO_ENABLED=0` 单 `.exe` + `data_dir` + `config.yaml` + ffmpeg 二进制。
 - 开发环境细节见 [docs/environment.md](docs/environment.md)；架构/部署详述见 [docs/architecture.md](docs/architecture.md)。
 
@@ -134,6 +137,6 @@ frontend/
 | 项目定位 / 核心原则 / ADR 摘要 / 技术栈 / 部署 / 静态托管 / 启动输出 | [docs/architecture.md](docs/architecture.md) |
 | 开发环境（版本 / 安装 / FFmpeg PATH 陷阱 / go env） | [docs/environment.md](docs/environment.md) |
 | 后端与数据层（时间戳 / SQLite / 迁移 / FTS5 / 剧集系列归组 / 多媒体源 / jobs / 事件总线） | [docs/backend.md](docs/backend.md) |
-| 媒体管线（ffprobe / 容器判定 / 分段 MP4 / 格式工厂 / HLS / 能力探测 / 字幕 / 封面） | [docs/media.md](docs/media.md) |
+| 媒体管线（ffprobe / 容器判定 / 分段 MP4 / 格式工厂 / 能力判定 / 字幕 / 封面） | [docs/media.md](docs/media.md) |
 | 前端（页签 keep-alive / 栏位栈 / Vidstack / 响应式 / 文件浏览器 / 卡片） | [docs/frontend.md](docs/frontend.md) |
 | 现状清单 / 遗留待办 / 人工验证清单 / 未来方向 | [docs/status.md](docs/status.md) |

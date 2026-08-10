@@ -29,6 +29,11 @@ export interface SeriesMember {
   thumb_path?: string
   relative_path: string
   progress: number
+  codec?: string
+  audio_codec?: string
+  container?: string
+  segmented?: boolean
+  direct_playable: boolean
 }
 
 export interface SeriesLink {

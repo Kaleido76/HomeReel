@@ -305,8 +305,10 @@ func (s *Service) ensureVideo(ctx context.Context, c candidate, srcID string, by
 	if info, perr := s.probe(ctx, s.ffprobePath, c.path); perr == nil {
 		v.Duration = info.Duration
 		v.Codec = info.Codec
+		v.AudioCodec = info.AudioCodec
 		v.Container = info.Container
 		v.Segmented = info.Segmented
+		v.FastStart = info.FastStart
 		v.Width = info.Width
 		v.Height = info.Height
 	} else {

@@ -192,7 +192,7 @@ var migrations = []string{
 	`DROP TABLE IF EXISTS collection_videos;
 	DROP TABLE IF EXISTS collections`,
 	// 分段 MP4（多个 mdat 盒子 / moof 分片，hls.js 拼接文件）：Chrome 直连
-	// 会整文件下载，探测时标记 segmented，能力探测据此走 HLS。
+	// 会整文件下载，探测时标记 segmented，前端据此判不可直连并引导转换。
 	`ALTER TABLE videos ADD COLUMN segmented INTEGER NOT NULL DEFAULT 0`,
 	// 长时任务（jobs）：name 用于任务面板展示，internal 标记探测/缩略图等
 	// 内部短任务（对用户隐藏、不发通知）。
@@ -325,6 +325,9 @@ var migrations = []string{
 	ALTER TABLE videos DROP COLUMN resource_id;
 	ALTER TABLE seasons ADD COLUMN root_path TEXT;
 	CREATE UNIQUE INDEX idx_seasons_root ON seasons(root_path) WHERE root_path IS NOT NULL;`,
+	// 播放能力元数据（2026-08）：audio_codec 供「前后端协同能力判定」核对音频
+	// 是否可解码；faststart 标记 mp4 家族文件是否 moov 前置（浏览器可立即 seek）。
+	`ALTER TABLE videos ADD COLUMN faststart INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

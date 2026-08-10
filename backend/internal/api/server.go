@@ -106,8 +106,6 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/stream/{id}", s.requireAuth(http.HandlerFunc(s.handleStreamDirect)))
 	mux.Handle("GET /api/stream/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleStreamCover)))
-	mux.Handle("GET /api/stream/{id}/hls/master.m3u8", s.requireAuth(http.HandlerFunc(s.handleStreamMaster)))
-	mux.Handle("GET /api/stream/{id}/hls/{segment}", s.requireAuth(http.HandlerFunc(s.handleStreamSegment)))
 	mux.Handle("GET /api/stream/{id}/subtitle", s.requireAuth(http.HandlerFunc(s.handleStreamSubtitle)))
 	if staticDir != "" {
 		mux.Handle("GET /", staticHandler(staticDir))

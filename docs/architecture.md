@@ -30,7 +30,9 @@ HomeReel 是**个人视频资料管理平台**（DAM，Digital Asset Management�
 - **单 Go 服务**：v1.0 全程不拆服务；内部按包拆分，预留拆分边界（ADR-001）
 - **认证（多终端并发会话）**：单口令 + 会话 Cookie；每终端独立登录/独立会话，登出只清自身，互不挤占（ADR-002）
 - **数据库**：SQLite（纯 Go 驱动 + WAL），演进路线 WAL → FTS5 → 队列 → 缓存，**不默认迁移 PostgreSQL**（ADR-005）
-- **播放策略**：能力探测三层——可直连 → HTTP Range；不可直连 → HLS 转码；仍不可 → 转码兜底；HLS 默认 `auto`（ADR-006）
+- **播放策略（2026-08 修订）**：纯 HTTP Range 直连，**无 HLS 转码**。可播放性由前端运行期 `canPlayType()`
+  核对（probe 元数据 → MIME/codecs，`lib/playability.ts`）；不可直连 → 播放按钮禁用、引导格式工厂转换
+  （ADR-006）
 - **文件身份**：`(source_id, file_id, relative_path)` 三元组 + `(file_id, size, mtime)` 指纹；**file_id 全局匹配**（跨源移动保持同一视频）（ADR-007）
 - **多媒体源**：视频库入库单位是用户标记的**多媒体源**目录（`media_sources`，轻量持久化标记 + 扫描单位，不参与文件浏览生命周期）；嵌套源按路由表由子源优先；源根不可达时扫描中止、不动库（ADR-011 / ADR-014，2026-08 替换原 storages 多数据源/热插拔模型）
 - **系列组织**：视频库统一为「单集 + 系列」（一季/一部一个系列，`seasons.kind`=tv/movie，成员按位次排序允许缺失）；系列间弱关联 `series_links`；目录/文件名规则识别（ADR-015）。**元数据刮削（ADR-016，TMDB 在线 + NFO 侧边文件）已整体移除（2026-08）**，仅剩手动编辑。
@@ -41,16 +43,16 @@ HomeReel 是**个人视频资料管理平台**（DAM，Digital Asset Management�
 ## 4. 技术栈
 
 - 前端：**React 19** + TypeScript、Vite、Tailwind CSS 4、TanStack Router / Query、
-  Vidstack（播放器，HLS 用本地 hls.js）；Vitest + Testing Library（尚未配置 test script）。
+  Vidstack（播放器，Range 直连，无 HLS / hls.js）；Vitest + Testing Library（尚未配置 test script）。
 - 后端：Go 1.22+、标准库 `net/http`、`modernc.org/sqlite`（免 CGO）、`fsnotify`、`slog`、ULID。
-- 媒体：FFmpeg / ffprobe（探测、缩略图、HLS、字幕）。
+- 媒体：FFmpeg / ffprobe（探测、缩略图、字幕、格式工厂转换）。
 - 部署：`CGO_ENABLED=0` 单 `.exe` + `data_dir` + `config.yaml` + ffmpeg 二进制。
 
 ## 5. 部署形态与配置
 
 - 单二进制：后端通过 `config.server.static_dir` 托管前端构建产物；空则自动探测 `./static`（部署形态）
   或 `../frontend/dist`（backend 目录运行 dev 形态），均不存在则仅 API。
-- 运行形态：`data_dir`（数据库、缩略图、转码缓存等）+ `config.yaml`（`media.ffmpeg_path` /
+- 运行形态：`data_dir`（数据库、缩略图等）+ `config.yaml`（`media.ffmpeg_path` /
   `media.ffprobe_path` 等）+ 系统 PATH 或 config 中的 ffmpeg 二进制。
 - 配置细节（config.yaml 各键的完整说明）见 plan §8。
 

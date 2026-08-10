@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  isHLSProvider,
   MediaPlayer,
   MediaProvider,
   Track,
-  useMediaProvider,
   useMediaRemote,
-  type HLSSrc,
   type MediaPlayerInstance,
   type VideoSrc,
 } from '@vidstack/react'
@@ -15,7 +12,7 @@ import '@vidstack/react/player/styles/base.css'
 import '@vidstack/react/player/styles/default/theme.css'
 import '@vidstack/react/player/styles/default/layouts/video.css'
 import type { Video } from '../../api/videos'
-import { coverUrl, fetchHistory, hlsUrl, putHistory, streamUrl, subtitleUrl } from '../../api/videos'
+import { coverUrl, fetchHistory, putHistory, streamUrl, subtitleUrl } from '../../api/videos'
 import { getActiveTab, subscribeTabs } from '../../tabs/manager'
 
 // Resume only kicks in beyond these boundaries so an almost-finished video
@@ -25,48 +22,15 @@ const RESUME_TAIL = 20
 // Progress persistence is throttled (ADR plan: ~10s cadence).
 const SAVE_INTERVAL = 10
 
-// HlsLibConfig pins the local hls.js package instead of Vidstack's default
-// CDN load (LAN-only deployment) and relaxes the manifest timeout so the
-// player survives the on-demand transcode's first-play latency instead of
-// aborting at the 10s hls.js default and spinning forever.
-//
-// Buffering is capped tightly: during the incremental transcode the playlist
-// has no ENDLIST, so hls.js treats it as a live stream and races toward the
-// "live edge" — with a fast transcode the edge advances far ahead of playback
-// and hls.js would otherwise download dozens of segments up front. A ~1-segment
-// forward buffer (maxBufferLength) plus a short back buffer keep the download
-// to a little-ahead preload; maxBufferSize 0 disables the byte cap so the time
-// cap is the single binding limit.
-function HlsLibConfig() {
-  const provider = useMediaProvider()
-  useEffect(() => {
-    if (provider && isHLSProvider(provider)) {
-      provider.library = () => import('hls.js')
-      provider.config = {
-        manifestLoadingTimeOut: 60_000,
-        manifestLoadingMaxRetry: 20,
-        manifestLoadingRetryDelay: 2000,
-        liveDurationInfinity: true,
-        liveSyncDurationCount: 1,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 10,
-        maxBufferSize: 0,
-        backBufferLength: 30,
-      }
-    }
-  }, [provider])
-  return null
-}
-
+// VideoPlayer plays over HTTP Range only (ADR-006, 2026-08): a file that the
+// browser cannot decode natively is never handed to a Live/HLS path — the
+// caller decides playability (canPlay in lib/playability.ts) and renders this
+// player only for playable files, otherwise it shows the convert prompt.
 export function VideoPlayer({
   video,
-  directPlayable,
-  hlsEnabled,
   onEnded,
 }: {
   video: Video
-  directPlayable: boolean
-  hlsEnabled: boolean
   onEnded?: () => void
 }) {
   const playerRef = useRef<MediaPlayerInstance>(null)
@@ -109,13 +73,10 @@ export function VideoPlayer({
     [remote],
   )
 
-  const direct = directPlayable || !hlsEnabled
   // /api/stream/{id} has no extension, so Vidstack cannot infer the media type
   // and would fall back to a HEAD probe (which can fail on cancelled requests).
   // Provide the type explicitly to select the right loader.
-  const mediaSrc: VideoSrc | HLSSrc = direct
-    ? { src: streamUrl(video.id), type: 'video/mp4' }
-    : { src: hlsUrl(video.id), type: 'application/x-mpegurl' }
+  const mediaSrc: VideoSrc = { src: streamUrl(video.id), type: 'video/mp4' }
 
   function onTimeUpdate(detail: { currentTime: number }) {
     posRef.current = detail.currentTime
@@ -151,7 +112,6 @@ export function VideoPlayer({
         onEnded?.()
       }}
     >
-      <HlsLibConfig />
       <MediaProvider>
         <Track src={subtitleUrl(video.id)} kind="subtitles" label="字幕" />
       </MediaProvider>

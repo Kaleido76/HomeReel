@@ -32,7 +32,7 @@ func TestMigrateFresh(t *testing.T) {
 	cols := []string{"kind", "description", "show_id", "season_number", "episode_number",
 		"episode_title", "year", "rating", "genre", "overview", "studio", "cast_text",
 		"metadata_source", "search_text", "backdrop_path", "audio_codec", "fps", "file_size",
-		"source_id"}
+		"source_id", "faststart"}
 	for _, col := range cols {
 		if !columnExists(t, database, "videos", col) {
 			t.Errorf("videos.%s missing after migration", col)
@@ -143,8 +143,9 @@ func TestMigrateClearsLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 应用除最后一条（管理面换代清库迁移）之外的全部迁移。
-	for i := 0; i < len(migrations)-1; i++ {
+	// 应用除最后两条（管理面换代清库迁移 + faststart 播放元数据迁移）之外的
+	// 全部迁移，模拟管理面换代之前、但已含手动资源机制的历史库。
+	for i := 0; i < len(migrations)-2; i++ {
 		for _, stmt := range splitStatements(migrations[i]) {
 			if _, err := tx.Exec(stmt); err != nil {
 				t.Fatalf("apply legacy migration %d (%q): %v", i+1, stmt, err)

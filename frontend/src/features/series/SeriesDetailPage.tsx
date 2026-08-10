@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Calendar, Layers, Loader2, Play, Plus, RefreshCw, Star, X } from 'lucide-react'
 import { addSeriesLink, fetchSeries, fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, syncSeries } from '../../api/series'
 import { formatDuration } from '../../lib/format'
+import { canPlay, prefetchPlayability } from '../../lib/playability'
 
 // SeriesDetailPage renders the series detail for the middle column of the
 // wide-screen library. It receives the id as a prop (the route is matched by
@@ -20,6 +21,13 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const [pick, setPick] = useState('')
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['series', id] })
+
+  // 数据到达即预收集全部成员的可播放性（进入页面时集中判定一次，成员行渲染
+  // 直接命中缓存），避免几十个成员逐个 createElement + canPlayType 的累积开销。
+  const detailMembers = detail.data?.members
+  useEffect(() => {
+    if (detailMembers) prefetchPlayability(detailMembers)
+  }, [detailMembers])
 
   const addLink = useMutation({
     mutationFn: (linkedId: string) => addSeriesLink(id, linkedId),
@@ -146,13 +154,23 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                 {member.duration > 0 ? formatDuration(member.duration) : ''}
               </span>
               <div className="flex shrink-0 items-center gap-2">
-                <Link
-                  to="/series/$id/play/$videoId"
-                  params={{ id: seriesId, videoId: member.video_id }}
-                  className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
-                >
-                  <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
-                </Link>
+                {canPlay(member, member.direct_playable) ? (
+                  <Link
+                    to="/series/$id/play/$videoId"
+                    params={{ id: seriesId, videoId: member.video_id }}
+                    className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+                  >
+                    <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
+                  </Link>
+                ) : (
+                  <button
+                    disabled
+                    title="该格式不支持直接播放，请转换后播放"
+                    className="flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded bg-neutral-200 px-3 py-1.5 text-sm text-neutral-400"
+                  >
+                    <Play className="size-3.5" /> 不可播放
+                  </button>
+                )}
                 <Link
                   to="/series/$id/video/$videoId"
                   params={{ id: seriesId, videoId: member.video_id }}

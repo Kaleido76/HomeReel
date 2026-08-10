@@ -51,6 +51,7 @@ func (s *Server) handleSeriesDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
+	s.fillMemberPlayable(members)
 	links, err := s.series.GetLinks(r.Context(), id)
 	if err != nil {
 		slog.Error("get series links", "id", id, "err", err)
@@ -93,7 +94,22 @@ func (s *Server) handleSeriesMembers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
+	s.fillMemberPlayable(members)
 	writeJSON(w, http.StatusOK, map[string]any{"members": members})
+}
+
+// fillMemberPlayable annotates each member with the backend's conservative
+// playability fallback (the frontend re-checks at runtime via canPlayType).
+func (s *Server) fillMemberPlayable(members []domain.SeriesMember) {
+	for i := range members {
+		v := domain.Video{
+			Codec:      members[i].Codec,
+			AudioCodec: members[i].AudioCodec,
+			Container:  members[i].Container,
+			Segmented:  members[i].Segmented,
+		}
+		members[i].DirectPlayable = s.streaming.DirectPlayable(v)
+	}
 }
 
 func (s *Server) handleSeriesLinks(w http.ResponseWriter, r *http.Request) {

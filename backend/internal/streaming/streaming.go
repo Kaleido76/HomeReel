@@ -1,18 +1,11 @@
 package streaming
 
 import (
-	"bytes"
-	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"homereel/backend/internal/domain"
 )
@@ -25,83 +18,56 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-// Service streams indexed videos (ADR-006): direct HTTP Range for browser
-// native formats, on-demand HLS transcoding (single-flight, cached) otherwise,
-// plus cover/thumb and sidecar subtitle serving.
+// Service streams indexed videos (ADR-006): HTTP Range direct play for formats
+// the browser decodes natively. Whether a file actually plays on a given device
+// is decided at runtime by the frontend (canPlayType against the probe metadata
+// it receives); DirectPlayable here is a conservative fallback for browsers
+// where that probe is unavailable. There is no transcoding: a video that cannot
+// play directly must be converted by the user (格式工厂) first.
 type Service struct {
-	videos     domain.VideoRepo
-	dataDir    string
-	ffmpegPath string
-	enableHLS  string // auto | true | false
-	hlsPreset  string
-	hlsDir     string
-	remuxDir   string
-
-	mu     sync.Mutex
-	active map[string]*transcode
+	videos  domain.VideoRepo
+	dataDir string
 }
 
-// New builds the streaming service. dataDir hosts covers/ and the hls/ and
-// remux/ caches.
-func New(videos domain.VideoRepo, dataDir, ffmpegPath, enableHLS, hlsPreset string) *Service {
+// New builds the streaming service. dataDir hosts covers/ and thumbs/.
+func New(videos domain.VideoRepo, dataDir string) *Service {
 	return &Service{
-		videos:     videos,
-		dataDir:    dataDir,
-		ffmpegPath: ffmpegPath,
-		enableHLS:  enableHLS,
-		hlsPreset:  hlsPreset,
-		hlsDir:     filepath.Join(dataDir, "hls"),
-		remuxDir:   filepath.Join(dataDir, "remux"),
-		active:     make(map[string]*transcode),
+		videos:  videos,
+		dataDir: dataDir,
 	}
 }
 
-// DirectPlayable reports whether the browser can play the file natively via
-// HTTP Range (ADR-006 first layer). Containers/codecs outside the native set
-// must go through HLS transcoding. Older probe rows may store a comma-separated
-// format_name (e.g. "mov,mp4,..."), so container matching splits on commas.
+// DirectPlayable reports a conservative browser-native playability (Chromium's
+// dependable set: native containers plus widely-decodable video/audio codecs).
+// It deliberately excludes MKV and HEVC — whether those play depends on the
+// target browser (Chromium handles Matroska since 87; HEVC needs a hardware/
+// extension decode path), so the frontend decides them at runtime via
+// canPlayType against the probed codec metadata. This method is the fallback
+// when that runtime probe cannot run.
 func (s *Service) DirectPlayable(v domain.Video) bool {
-	if nativeCodecs[v.Codec] {
-		return containerNative(v.Container)
-	}
-	// Unknown codec: fall back to extension-based guess so unprobed files
-	// still play in the common case.
-	if v.Container != "" {
-		return false
-	}
-	ext := strings.ToLower(filepath.Ext(v.Path))
-	switch ext {
-	case ".mp4", ".m4v", ".mov", ".webm", ".ogv", ".ogg":
-		return true
-	}
-	return false
-}
-
-// HLSEnabled decides whether on-demand transcoding is active for a video.
-func (s *Service) HLSEnabled(v domain.Video) bool {
-	switch s.enableHLS {
-	case "true":
-		return true
-	case "false":
-		return false
-	default: // auto
-		return !s.DirectPlayable(v)
-	}
-}
-
-// Direct serves the source file with HTTP Range support. Segmented MP4 files
-// (hls.js-assembled, detected at probe time) are served from their remuxed
-// faststart copy when one has been produced — otherwise the raw source is
-// served and the browser may download it in full before playing (acceptable as
-// a fallback; the user can request a remux to fix it).
-func (s *Service) Direct(w http.ResponseWriter, r *http.Request, v domain.Video) error {
-	path := v.Path
-	if v.Segmented {
-		if remuxed, err := s.remuxed(v.ID); err == nil {
-			path = remuxed
+	if v.Codec == "" {
+		// Unprobed: extension-based guess so a fresh file still plays.
+		if v.Container != "" {
+			return false
 		}
+		switch strings.ToLower(filepath.Ext(v.Path)) {
+		case ".mp4", ".m4v", ".mov", ".webm", ".ogv", ".ogg":
+			return true
+		}
+		return false
 	}
-	f, err := os.Open(path)
+	if v.Segmented || !nativeCodecs[v.Codec] || !containerNative(v.Container) {
+		return false
+	}
+	if v.AudioCodec != "" && !nativeAudioCodecs[v.AudioCodec] {
+		return false
+	}
+	return true
+}
+
+// Direct serves the source file with HTTP Range support.
+func (s *Service) Direct(w http.ResponseWriter, r *http.Request, v domain.Video) error {
+	f, err := os.Open(v.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrUnavailable
@@ -114,17 +80,8 @@ func (s *Service) Direct(w http.ResponseWriter, r *http.Request, v domain.Video)
 		return err
 	}
 	w.Header().Set("Content-Type", contentType(v))
-	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(v.Path), info.ModTime(), f)
 	return nil
-}
-
-// remuxed returns the remuxed faststart copy path for a video when it exists.
-func (s *Service) remuxed(videoID string) (string, error) {
-	p := filepath.Join(s.remuxDir, videoID+".mp4")
-	if _, err := os.Stat(p); err != nil {
-		return "", err
-	}
-	return p, nil
 }
 
 // Cover serves the generated cover or thumb image from data_dir.
@@ -156,92 +113,6 @@ func (s *Service) Cover(w http.ResponseWriter, r *http.Request, v domain.Video, 
 	return nil
 }
 
-// MasterM3U8 ensures the on-demand transcode for v is running (starting it if
-// needed) and serves its playlist once it contains playable segments. The
-// playlist is read into memory and served as a snapshot (ffmpeg rewrites the
-// file in place, so streaming the live file can race a partial write) with
-// Cache-Control: no-store so a stale cached copy never stalls hls.js.
-func (s *Service) MasterM3U8(w http.ResponseWriter, r *http.Request, v domain.Video) error {
-	dir := filepath.Join(s.hlsDir, v.ID)
-	playlist := filepath.Join(dir, "master.m3u8")
-	serveMaster := func() (bool, error) {
-		data, err := os.ReadFile(playlist)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return false, nil
-			}
-			return false, err
-		}
-		if !bytes.Contains(data, []byte("#EXTINF")) {
-			// Playlist exists but has no segments yet — not ready.
-			return false, nil
-		}
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(data)
-		return true, err
-	}
-
-	s.mu.Lock()
-	tr, running := s.active[v.ID]
-	if !running {
-		if hlsComplete(dir) {
-			s.mu.Unlock()
-			_, err := serveMaster()
-			return err
-		}
-		// A stale partial transcode (previous process died mid-run) has no
-		// ENDLIST marker; discard it and transcode fresh.
-		_ = os.RemoveAll(dir)
-		tctx, cancel := context.WithCancel(context.Background())
-		tr = &transcode{cancel: cancel, done: make(chan struct{})}
-		s.active[v.ID] = tr
-		s.mu.Unlock()
-		go s.runTranscode(tctx, v, dir, tr.done)
-	} else {
-		s.mu.Unlock()
-	}
-
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return r.Context().Err()
-		case <-tr.done:
-			if _, err := os.Stat(playlist); err != nil {
-				return ErrUnavailable
-			}
-			_, err := serveMaster()
-			return err
-		case <-ticker.C:
-			ready, err := serveMaster()
-			if err != nil {
-				return err
-			}
-			if ready {
-				return nil
-			}
-		}
-	}
-}
-
-var segmentRe = regexp.MustCompile(`^segment-\d{5}\.ts$`)
-
-// Segment serves a cached HLS segment produced by the transcode.
-func (s *Service) Segment(w http.ResponseWriter, r *http.Request, v domain.Video, name string) error {
-	if !segmentRe.MatchString(name) {
-		return ErrNotFound
-	}
-	p := filepath.Join(s.hlsDir, v.ID, name)
-	if !within(s.hlsDir, p) {
-		return ErrNotFound
-	}
-	return serveFile(w, r, p, "video/mp2t")
-}
-
 // Subtitle serves a sidecar subtitle (.srt/.vtt/.ass) sitting next to the
 // source file. Embedded-track extraction is a later enhancement.
 func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Video) error {
@@ -265,19 +136,9 @@ func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Vide
 	return ErrNotFound
 }
 
-// RemoveCache deletes a video's HLS transcode, remuxed copy and generated
-// cover/thumb files (called when the video is deleted or its file changes so
-// stale caches and orphaned images are never served or left behind).
+// RemoveCache deletes a video's generated cover/thumb files (called when the
+// video is deleted or its file changes so stale images are never served).
 func (s *Service) RemoveCache(videoID string) {
-	s.mu.Lock()
-	if tr, ok := s.active[videoID]; ok {
-		tr.cancel()
-		delete(s.active, videoID)
-	}
-	s.mu.Unlock()
-	_ = os.RemoveAll(filepath.Join(s.hlsDir, videoID))
-	_ = os.Remove(filepath.Join(s.remuxDir, videoID+".mp4"))
-	_ = os.Remove(filepath.Join(s.remuxDir, videoID+".mp4.tmp"))
 	covers := filepath.Join(s.dataDir, "covers")
 	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
 		_ = os.Remove(filepath.Join(covers, videoID+ext))
@@ -285,58 +146,7 @@ func (s *Service) RemoveCache(videoID string) {
 	_ = os.Remove(filepath.Join(s.dataDir, "thumbs", videoID+".thumb.jpg"))
 }
 
-type transcode struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-// runTranscode transcodes the whole source into an HLS playlist in dir,
-// removing itself from the single-flight map when done (success or failure).
-// On success it writes a .done marker so a restart can tell complete from
-// partial caches.
-func (s *Service) runTranscode(ctx context.Context, v domain.Video, dir string, done chan struct{}) {
-	defer close(done)
-	defer func() {
-		s.mu.Lock()
-		delete(s.active, v.ID)
-		s.mu.Unlock()
-	}()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		slog.Warn("hls mkdir", "video_id", v.ID, "err", err)
-		return
-	}
-	preset := s.hlsPreset
-	if preset == "" {
-		preset = "fast"
-	}
-	cmd := newTranscodeCommand(ctx, s.ffmpegPath, v.Path,
-		filepath.Join(dir, "segment-%05d.ts"), filepath.Join(dir, "master.m3u8"), preset)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("hls transcode failed",
-				"video_id", v.ID, "err", err, "output", truncate(string(out), 500))
-		}
-		return
-	}
-	if _, err := os.Stat(filepath.Join(dir, "master.m3u8")); err != nil {
-		return
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".done"), []byte("ok\n"), 0o644); err != nil {
-		slog.Warn("hls done marker", "video_id", v.ID, "err", err)
-	}
-}
-
-// hlsComplete reports whether a cache dir holds a fully transcoded playlist.
-func hlsComplete(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "master.m3u8")); err != nil {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(dir, ".done"))
-	return err == nil
-}
-
-func serveFile(w http.ResponseWriter, r *http.Request, path, contentType string, noCache ...bool) error {
+func serveFile(w http.ResponseWriter, r *http.Request, path, contentType string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -350,14 +160,12 @@ func serveFile(w http.ResponseWriter, r *http.Request, path, contentType string,
 		return err
 	}
 	w.Header().Set("Content-Type", contentType)
-	if len(noCache) > 0 && noCache[0] {
-		w.Header().Set("Cache-Control", "no-store")
-	}
 	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
 	return nil
 }
 
-// nativeContainers / nativeCodecs describe what browsers play via Range.
+// nativeContainers / nativeCodecs describe the container/codec set every
+// Chromium browser decodes for <video src> without any platform extension.
 var (
 	nativeContainers = map[string]bool{
 		"mp4": true, "m4v": true, "mov": true, "qt": true,
@@ -366,6 +174,13 @@ var (
 	nativeCodecs = map[string]bool{
 		"h264": true, "avc1": true, "avc3": true,
 		"vp8": true, "vp9": true, "av1": true, "theora": true,
+	}
+	// nativeAudioCodecs are audio codecs Chromium decodes inside the native
+	// containers. AC3/EAC3 decode in Chromium (unlike DTS); DTS and lossless PCM
+	// are excluded so a file never plays silently.
+	nativeAudioCodecs = map[string]bool{
+		"aac": true, "mp3": true, "opus": true, "vorbis": true, "flac": true,
+		"ac3": true, "eac3": true,
 	}
 )
 
@@ -427,11 +242,4 @@ func within(root, target string) bool {
 		return true
 	}
 	return strings.HasPrefix(target, root+string(filepath.Separator))
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }

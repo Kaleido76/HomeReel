@@ -5,34 +5,36 @@
 
 ## 1. ffprobe / ffmpeg
 
-- 探测、缩略图、HLS 转码、字幕均依赖 FFmpeg / ffprobe。
+- 探测、缩略图、字幕、格式工厂转换均依赖 FFmpeg / ffprobe。
 - 进程 PATH 找不到时在 `config.yaml` 显式配置 `media.ffmpeg_path` / `media.ffprobe_path`
   （YAML `\\` 转义），改后重启。
 
 ## 2. 容器判定
 
 - ffprobe `format_name` 是逗号分隔列表（如 `mov,mp4,m4a,...`）。`media.Probe` 归一化首个 token 入库。
-- `DirectPlayable` 按逗号分词匹配，**禁止整串查映射**（否则 mp4/h264 被误判为不可直连而误走 HLS）。
+- `streaming.DirectPlayable`（后端保守 fallback）按逗号分词匹配，**禁止整串查映射**。
 - **`contentType` 优先按文件扩展名**判定（`.mp4/.m4v→video/mp4`、`.mov→video/quicktime` 等），
   demuxer 分词仅作扩展名未识别时的回退——因为 MOV demuxer 覆盖整个 MP4 家族，先按 token 会把真实
   .mp4 误标成 `video/quicktime`，桌面浏览器不认该 MIME 会退化为整文件下载/卡顿（2026-09 修复）。
 
-## 3. 分段 MP4（2026-09）
+## 3. 分段 MP4（2026-09）与播放元信息
 
 - hls.js 拼接文件/分片式 MP4 有多个顶层 `mdat` 盒子或 `moof` 分片，Chrome `<video src>` 会整文件
   顺序下载后才播放。
 - `media.Probe` 在探测时轻量走顶层 box（读 8/16 字节头逐盒跳转）识别并写入 `videos.segmented`
   （迁移新增列），`mdat>1` 或发现 `moof` 即判真，仅对 mp4/mov 家族扫描。
-- **分段文件不回退 HLS**（增量 HLS 期间按 live 处理、长片无进度条，体验差）；而是**保持直连**，
-  由「格式工厂」（§3.1）把源文件转成标准 Faststart MP4 副本根治。
-- `streaming.Direct` 对分段文件优先服务 `data/remux/<id>.mp4` 遗留缓存（旧「重封」页签的产物，
-  现已无管理入口）否则回退原文件；删除/文件变更时 `RemoveCache` 清理 HLS 与 remux 缓存。
+- **分段文件判不可直连**（`segmented` 前端直接否决播放），引导「格式工厂」（§3.1）转成标准
+  Faststart MP4 副本根治；不再有 remux 缓存。
+- `media.Probe` 同时写入：
+  - `audio_codec`：首个音频流的编码名（供前端 canPlayType 核对音频是否可解）；
+  - `faststart`：mp4 家族文件 **moov 是否位于首个 mdat 之前**（`isFastStart` 复用 box 遍历），
+    非 faststart 在详情页展示「非快速启动」提示（拖动需缓冲，建议转换以获得流畅体验），不阻止播放。
 
 ## 3.1 格式工厂（2026-09，替代原「重封」页签）
 
-把任意本地视频/文件夹转换为**浏览器可直接播放的 Faststart MP4 副本**（`fservice/convert.go`），
-转换后播放器可直连播放、可拖动进度条，不再触发按需 HLS 转码——这是 MKV/HEVC 播放器一直处于
-「Live 直播模式」的根治手段。
+把任意本地视频/文件夹转换为**浏览器可直接 Range 播放的 Faststart MP4 副本**（`fservice/convert.go`）。
+2026-08 起播放**只有直连一条路**：无法直连的资源（HEVC、DTS 音频、AVI/WMV/TS 容器、fMP4 等）播放按钮
+禁用并引导格式工厂转换，转换产物即可直连播放、可拖动进度条。
 
 - **单集**：`Movie.mkv` → 同目录 `Movie.mp4`（同名已存在则 `Movie (1).mp4`，**绝不覆盖源文件**）。
 - **系列/文件夹**：`MyShow\` → 同级 `MyShow (MP4)\`，把该文件夹**直接一级视频文件**逐一转换
@@ -90,21 +92,22 @@
   均无字幕轨 → 禁用烧录字幕复选框；无损流拷贝 → 禁用清晰度 CRF；保留原音 → 禁用音频码率。待转换清单每行
   展示该文件的探测徽标（位图字幕/文本字幕/AC3 等）。未选择文件时整个操作面板被遮罩禁用。
 
-## 4. HLS 转码
+## 4. 能力判定（2026-08 修订：纯直连，无 HLS）
 
-- 单飞（in-flight 去重）+ 后台；命令见 `streaming/transcode.go`（`-hls_list_size 0`、
-  `-hls_flags temp_file+independent_segments` 原子写、`-map 0:a:0?`）。
-- `master.m3u8` **读入内存快照**服务（ffmpeg 原地重写，直接 ServeContent 会读到截断），仅含
-  `#EXTINF` 才对外服务、`Cache-Control: no-store`（避免 304 卡死 hls.js）。
-- `.done` 标记区分完成缓存/崩溃残留，残留整目录重建；转码结束从 `s.active` 移除。
-- 缓存随 `VideoDeleted`/`VideoUpdated` 失效。
-- HLS 仅单一路码率（`-hls_time 10`，无自适应多码率）；嵌入字幕轨道抽取未做（仅侧边字幕文件）。
+- **唯一决策源是前端运行期 `canPlayType()`**（`frontend/src/lib/playability.ts` 的 `canPlay()`）：probe
+  元数据（容器/视频编码/音频编码/segmented）→ MIME + RFC 6381 codecs 串 →
+  `HTMLMediaElement.canPlayType()`。能 → Range 直连；不能 → 播放按钮禁用 + 引导格式工厂转换。
+- 后端 `streaming.DirectPlayable` / 系列成员 `direct_playable` 是**保守 fallback**（Chromium 确定支持集：
+  原生容器 + h264/vp8/vp9/av1/theora + aac/mp3/opus/vorbis/flac/ac3/eac3，不含 MKV/HEVC/fMP4），仅在
+  `canPlayType` 探测不可用时兜底，不作为主判据。
+- **MKV** 由 `canPlayType('video/x-matroska; codecs=…')` 天然区分：Chromium 87+ 支持（可直连）、
+  Firefox/Safari 返回空（引导转换）。**MKV 且 `audio_codec` 为空（未探测/源未重扫）时保守判不可播放**
+  ——空值无法确认音轨能否解码（DTS/PCM 会无声），重扫源填充 `audio_codec` 后有声轨的按编码正确判定。
+- **HEVC** 由目标机能力决定：装「HEVC 视频扩展」或硬件解码支持时 `canPlayType` 返回非空（可直连），
+  否则引导转换。
+- `GET /api/videos/{id}` 返回 `direct_playable`（后端 fallback）与 video 的 `container/codec/audio_codec/
+  segmented/faststart` 元信息；`GET /api/series/{id}` 成员带同样字段。
 
-## 5. 能力探测唯一来源
-
-- 直连/HLS 判定由后端 `streaming.DirectPlayable`/`HLSEnabled` 计算，`GET /api/videos/{id}` 返回
-  `direct_playable`/`hls_enabled`，前端不重复实现。
-
-## 6. 字幕
+## 5. 字幕
 
 - 侧边 `.srt/.vtt/.ass` 字幕文件（与视频同名）会被识别并提供给播放器；嵌入字幕轨道抽取未做。

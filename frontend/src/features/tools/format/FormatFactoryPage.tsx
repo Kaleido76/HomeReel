@@ -101,7 +101,7 @@ export function FormatFactoryPage() {
       <div>
         <h1 className="text-2xl font-semibold text-neutral-900">格式工厂</h1>
         <p className="mt-1 max-w-2xl text-sm text-neutral-500">
-          把任意视频转换为 Faststart MP4 副本，浏览器可直接播放、可拖动进度条，不再触发按需 HLS 转码。
+          把任意视频转换为 Faststart MP4 副本，浏览器可直接 Range 播放、可拖动进度条——无法直接播放的格式需先经此转换。
           在「文件」页签选中视频或文件夹后点工具栏的「格式工厂」按钮加入待转换队列，选择转换方式后开始转换。
         </p>
       </div>

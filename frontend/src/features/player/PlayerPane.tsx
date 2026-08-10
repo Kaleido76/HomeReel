@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, Play, Repeat } from 'lucide-react'
@@ -6,6 +6,8 @@ import { fetchVideo } from '../../api/videos'
 import { coverUrl } from '../../api/videos'
 import { fetchSeriesDetail } from '../../api/series'
 import { formatBytes, formatDuration } from '../../lib/format'
+import { canPlay, prefetchPlayability } from '../../lib/playability'
+import { openFormat } from '../../tabs/manager'
 import { VideoPlayer } from './VideoPlayer'
 
 // PlayerPane is the right-hand column of the wide-screen library. Layout, top
@@ -43,7 +45,19 @@ export function PlayerPane({
   })
   const [autoplay, setAutoplay] = useState(true)
 
+  // 播放栏载入系列成员后预收集其可播放性，上下集/「接下来播放」跳转时直接
+  // 命中缓存，避免切换时逐个探测。
+  const seriesMembers = seriesDetail.data?.members
+  useEffect(() => {
+    if (seriesMembers) prefetchPlayability(seriesMembers)
+  }, [seriesMembers])
+
   const video = detail.data?.video
+  // Runtime playability (frontend canPlayType against the probed codecs), with
+  // the backend's conservative flag as fallback when the probe is unavailable.
+  const playable = video ? canPlay(video, detail.data?.direct_playable ?? false) : false
+  const openConvert = () =>
+    video && openFormat([{ path: video.path, name: video.path.split(/[\\/]/).pop() ?? video.path, is_dir: false }])
 
   // neighbours and the up-next list in the series' member order (by episode number)
   const { neighbours, upNext } = useMemo(() => {
@@ -92,14 +106,26 @@ export function PlayerPane({
         </span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden bg-black">
-        <VideoPlayer
-          video={video}
-          directPlayable={detail.data?.direct_playable ?? false}
-          hlsEnabled={detail.data?.hls_enabled ?? false}
-          onEnded={autoplay && neighbours.next ? () => go(neighbours.next!) : undefined}
-        />
-      </div>
+      {playable ? (
+        <div className="min-h-0 flex-1 overflow-hidden bg-black">
+          <VideoPlayer video={video} onEnded={autoplay && neighbours.next ? () => go(neighbours.next!) : undefined} />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-neutral-50 p-6">
+          <p className="text-sm text-neutral-700">
+            该文件格式不支持直接播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
+          </p>
+          <p className="max-w-md text-center text-xs text-neutral-400">
+            请用格式工厂转换为浏览器可直接播放的 MP4 后再观看。转换不会修改原文件。
+          </p>
+          <button
+            onClick={openConvert}
+            className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            <Play className="size-4" /> 格式工厂转换
+          </button>
+        </div>
+      )}
 
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-neutral-200 bg-white px-4 py-2.5">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800" title={video.title}>

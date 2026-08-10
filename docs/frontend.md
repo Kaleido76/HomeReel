@@ -1,7 +1,7 @@
 # frontend.md — 前端架构与约定
 
 > 改动 `frontend/src/{tabs,features}` 前必读。技术栈：React 19 + TypeScript、Vite、Tailwind CSS 4、
-> TanStack Router / Query、Vidstack + 本地 hls.js；**前端命令一律用 `pnpm`**。
+> TanStack Router / Query、Vidstack（Range 直连，无 HLS）；**前端命令一律用 `pnpm`**。
 
 ## 1. 多 Router 页签（keep-alive）
 
@@ -108,13 +108,13 @@
 ## 3. 播放器（Vidstack）
 
 - 用 `@vidstack/react`（v1.15+，**勿装废弃的 `@vidstack/player`**）。
-- HLS 经 `useMediaProvider` 设 `provider.library = () => import('hls.js')` 指向本地包（默认 jsdelivr CDN，
-  LAN 离线失败），并放宽 `provider.config.manifestLoadingTimeOut`（默认 10s 首播转码期超时→无限转圈）。
-- **缓冲收紧**：`maxBufferLength/maxMaxBufferLength=10`、`maxBufferSize=0`、`backBufferLength=30`
-  （增量转码期 playlist 无 ENDLIST，hls.js 按 live 追 live edge，否则会抢先下载大量分片——2026-09 修复）。
+- **纯 Range 直连（2026-08，无 HLS / hls.js）**：可播放性在**进入播放器之前**由 `lib/playability.ts` 的
+  `canPlay()` 决定——probe 元数据（容器/视频编码/音频编码/segmented）→ MIME + codecs 串 →
+  `HTMLMediaElement.canPlayType()`。不可播放时播放按钮禁用，详情/播放栏显示「格式工厂转换」引导，播放器
+  组件本身**永远不会拿到不可直连的文件**。
 - 样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，
   `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。
-- **`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc | HLSSrc`），否则
+- **`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc`），否则
   回退 HEAD 探测失败即报 `could not find a loader`。
 - **播放器填满播放栏高度**：`MediaPlayer` 加 `className="h-full w-full bg-black"` +
   `style={{ aspectRatio: 'auto' }}` 覆盖 Vidstack 默认 16:9（`aspect-ratio: inherit` 沿用到

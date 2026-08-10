@@ -66,8 +66,7 @@ func run() error {
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
-	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir,
-		cfg.Media.FFmpegPath, cfg.Media.EnableHLS, cfg.Media.HLSPreset)
+	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir)
 	scannerSvc := scanner.New(
 		videosRepo,
 		sourcesRepo,
@@ -97,8 +96,8 @@ func run() error {
 		}
 	}()
 
-	// VideoDeleted/VideoUpdated → drop stale HLS/remux caches (and cancel an
-	// in-flight transcode) so a deleted or replaced file is never served stale.
+	// VideoDeleted/VideoUpdated → drop the generated cover/thumb files so a
+	// deleted or replaced file is never served stale.
 	go func() {
 		for ev := range bus.Subscribe(events.VideoDeleted, events.VideoUpdated) {
 			if id := ev.Data["video_id"]; id != "" {

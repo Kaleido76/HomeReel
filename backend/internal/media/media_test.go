@@ -52,6 +52,40 @@ func TestIsSegmented(t *testing.T) {
 	}
 }
 
+func TestIsFastStart(t *testing.T) {
+	faststart := box(nil, "ftyp", []byte("isom"))
+	faststart = box(faststart, "moov", make([]byte, 64))
+	faststart = box(faststart, "mdat", make([]byte, 256))
+
+	tailMoov := box(nil, "ftyp", []byte("isom"))
+	tailMoov = box(tailMoov, "mdat", make([]byte, 256))
+	tailMoov = box(tailMoov, "moov", make([]byte, 64))
+
+	fragmented := box(nil, "ftyp", []byte("isom"))
+	fragmented = box(fragmented, "moof", make([]byte, 32))
+	fragmented = box(fragmented, "mdat", make([]byte, 128))
+
+	dir := t.TempDir()
+	cases := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"moov before mdat", faststart, true},
+		{"moov after mdat", tailMoov, false},
+		{"fragmented no head moov", fragmented, false},
+	}
+	for _, c := range cases {
+		path := filepath.Join(dir, c.name+".mp4")
+		if err := os.WriteFile(path, c.data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := isFastStart(path); got != c.want {
+			t.Errorf("%s: isFastStart = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestMp4Family(t *testing.T) {
 	for _, c := range []struct {
 		in   string

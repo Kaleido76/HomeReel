@@ -21,9 +21,13 @@ func TestDirectPlayable(t *testing.T) {
 		{"h264 mp4", domain.Video{Container: "mp4", Codec: "h264"}, true},
 		{"comma list mp4", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Codec: "h264"}, true},
 		{"comma list mov", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Codec: "h264"}, true},
-		{"segmented mp4", domain.Video{Container: "mp4", Codec: "h264", Segmented: true}, true},
+		{"h264 mp4 aac", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "aac"}, true},
+		{"h264 mp4 ac3", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "ac3"}, true},
+		{"h264 mp4 dts", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "dts"}, false},
+		{"segmented mp4", domain.Video{Container: "mp4", Codec: "h264", Segmented: true}, false},
 		{"hevc mp4", domain.Video{Container: "mp4", Codec: "hevc"}, false},
 		{"h264 mkv", domain.Video{Container: "matroska", Codec: "h264"}, false},
+		{"h264 mkv aac", domain.Video{Container: "matroska", Codec: "h264", AudioCodec: "aac"}, false},
 		{"h264 mov", domain.Video{Container: "mov", Codec: "h264"}, true},
 		{"vp9 webm", domain.Video{Container: "webm", Codec: "vp9"}, true},
 		{"av1 mp4", domain.Video{Container: "mp4", Codec: "av1"}, true},
@@ -59,27 +63,6 @@ func TestContentType(t *testing.T) {
 	}
 }
 
-func TestHLSEnabled(t *testing.T) {
-	direct := domain.Video{Container: "mp4", Codec: "h264"}
-	needs := domain.Video{Container: "matroska", Codec: "hevc"}
-
-	auto := &Service{enableHLS: "auto"}
-	if auto.HLSEnabled(direct) {
-		t.Error("auto: direct-playable should not need HLS")
-	}
-	if !auto.HLSEnabled(needs) {
-		t.Error("auto: non-playable should need HLS")
-	}
-	on := &Service{enableHLS: "true"}
-	if !on.HLSEnabled(direct) {
-		t.Error("true: always HLS")
-	}
-	off := &Service{enableHLS: "false"}
-	if off.HLSEnabled(needs) {
-		t.Error("false: never HLS")
-	}
-}
-
 func TestDirectServesRange(t *testing.T) {
 	s := &Service{}
 	content := "0123456789"
@@ -106,44 +89,6 @@ func TestDirectServesRange(t *testing.T) {
 	}
 	if ct := res.Header.Get("Content-Type"); ct != "video/mp4" {
 		t.Fatalf("content-type = %q, want video/mp4", ct)
-	}
-}
-
-// TestDirectServesRemuxed verifies a segmented video is served from its
-// remuxed faststart copy when one exists, and from the raw source otherwise.
-func TestDirectServesRemuxed(t *testing.T) {
-	dataDir := t.TempDir()
-	s := &Service{dataDir: dataDir, remuxDir: filepath.Join(dataDir, "remux")}
-	if err := os.MkdirAll(s.remuxDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	srcPath := filepath.Join(dataDir, "src.mp4")
-	remuxPath := filepath.Join(s.remuxDir, "v1.mp4")
-	if err := os.WriteFile(srcPath, []byte("SOURCE-BYTES"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(remuxPath, []byte("REMUXED-BYTES"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	serve := func(v domain.Video) string {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/api/stream/v", nil)
-		if err := s.Direct(rec, req, v); err != nil {
-			t.Fatalf("direct: %v", err)
-		}
-		raw, _ := io.ReadAll(rec.Result().Body)
-		return string(raw)
-	}
-
-	segmented := domain.Video{ID: "v1", Path: srcPath, Container: "mp4", Codec: "h264", Segmented: true}
-	if got := serve(segmented); got != "REMUXED-BYTES" {
-		t.Errorf("segmented with remux copy = %q, want REMUXED-BYTES", got)
-	}
-
-	_ = os.Remove(remuxPath)
-	if got := serve(segmented); got != "SOURCE-BYTES" {
-		t.Errorf("segmented without remux copy = %q, want SOURCE-BYTES", got)
 	}
 }
 
