@@ -1,13 +1,17 @@
 package streaming
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/media"
 )
 
 // Errors surfaced to the API layer.
@@ -25,16 +29,30 @@ var (
 // where that probe is unavailable. There is no transcoding: a video that cannot
 // play directly must be converted by the user (格式工厂) first.
 type Service struct {
-	videos  domain.VideoRepo
-	dataDir string
+	videos      domain.VideoRepo
+	dataDir     string
+	ffmpegPath  string
+	ffprobePath string
+	subDir      string
+	// extractSubtitle extracts the subtitle stream streamIndex of src into out
+	// (WebVTT). Injected for tests.
+	extractSubtitle func(ctx context.Context, src string, streamIndex int, out string) error
 }
 
-// New builds the streaming service. dataDir hosts covers/ and thumbs/.
-func New(videos domain.VideoRepo, dataDir string) *Service {
-	return &Service{
-		videos:  videos,
-		dataDir: dataDir,
+// New builds the streaming service. dataDir hosts covers/, thumbs/ and the
+// extracted-subtitle cache (subtitles/).
+func New(videos domain.VideoRepo, dataDir, ffmpegPath, ffprobePath string) *Service {
+	s := &Service{
+		videos:      videos,
+		dataDir:     dataDir,
+		ffmpegPath:  ffmpegPath,
+		ffprobePath: ffprobePath,
+		subDir:      filepath.Join(dataDir, "subtitles"),
 	}
+	s.extractSubtitle = func(ctx context.Context, src string, streamIndex int, out string) error {
+		return media.ExtractTextSubtitle(ctx, ffmpegPath, src, streamIndex, out)
+	}
+	return s
 }
 
 // DirectPlayable reports a conservative browser-native playability (Chromium's
@@ -113,37 +131,147 @@ func (s *Service) Cover(w http.ResponseWriter, r *http.Request, v domain.Video, 
 	return nil
 }
 
-// Subtitle serves a sidecar subtitle (.srt/.vtt/.ass) sitting next to the
-// source file. Embedded-track extraction is a later enhancement.
-func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Video) error {
-	base := strings.TrimSuffix(filepath.Base(v.Path), filepath.Ext(v.Path))
-	dir := filepath.Dir(v.Path)
-	types := []struct {
-		ext  string
-		mime string
-	}{
-		{".vtt", "text/vtt; charset=utf-8"},
-		{".srt", "text/plain; charset=utf-8"},
-		{".ass", "text/plain; charset=utf-8"},
-		{".ssa", "text/plain; charset=utf-8"},
-	}
-	for _, t := range types {
-		p := filepath.Join(dir, base+t.ext)
-		if _, err := os.Stat(p); err == nil {
-			return serveFile(w, r, p, t.mime)
-		}
-	}
-	return ErrNotFound
+// SubtitleTrack is one subtitle source the player can pick from: a sidecar file
+// next to the video or an embedded text subtitle track (stream index).
+type SubtitleTrack struct {
+	Kind  string `json:"kind"` // sidecar | embedded
+	Index int    `json:"index,omitempty"`
+	Codec string `json:"codec,omitempty"`
+	Label string `json:"label,omitempty"`
 }
 
-// RemoveCache deletes a video's generated cover/thumb files (called when the
-// video is deleted or its file changes so stale images are never served).
+// ListSubtitles enumerates the playable subtitle sources of a video, ordered
+// with the sidecar first. Embedded bitmap tracks (PGS/VobSub) are skipped.
+func (s *Service) ListSubtitles(ctx context.Context, v domain.Video) []SubtitleTrack {
+	var out []SubtitleTrack
+	if p := sidecarPath(v); p != "" {
+		out = append(out, SubtitleTrack{
+			Kind:  "sidecar",
+			Label: strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)),
+		})
+	}
+	subs, err := media.ProbeSubtitles(ctx, s.ffprobePath, v.Path)
+	if err != nil {
+		slog.Warn("probe subtitles", "video_id", v.ID, "err", err)
+		return out
+	}
+	n := 0
+	for _, st := range subs {
+		if !media.TextSubtitleCodecs[st.Codec] {
+			continue
+		}
+		n++
+		out = append(out, SubtitleTrack{
+			Kind:  "embedded",
+			Index: st.Index,
+			Codec: st.Codec,
+			Label: subtitleLabel(st.Language, st.Title, n),
+		})
+	}
+	return out
+}
+
+// subtitleLangLabels map ISO 639 language tags to short Chinese labels.
+var subtitleLangLabels = map[string]string{
+	"chi": "中文", "zho": "中文", "zh": "中文", "chs": "中文", "cht": "中文",
+	"eng": "英文", "en": "英文",
+	"jpn": "日文", "ja": "日文",
+	"kor": "韩文", "ko": "韩文",
+	"fre": "法文", "fra": "法文", "fr": "法文",
+	"spa": "西语", "es": "西语",
+}
+
+func subtitleLabel(lang, title string, fallback int) string {
+	if title != "" {
+		return title
+	}
+	if l, ok := subtitleLangLabels[strings.ToLower(lang)]; ok {
+		return l
+	}
+	return fmt.Sprintf("字幕 %d", fallback)
+}
+
+// Subtitle serves a subtitle for the player. trackIndex selects an embedded
+// text subtitle stream (its stream index); a negative value means "default":
+// the sidecar file when present, otherwise the first embedded text track.
+// Extracted WebVTT files are cached under subtitles/<video_id>-<index>.vtt.
+func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Video, trackIndex int) error {
+	// A sidecar wins on the default path (explicit embedded picks ignore it).
+	if trackIndex < 0 {
+		if p := sidecarPath(v); p != "" {
+			return serveFile(w, r, p, sidecarMime(p))
+		}
+	}
+	index := trackIndex
+	if index < 0 {
+		subs, err := media.ProbeSubtitles(r.Context(), s.ffprobePath, v.Path)
+		if err != nil {
+			slog.Warn("probe subtitles", "video_id", v.ID, "err", err)
+			return ErrNotFound
+		}
+		for _, st := range subs {
+			if media.TextSubtitleCodecs[st.Codec] {
+				index = st.Index
+				break
+			}
+		}
+		if index < 0 {
+			return ErrNotFound
+		}
+	}
+	if s.ffmpegPath == "" {
+		return ErrNotFound
+	}
+	cached := filepath.Join(s.subDir, fmt.Sprintf("%s-%d.vtt", v.ID, index))
+	if _, err := os.Stat(cached); err == nil {
+		return serveFile(w, r, cached, "text/vtt; charset=utf-8")
+	}
+	if err := os.MkdirAll(s.subDir, 0o755); err != nil {
+		return err
+	}
+	if err := s.extractSubtitle(r.Context(), v.Path, index, cached); err != nil {
+		_ = os.Remove(cached + ".tmp")
+		slog.Warn("extract subtitle", "video_id", v.ID, "track", index, "err", err)
+		return ErrNotFound
+	}
+	return serveFile(w, r, cached, "text/vtt; charset=utf-8")
+}
+
+// sidecarPath returns the sidecar subtitle file (.vtt/.srt/.ass/.ssa) sitting
+// next to the source, or "" when none exists.
+func sidecarPath(v domain.Video) string {
+	base := strings.TrimSuffix(filepath.Base(v.Path), filepath.Ext(v.Path))
+	dir := filepath.Dir(v.Path)
+	for _, ext := range []string{".vtt", ".srt", ".ass", ".ssa"} {
+		p := filepath.Join(dir, base+ext)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func sidecarMime(p string) string {
+	if strings.EqualFold(filepath.Ext(p), ".vtt") {
+		return "text/vtt; charset=utf-8"
+	}
+	return "text/plain; charset=utf-8"
+}
+
+// RemoveCache deletes a video's generated cover/thumb files and extracted
+// subtitles (called when the video is deleted or its file changes so stale
+// images or subtitles are never served).
 func (s *Service) RemoveCache(videoID string) {
 	covers := filepath.Join(s.dataDir, "covers")
 	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
 		_ = os.Remove(filepath.Join(covers, videoID+ext))
 	}
 	_ = os.Remove(filepath.Join(s.dataDir, "thumbs", videoID+".thumb.jpg"))
+	matches, _ := filepath.Glob(filepath.Join(s.subDir, videoID+"-*.vtt"))
+	for _, m := range matches {
+		_ = os.Remove(m)
+	}
+	_ = os.Remove(filepath.Join(s.subDir, videoID+".vtt"))
 }
 
 func serveFile(w http.ResponseWriter, r *http.Request, path, contentType string) error {

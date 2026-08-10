@@ -7,12 +7,13 @@ import {
   type MediaPlayerInstance,
   type VideoSrc,
 } from '@vidstack/react'
+import { useQuery } from '@tanstack/react-query'
 import { DefaultVideoLayout, defaultLayoutIcons } from '@vidstack/react/player/layouts/default'
 import '@vidstack/react/player/styles/base.css'
 import '@vidstack/react/player/styles/default/theme.css'
 import '@vidstack/react/player/styles/default/layouts/video.css'
 import type { Video } from '../../api/videos'
-import { coverUrl, fetchHistory, putHistory, streamUrl, subtitleUrl } from '../../api/videos'
+import { coverUrl, fetchHistory, fetchVideoSubtitles, putHistory, streamUrl, subtitleUrl } from '../../api/videos'
 import { getActiveTab, subscribeTabs } from '../../tabs/manager'
 
 // Resume only kicks in beyond these boundaries so an almost-finished video
@@ -38,6 +39,12 @@ export function VideoPlayer({
   const [resumeAt, setResumeAt] = useState(0)
   const posRef = useRef(0)
   const lastSaveRef = useRef(0)
+
+  // Subtitle track menu: the backend enumerates every playable subtitle source
+  // (sidecar file + embedded text tracks) and each becomes a <Track>, so the
+  // player's built-in menu offers switching between them.
+  const subtitles = useQuery({ queryKey: ['subtitles', video.id], queryFn: () => fetchVideoSubtitles(video.id) })
+  const subtitleTracks = subtitles.data?.subtitles
 
   useEffect(() => {
     lastSaveRef.current = 0
@@ -113,7 +120,18 @@ export function VideoPlayer({
       }}
     >
       <MediaProvider>
-        <Track src={subtitleUrl(video.id)} kind="subtitles" label="字幕" />
+        {subtitleTracks && subtitleTracks.length > 0 ? (
+          subtitleTracks.map((t) => (
+            <Track
+              key={t.kind === 'embedded' ? `e${t.index}` : 'sidecar'}
+              src={subtitleUrl(video.id, t.kind === 'embedded' ? t.index : undefined)}
+              kind="subtitles"
+              label={t.label || '字幕'}
+            />
+          ))
+        ) : !subtitleTracks ? (
+          <Track src={subtitleUrl(video.id)} kind="subtitles" label="字幕" />
+        ) : null}
       </MediaProvider>
       <DefaultVideoLayout icons={defaultLayoutIcons} />
     </MediaPlayer>

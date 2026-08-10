@@ -66,7 +66,7 @@ func run() error {
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
-	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir)
+	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir, cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
 	scannerSvc := scanner.New(
 		videosRepo,
 		sourcesRepo,

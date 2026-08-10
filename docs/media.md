@@ -97,6 +97,9 @@
 - **唯一决策源是前端运行期 `canPlayType()`**（`frontend/src/lib/playability.ts` 的 `canPlay()`）：probe
   元数据（容器/视频编码/音频编码/segmented）→ MIME + RFC 6381 codecs 串 →
   `HTMLMediaElement.canPlayType()`。能 → Range 直连；不能 → 播放按钮禁用 + 引导格式工厂转换。
+  **`mov`/`qt` 映射到 `video/mp4` 而非 `video/quicktime`**——ffprobe 把整个 MP4 家族报为
+  `mov,mp4,m4a,3gp,3g2,mj2`（首个 token `mov`），而 Chromium 的 `canPlayType('video/quicktime; …')`
+  返回空，会把每个 mp4 误判为不可播；`video/mp4` 对该 box 家族始终可解析。
 - 后端 `streaming.DirectPlayable` / 系列成员 `direct_playable` 是**保守 fallback**（Chromium 确定支持集：
   原生容器 + h264/vp8/vp9/av1/theora + aac/mp3/opus/vorbis/flac/ac3/eac3，不含 MKV/HEVC/fMP4），仅在
   `canPlayType` 探测不可用时兜底，不作为主判据。
@@ -110,4 +113,9 @@
 
 ## 5. 字幕
 
-- 侧边 `.srt/.vtt/.ass` 字幕文件（与视频同名）会被识别并提供给播放器；嵌入字幕轨道抽取未做。
+- 侧边 `.srt/.vtt/.ass` 字幕文件（与视频同名）优先提供给播放器。
+- **内封文本字幕轨**（MKV 的 ass/subrip 等）：`GET /api/videos/{id}/subtitles` 枚举全部字幕源（侧边 +
+  内封文本轨，带语言/标题标签）；`GET /api/stream/{id}/subtitle?track=<index>` 按需用 ffmpeg 提取指定轨为
+  WebVTT（`media.ExtractTextSubtitle`），缓存到 `data_dir/subtitles/<id>-<index>.vtt`。前端按清单渲染多个
+  `<track>`，**播放器内置字幕菜单可切换多轨**（无需重封）。
+- **位图字幕（PGS/VobSub）无法转文本**，不进入清单，只能经格式工厂「烧录进画面」。

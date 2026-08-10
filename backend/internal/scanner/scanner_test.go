@@ -47,7 +47,7 @@ func newTestScanner(t *testing.T) (*Service, *jobs.Service, *scanCalls) {
 	calls := &scanCalls{}
 	svc.probe = func(context.Context, string, string) (media.Info, error) {
 		calls.probes++
-		return media.Info{Duration: 90, Codec: "h264", Container: "mp4", Width: 1920, Height: 1080}, nil
+		return media.Info{Duration: 90, Codec: "h264", AudioCodec: "aac", Container: "mp4", Width: 1920, Height: 1080}, nil
 	}
 	svc.thumbnail = func(context.Context, string, string, string, string, float64) error {
 		calls.thumbs++
@@ -253,7 +253,7 @@ func TestReProbeWhenMetadataMissing(t *testing.T) {
 		if failProbe {
 			return media.Info{}, errors.New("probe failed")
 		}
-		return media.Info{Duration: 90, Codec: "h264", Container: "mp4"}, nil
+		return media.Info{Duration: 90, Codec: "h264", AudioCodec: "aac", Container: "mp4"}, nil
 	}
 
 	// First scan: probe fails, so the video keeps no metadata.

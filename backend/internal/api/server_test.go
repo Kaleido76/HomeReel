@@ -70,7 +70,7 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 		"ffmpeg",
 		t.TempDir(),
 	)
-	streamingSvc := streaming.New(videosRepo, t.TempDir())
+	streamingSvc := streaming.New(videosRepo, t.TempDir(), "ffmpeg", "ffprobe")
 	dataDir := t.TempDir()
 	bus := events.New()
 	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, "ffmpeg", "ffprobe")

@@ -627,10 +627,17 @@ func titleFromPath(rel string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
-// needsProbe reports whether a video has no probe metadata yet, meaning its
-// probe job never succeeded (e.g. ffprobe was unavailable at scan time).
+// needsProbe reports whether a video lacks probe metadata and should be
+// re-probed during a scan. Besides a failed first probe (no duration/codec), a
+// missing audio_codec means the row predates the audio/faststart probe fields —
+// re-probing backfills them so playability (MKV audio, faststart marker)
+// reflects the file. Videos without any audio track keep an empty audio_codec
+// and are re-probed each scan, an accepted rare cost.
 func needsProbe(v domain.Video) bool {
-	return v.Duration == 0 && v.Codec == ""
+	if v.Duration == 0 && v.Codec == "" {
+		return true
+	}
+	return v.AudioCodec == ""
 }
 
 func pathReachable(path string, timeout time.Duration) bool {

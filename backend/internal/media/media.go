@@ -235,3 +235,73 @@ func extractFrame(ctx context.Context, ffmpegPath, src, outPath string, pos floa
 	}
 	return nil
 }
+
+// SubtitleStream is one detected subtitle track of a media file.
+type SubtitleStream struct {
+	Index    int
+	Codec    string
+	Language string
+	Title    string
+}
+
+// TextSubtitleCodecs are the subtitle encodings remuxable to WebVTT for the
+// browser <track> element. Bitmap subtitles (PGS/VobSub/…) cannot be converted
+// to text and must be burned into the picture by the format factory instead.
+var TextSubtitleCodecs = map[string]bool{
+	"subrip": true, "srt": true, "ass": true, "ssa": true,
+	"webvtt": true, "mov_text": true, "text": true,
+}
+
+// ProbeSubtitles lists the subtitle tracks of src via ffprobe.
+func ProbeSubtitles(ctx context.Context, ffprobePath, src string) ([]SubtitleStream, error) {
+	cmd := exec.CommandContext(ctx, ffprobePath,
+		"-v", "quiet",
+		"-select_streams", "s",
+		"-show_entries", "stream=index,codec_name:stream_tags=language,title",
+		"-of", "json",
+		src)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe subtitles %s: %w", src, err)
+	}
+	var raw struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+			Tags      struct {
+				Language string `json:"language"`
+				Title    string `json:"title"`
+			} `json:"tags"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse ffprobe subtitles: %w", err)
+	}
+	var subs []SubtitleStream
+	for _, st := range raw.Streams {
+		subs = append(subs, SubtitleStream{
+			Index:    st.Index,
+			Codec:    st.CodecName,
+			Language: st.Tags.Language,
+			Title:    st.Tags.Title,
+		})
+	}
+	return subs, nil
+}
+
+// ExtractTextSubtitle extracts the subtitle stream with the given stream index
+// into a WebVTT file at outVTT (written via a temp file + rename).
+func ExtractTextSubtitle(ctx context.Context, ffmpegPath, src string, streamIndex int, outVTT string) error {
+	tmp := outVTT + ".tmp"
+	cmd := exec.CommandContext(ctx, ffmpegPath,
+		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", src,
+		"-map", fmt.Sprintf("0:%d", streamIndex),
+		"-c:s", "webvtt",
+		"-f", "webvtt",
+		tmp)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg extract subtitle: %w", err)
+	}
+	return os.Rename(tmp, outVTT)
+}

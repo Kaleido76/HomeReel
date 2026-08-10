@@ -173,6 +173,19 @@ export function coverUrl(id: string, thumb = false): string {
   return `/api/stream/${id}/cover${thumb ? '?thumb=1' : ''}`
 }
 
-export function subtitleUrl(id: string): string {
-  return `/api/stream/${id}/subtitle`
+export function subtitleUrl(id: string, track?: number): string {
+  return `/api/stream/${id}/subtitle${track !== undefined ? `?track=${track}` : ''}`
+}
+
+// SubtitleTrack is one subtitle source the player can pick from (a sidecar file
+// next to the video, or an embedded text subtitle stream of the container).
+export interface SubtitleTrack {
+  kind: 'sidecar' | 'embedded'
+  index?: number
+  codec?: string
+  label: string
+}
+
+export function fetchVideoSubtitles(id: string): Promise<{ subtitles: SubtitleTrack[] }> {
+  return api<{ subtitles: SubtitleTrack[] }>(`/api/videos/${id}/subtitles`)
 }

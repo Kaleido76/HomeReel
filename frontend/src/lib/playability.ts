@@ -27,11 +27,18 @@ export interface PlayabilityInput {
 // containerMimes maps a probed container to a MIME the browser can hand to
 // canPlayType. Containers without a browser <video src> path (avi/wmv/ts/flv/
 // mpeg/… ) are simply absent and therefore never playable.
+//
+// mov/qt are mapped to video/mp4, not video/quicktime: mp4 and mov are the same
+// box family that Chromium demuxes with one code path, and ffprobe reports the
+// whole family as "mov,mp4,m4a,3gp,3g2,mj2" whose first token is "mov" — a real
+// .mp4 file is thus stored with container "mov". canPlayType('video/quicktime;
+// codecs=…') returns empty in Chromium, which would misjudge every converted/
+// scanned mp4 as non-playable; video/mp4 always resolves for the box family.
 const containerMimes: Record<string, string> = {
   mp4: 'video/mp4',
   m4v: 'video/mp4',
-  mov: 'video/quicktime',
-  qt: 'video/quicktime',
+  mov: 'video/mp4',
+  qt: 'video/mp4',
   matroska: 'video/x-matroska',
   mkv: 'video/x-matroska',
   webm: 'video/webm',

@@ -155,7 +155,11 @@ func (s *Server) handleStreamSubtitle(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.streaming.Subtitle(w, r, *v); err != nil {
+	track := -1
+	if t, err := strconv.Atoi(r.URL.Query().Get("track")); err == nil {
+		track = t
+	}
+	if err := s.streaming.Subtitle(w, r, *v, track); err != nil {
 		if errors.Is(err, streaming.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "未找到字幕")
 			return
@@ -163,4 +167,14 @@ func (s *Server) handleStreamSubtitle(w http.ResponseWriter, r *http.Request) {
 		slog.Error("stream subtitle", "video_id", v.ID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}
+}
+
+// handleVideoSubtitles returns every subtitle source of a video so the player
+// can offer a track menu (sidecar file + embedded text tracks).
+func (s *Server) handleVideoSubtitles(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.videoOrError(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"subtitles": s.streaming.ListSubtitles(r.Context(), *v)})
 }
