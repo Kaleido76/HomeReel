@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,7 +14,7 @@ import (
 	"homereel/backend/internal/search"
 )
 
-// ---- Videos: PATCH / DELETE / refresh / cover ----
+// ---- Videos: PATCH / DELETE / refresh ----
 
 func (s *Server) handleVideoPatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -102,57 +101,6 @@ func (s *Server) handleVideoRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = v
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
-}
-
-func (s *Server) handleVideoCover(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if _, ok := s.videoOrError(w, r, id); !ok {
-		return
-	}
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "无效的上传")
-		return
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "缺少 file 字段")
-		return
-	}
-	defer func() { _ = file.Close() }()
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".webp":
-	default:
-		writeError(w, http.StatusBadRequest, "bad_request", "仅支持 jpg/png/webp 图片")
-		return
-	}
-	dir := filepath.Join(s.dataDir, "covers")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	dest := filepath.Join(dir, id+ext)
-	out, err := os.Create(dest)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	if _, err := io.Copy(out, file); err != nil {
-		_ = out.Close()
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	_ = out.Close()
-	if ext != ".jpg" {
-		_ = os.Remove(filepath.Join(dir, id+".jpg"))
-	}
-	rel := filepath.ToSlash(filepath.Join("covers", id+ext))
-	if err := s.videos.UpdateCovers(r.Context(), id, rel, ""); err != nil {
-		slog.Error("update cover", "video_id", id, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"cover_path": rel})
 }
 
 // ---- Shows ----

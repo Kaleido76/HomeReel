@@ -207,3 +207,99 @@ func TestSubtitleNotFoundWithoutTrack(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCacheOverviewAndClear(t *testing.T) {
+	s := New(nil, t.TempDir(), "", "")
+	writeTestFile(t, filepath.Join(s.dataDir, "covers", "v1.jpg"), "jpg")
+	writeTestFile(t, filepath.Join(s.dataDir, "covers", "gone.webp"), "webp")
+	writeTestFile(t, filepath.Join(s.dataDir, "thumbs", "v1.thumb.jpg"), "thumb")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1-1.vtt"), "vtt")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1.vtt"), "vtt-old")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "gone-2.vtt"), "vtt")
+
+	ids := map[string]struct{}{"v1": {}}
+	overview := s.CacheOverview(ids)
+	if c := overview["cover"]; c.Files != 2 || c.Orphans != 1 {
+		t.Fatalf("cover stat = files %d orphans %d, want 2/1", c.Files, c.Orphans)
+	}
+	if th := overview["thumb"]; th.Files != 1 || th.Orphans != 0 {
+		t.Fatalf("thumb stat = files %d orphans %d, want 1/0", th.Files, th.Orphans)
+	}
+	if sub := overview["subtitle"]; sub.Files != 3 || sub.Orphans != 1 {
+		t.Fatalf("subtitle stat = files %d orphans %d, want 3/1", sub.Files, sub.Orphans)
+	}
+
+	if n := s.ClearAllSubtitles(); n != 3 {
+		t.Fatalf("clear all subtitles removed %d, want 3", n)
+	}
+}
+
+func TestListSubtitleCacheAndClearTracks(t *testing.T) {
+	s := New(nil, t.TempDir(), "", "")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1-1.vtt"), "vtt")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1-3.vtt"), "vtt")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1.vtt"), "vtt-old")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v9-2.vtt"), "vtt")
+
+	files := s.ListSubtitleCache()
+	byName := map[string]SubtitleCacheFile{}
+	for _, f := range files {
+		byName[f.Name] = f
+	}
+	if f, ok := byName["v1-3.vtt"]; !ok || f.VideoID != "v1" || f.Track != 3 {
+		t.Fatalf("v1-3 parsed as %+v, want video v1 track 3", f)
+	}
+	if f, ok := byName["v1.vtt"]; !ok || f.VideoID != "v1" || f.Track != -1 {
+		t.Fatalf("legacy v1.vtt parsed as %+v, want track -1", f)
+	}
+
+	if n := s.ClearSubtitleTrack("v1", 3); n != 1 {
+		t.Fatalf("clear track removed %d, want 1", n)
+	}
+	if _, err := os.Stat(filepath.Join(s.dataDir, "subtitles", "v1-3.vtt")); err == nil {
+		t.Fatal("v1-3.vtt should be removed")
+	}
+	if n := s.ClearSubtitles("v1"); n != 2 {
+		t.Fatalf("clear video removed %d, want 2 (v1-1 + legacy)", n)
+	}
+	if n := s.ClearSubtitles("v9"); n != 1 {
+		t.Fatalf("clear v9 removed %d, want 1", n)
+	}
+	if n := s.ClearSubtitles("v1"); n != 0 {
+		t.Fatalf("re-clear v1 removed %d, want 0", n)
+	}
+}
+
+func TestClearOrphans(t *testing.T) {
+	s := New(nil, t.TempDir(), "", "")
+	writeTestFile(t, filepath.Join(s.dataDir, "covers", "v1.jpg"), "jpg")
+	writeTestFile(t, filepath.Join(s.dataDir, "covers", "gone.jpg"), "jpg")
+	writeTestFile(t, filepath.Join(s.dataDir, "thumbs", "v1.thumb.jpg"), "thumb")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1-1.vtt"), "vtt")
+	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "gone-3.vtt"), "vtt")
+
+	ids := map[string]struct{}{"v1": {}}
+	if n := s.ClearOrphans(ids); n != 2 {
+		t.Fatalf("clear orphans removed %d, want 2", n)
+	}
+	for _, keep := range []string{"covers/v1.jpg", "thumbs/v1.thumb.jpg", "subtitles/v1-1.vtt"} {
+		if _, err := os.Stat(filepath.Join(s.dataDir, keep)); err != nil {
+			t.Fatalf("%s should be kept: %v", keep, err)
+		}
+	}
+	for _, gone := range []string{"covers/gone.jpg", "subtitles/gone-3.vtt"} {
+		if _, err := os.Stat(filepath.Join(s.dataDir, gone)); err == nil {
+			t.Fatalf("%s should have been removed", gone)
+		}
+	}
+}

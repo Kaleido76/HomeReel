@@ -140,12 +140,6 @@ export function syncVideo(id: string): Promise<{ synced: boolean }> {
   return api<{ synced: boolean }>(`/api/videos/${id}/sync`, { method: 'POST' })
 }
 
-export function uploadVideoCover(id: string, file: File): Promise<{ cover_path: string }> {
-  const form = new FormData()
-  form.append('file', file)
-  return api<{ cover_path: string }>(`/api/videos/${id}/cover`, { method: 'POST', body: form })
-}
-
 export function fetchHistory(id: string): Promise<{ history: HistoryEntry | null }> {
   return api<{ history: HistoryEntry | null }>(`/api/videos/${id}/history`)
 }

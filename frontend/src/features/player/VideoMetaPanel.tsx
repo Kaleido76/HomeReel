@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Calendar, Check, ImageUp, Pencil, Star, X } from 'lucide-react'
+import { Calendar, Check, Pencil, Star, X } from 'lucide-react'
 import type { Video } from '../../api/videos'
-import { updateVideo, uploadVideoCover } from '../../api/videos'
+import { updateVideo } from '../../api/videos'
 
 export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTags: string[] }) {
   const queryClient = useQueryClient()
@@ -10,7 +10,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
   const [tagInput, setTagInput] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleInput, setTitleInput] = useState('')
-  const fileRef = useRef<HTMLInputElement>(null)
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['video', video.id] })
@@ -45,11 +44,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
     if (!t || t === title) return
     save.mutate({ title: t })
   }
-
-  const uploadCover = useMutation({
-    mutationFn: (file: File) => uploadVideoCover(video.id, file),
-    onSuccess: invalidate,
-  })
 
   const title = video.episode_title || video.title
   const meta = [
@@ -100,27 +94,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
               </button>
             </div>
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) uploadCover.mutate(f)
-              e.target.value = ''
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={uploadCover.isPending}
-            className="flex items-center gap-1.5 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
-            title="上传封面"
-          >
-            <ImageUp className="size-4" /> 封面
-          </button>
         </div>
       </div>
 

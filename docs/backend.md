@@ -51,8 +51,14 @@
 
 ## 6. 封面
 
-- 手动上传 `POST /api/videos/{id}/cover` 落盘 `covers/<id>.<ext>`；`UpdateCovers` 空串=该列不动。
+- 封面由扫描内联生成 `covers/<id>.jpg`；`UpdateCovers` 记录路径（空串=该列不动）。手动上传封面
+  （`POST /api/videos/{id}/cover`）已移除（2026-08）。
 - 元数据刮削（TMDB + NFO）已移除：无 `scrape` 包、无 `scrape.*` 配置项、无 `/scrape` API。
+- **缓存清理（2026-08）**：`covers/`、`thumbs/`、`subtitles/`（内封字幕按需提取的 vtt）都是**可重建缓存**。
+  视频删除/源文件变更经 `RemoveCache`（`streaming`）自动清理；工具页「缓存管理」补充手动清空入口——
+  `GET /api/cache`（`streaming.CacheStats`）按类统计条目数/占用/孤儿数，`DELETE /api/cache?kind=…` 清空对应
+  类，`DELETE /api/cache/orphans`（`streaming.ClearOrphans`）清理库中已无对应视频的残留文件。孤儿判定由
+  缓存文件名解析视频 ID（封面 `<id>`、缩略图 `<id>.thumb`、字幕 `<id>` / `<id>-<track>`）与全库索引对比。
 
 ## 7. 扫描安全
 

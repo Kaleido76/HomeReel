@@ -85,7 +85,6 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("DELETE /api/videos/{id}", s.requireAuth(http.HandlerFunc(s.handleVideoDelete)))
 	mux.Handle("POST /api/videos/{id}/refresh", s.requireAuth(http.HandlerFunc(s.handleVideoRefresh)))
 	mux.Handle("POST /api/videos/{id}/sync", s.requireAuth(http.HandlerFunc(s.handleVideoSync)))
-	mux.Handle("POST /api/videos/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleVideoCover)))
 	mux.Handle("GET /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryGet)))
 	mux.Handle("PUT /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryPut)))
 	mux.Handle("GET /api/shows", s.requireAuth(http.HandlerFunc(s.handleShowsList)))
@@ -108,6 +107,11 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("GET /api/stream/{id}/cover", s.requireAuth(http.HandlerFunc(s.handleStreamCover)))
 	mux.Handle("GET /api/stream/{id}/subtitle", s.requireAuth(http.HandlerFunc(s.handleStreamSubtitle)))
 	mux.Handle("GET /api/videos/{id}/subtitles", s.requireAuth(http.HandlerFunc(s.handleVideoSubtitles)))
+	mux.Handle("GET /api/cache", s.requireAuth(http.HandlerFunc(s.handleCacheStats)))
+	mux.Handle("DELETE /api/cache", s.requireAuth(http.HandlerFunc(s.handleCacheClear)))
+	mux.Handle("DELETE /api/cache/orphans", s.requireAuth(http.HandlerFunc(s.handleCacheOrphans)))
+	mux.Handle("DELETE /api/cache/subtitles/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCacheSubtitleClear)))
+	mux.Handle("DELETE /api/cache/subtitles/{videoId}/{track}", s.requireAuth(http.HandlerFunc(s.handleCacheSubtitleTrackClear)))
 	if staticDir != "" {
 		mux.Handle("GET /", staticHandler(staticDir))
 	}

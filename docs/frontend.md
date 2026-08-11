@@ -95,6 +95,10 @@
   `VideoDetailPane`/`PlayerPane`，**不依赖视频的 `series_id` 属性**）：单集详情栏在系列内 → 播放跳
   `/series/:id/play/:videoId`，在浏览栏上 → `/library/video/:id/play`；播放栏退出 → 父栏路径，上下集/
   接下来播放 → 系列上下文走 `/series/:id/play/:v`、否则 `/library/video/:v/play`。
+- **单集详情技术卡片**（`VideoTechCard`，2026-08）：详情栏内专门卡片集中展示 probe 技术信息——视频/音频
+  编码、分辨率/帧率、容器、时长/大小、faststart 标记；并给出**逐流解码能力说明**（容器/视频/音频分别指出
+  哪一部分「不支持前端解码」，基于 `playability.reportFor`，与 `canPlay` 同一判定/缓存）。字幕轨道清单
+  （侧边文件 + 内封文本轨）随卡片展示，与播放器共用 `['subtitles', id]` 查询缓存。
 - 播放栏=`PlayerPane`：**顶部退出播放条** + 播放器 + 简略元信息 + 系列内上下集/自动连播 +
   **「接下来播放」列表**（当前集后的至多 3 个成员，小缩略图低调展示）。
 - **窄屏（<lg）**退化为单栏全页（浏览→详情→播放，`NarrowBack` 返回条），复用同一批组件。
@@ -139,9 +143,10 @@
 - Logo 与「退出登录」保持原样。
 - **工具页签（2026-09，替代原「重封」/「格式工厂」独立页签）**：图标 `Wrench`，root `/tools`。布局与文件页签
   类似：**左侧垂直工具栏 + 右侧工具面板**（`features/tools/ToolsPage.tsx`，`?tool=id` 存于 URL；工具注册表
-  `features/tools/tools.ts`，访问过的工具面板保持挂载，切换不丢状态）。左栏为**硬朗/方角/等宽风格**：
-  按钮无圆角、与栏等宽（无内边距），激活态 `bg-neutral-900 text-white`（呼应 TabBar）。当前含一个工具——
-  **格式工厂**：把任意视频/文件夹转为浏览器可播放的 Faststart MP4 副本（见 [media.md](media.md) §3.1）。
+   `features/tools/tools.ts`，访问过的工具面板保持挂载，切换不丢状态）。左栏为**硬朗/方角/等宽风格**：
+   按钮无圆角、与栏等宽（无内边距），激活态 `bg-neutral-900 text-white`（呼应 TabBar）。当前含两个工具——
+   **格式工厂**与**缓存管理**（`CacheManagerPage`，见下）。格式工厂：把任意视频/文件夹转为浏览器可播放的
+   Faststart MP4 副本（见 [media.md](media.md) §3.1）。
   文件页签工具栏「格式工厂」按钮把勾选（或含视频的当前目录）经 `manager.openFormat` 移交到工具的
   **待转换队列**（模块 store `features/tools/format/queue.ts`，用 `usePending` 订阅）。面板自上而下：
   - **操作面板**（`FormatFactoryPage` 内 `OperationsPanel`）：未选择文件时整体**遮罩禁用**；预设工具
@@ -152,9 +157,16 @@
   - **检测信息**：`POST /api/convert/probe` 逐个探测所选文件（目录展开为直接一级视频），操作面板顶部
     以引导性文字提示（位图字幕将自动降级、AC3 将转 AAC 等）；**待转换清单每行显示探测徽标**
     （位图字幕 / 文本字幕 / AC3 等），目录行显示汇总（N 个视频、位图字幕 ×N）。
-  - **待转换清单**（含目标输出路径）+「开始转换」：可随时继续追加批次入队，即使有任务运行中。
-  - **转换队列**（复用 `GET /api/jobs`，按 `type==='convert'` 过滤）：进行中任务在前（进度条 + ETA +
-    子任务），历史在后（成功/失败），每行标注所用预设（解析 `job.extra` 的 params 反查）。
+   - **待转换清单**（含目标输出路径）+「开始转换」：可随时继续追加批次入队，即使有任务运行中。
+   - **转换队列**（复用 `GET /api/jobs`，按 `type==='convert'` 过滤）：进行中任务在前（进度条 + ETA +
+     子任务），历史在后（成功/失败），每行标注所用预设（解析 `job.extra` 的 params 反查）。
+- **缓存管理**（`CacheManagerPage`，2026-08）：管理可重建缓存，粒度贴合实际用途——
+  - **字幕缓存**（重点）：按视频列出提取出的 vtt（同一剧集系列的视频合并在一组），每条字幕可单删
+    （`DELETE /api/cache/subtitles/{videoId}/{track}`）、按视频清空（`DELETE /api/cache/subtitles/{videoId}`）、
+    或一键清空全部字幕（`DELETE /api/cache?kind=subtitle`）。源文件更换/提取乱码时逐条删除，重播即重建。
+  - **封面/缩略图**：正常使用中的**不提供删除**（扫描时重建，删无收益），仅当它们成为孤儿时经「清理孤儿」清掉。
+  - **孤儿缓存**（`DELETE /api/cache/orphans`）：库中已无对应视频的残留文件，打包显示总量并按类给明细，
+    一键整体清理。孤儿判定由后端按缓存文件名解析视频 ID 并与全部视频索引对比。所有清理不影响源文件。
 - **后台任务按钮（JobsIndicator）**：header 右侧、退出登录旁。双鱼箭头图标（`RefreshCw`）在有长时任务
   时 `animate-spin` 并显示数量徽标；点击弹出任务面板（`features/jobs/JobsIndicator.tsx`，轮询
   `GET /api/jobs`，进行中 1s / 空闲 15s）。面板为 `absolute` 覆盖自身区域，**不因点击外部消失**，仅

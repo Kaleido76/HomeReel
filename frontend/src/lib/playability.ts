@@ -73,10 +73,32 @@ const audioTokens: Record<string, string> = {
   eac3: 'ec-3',
 }
 
+// PlayabilityReport is the decision behind canPlay, broken down per stream so
+// the detail page can explain *which* part blocks playback (container / video
+// codec / audio codec) instead of a bare "not playable".
+//
+// - containerKnown: container maps to a browser <video src> MIME.
+// - videoSupported / audioSupported: the codec has a decodable token. audio is
+//   null when there is no audio track (or the decision never reached it).
+// - decoderSupported: what canPlayType returned for the whole combination; null
+//   when canPlayType threw or was never reached (the caller then falls back to
+//   the backend's conservative flag).
+// - playable: the final decision (decoderSupported when reached, else false).
+export interface PlayabilityReport {
+  containerKnown: boolean
+  mime?: string
+  videoCodec?: string
+  videoSupported: boolean
+  audioCodec?: string
+  audioSupported: boolean | null
+  decoderSupported: boolean | null
+  playable: boolean
+}
+
 // —— 缓存与复用（优化，判定规则与 canPlay 完全一致）——
 
 const MAX_CACHE = 512
-const cache = new Map<string, boolean>()
+const cache = new Map<string, PlayabilityReport>()
 
 let sharedVideoEl: HTMLVideoElement | null = null
 
@@ -91,56 +113,75 @@ function cacheKey(media: PlayabilityInput): string {
   return `${media.container ?? ''}|${media.codec ?? ''}|${media.audio_codec ?? ''}|${media.segmented ? '1' : '0'}`
 }
 
-function remember(key: string, value: boolean) {
+function remember(key: string, report: PlayabilityReport) {
   if (cache.size >= MAX_CACHE) cache.clear()
-  cache.set(key, value)
+  cache.set(key, report)
 }
 
-// computePlayability is the pure decision, returning null when canPlayType is
-// unavailable (the caller falls back to the backend flag and caches nothing).
-function computePlayability(media: PlayabilityInput): boolean | null {
-  if (media.segmented) return false
+// computeReport is the pure decision. A report whose decision never reached
+// canPlayType (异常环境) keeps decoderSupported null and is not cached, so a
+// later attempt can still succeed.
+function computeReport(media: PlayabilityInput): PlayabilityReport {
+  const report: PlayabilityReport = {
+    containerKnown: false,
+    videoCodec: media.codec,
+    videoSupported: false,
+    audioCodec: media.audio_codec,
+    audioSupported: null,
+    decoderSupported: null,
+    playable: false,
+  }
+  if (media.segmented) return report
   const mime = containerMimes[media.container?.toLowerCase() ?? '']
-  if (!mime) return false
-  const vTok = videoTokens[media.codec?.toLowerCase() ?? '']
-  if (!vTok) return false
-  const codecs = [vTok]
+  if (!mime) return report
+  report.containerKnown = true
+  report.mime = mime
+  const vTok = media.codec ? videoTokens[media.codec.toLowerCase()] : undefined
+  report.videoSupported = vTok !== undefined
+  if (!vTok) return report
   const aTok = media.audio_codec ? audioTokens[media.audio_codec.toLowerCase()] : undefined
-  if (media.audio_codec && !aTok) return false
-  if (aTok) {
-    codecs.push(aTok)
+  if (media.audio_codec) {
+    report.audioSupported = aTok !== undefined
+    if (!aTok) return report
   } else if (mime === 'video/x-matroska') {
     // MKV 未探测到音频编码（audio_codec 为空）：无法确认其音轨能否解码——
     // DTS/PCM 等 Chromium 不支持会无声，而空值可能只是源未重扫、audio_codec
     // 尚未填充。保守判不可播放；重扫源填充后，有声轨的按编码正确判定。
-    return false
+    report.audioSupported = false
+    return report
   }
+  const codecs = [vTok]
+  if (aTok) codecs.push(aTok)
   try {
-    return videoEl().canPlayType(`${mime}; codecs="${codecs.join(',')}"`) !== ''
+    report.decoderSupported = videoEl().canPlayType(`${mime}; codecs="${codecs.join(',')}"`) !== ''
   } catch {
-    return null
+    return report
   }
+  report.playable = report.decoderSupported
+  return report
+}
+
+// reportFor is the cached entry point used by canPlay and prefetchPlayability.
+export function reportFor(media: PlayabilityInput): PlayabilityReport {
+  const key = cacheKey(media)
+  const hit = cache.get(key)
+  if (hit) return hit
+  const report = computeReport(media)
+  if (report.decoderSupported !== null) remember(key, report)
+  return report
 }
 
 // canPlay is the single runtime playability decision. backendPlayable is the
 // backend's conservative fallback, used only when canPlayType itself throws.
 export function canPlay(media: PlayabilityInput, backendPlayable: boolean): boolean {
-  const key = cacheKey(media)
-  const hit = cache.get(key)
-  if (hit !== undefined) return hit
-  const value = computePlayability(media)
-  if (value === null) return backendPlayable
-  remember(key, value)
-  return value
+  const report = reportFor(media)
+  if (report.playable) return true
+  if (report.decoderSupported === null) return backendPlayable
+  return false
 }
 
 // prefetchPlayability 批量预收集一批条目（页面进入 / 数据到达时调用，如系列
 // 详情页的全部成员），同步填充缓存，使后续渲染直接命中、不再逐个探测。
 export function prefetchPlayability(items: PlayabilityInput[]): void {
-  for (const media of items) {
-    const key = cacheKey(media)
-    if (cache.has(key)) continue
-    const value = computePlayability(media)
-    if (value !== null) remember(key, value)
-  }
+  for (const media of items) reportFor(media)
 }

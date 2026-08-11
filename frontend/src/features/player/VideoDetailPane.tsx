@@ -3,16 +3,11 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { deleteVideo, fetchVideo, syncVideo } from '../../api/videos'
-import { formatBytes, formatDuration } from '../../lib/format'
+import { deleteVideo, fetchVideo, fetchVideoSubtitles, syncVideo } from '../../api/videos'
 import { canPlay } from '../../lib/playability'
 import { openFormat } from '../../tabs/manager'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
-
-const MP4_FAMILY = new Set(['mp4', 'm4v', 'mov', 'qt', '3gp', '3g2'])
-function isMp4Family(container?: string): boolean {
-  return MP4_FAMILY.has(container?.toLowerCase() ?? '')
-}
+import { VideoTechCard } from '../player/VideoTechCard'
 
 // VideoDetailPane is the single-video detail shown in the middle column. It is
 // deliberately compact: a play action, the editable metadata panel and a
@@ -32,6 +27,9 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
   const queryClient = useQueryClient()
   const [error, setError] = useState('')
   const detail = useQuery({ queryKey: ['video', videoId], queryFn: () => fetchVideo(videoId) })
+  // Shares the ['subtitles', id] cache with VideoPlayer, so opening the player
+  // after this pane does not re-fetch the track list.
+  const subtitles = useQuery({ queryKey: ['subtitles', videoId], queryFn: () => fetchVideoSubtitles(videoId) })
 
   if (detail.isLoading) {
     return (
@@ -141,27 +139,13 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
         <VideoMetaPanel video={video} initialTags={detail.data.tags ?? []} />
       </div>
 
-      <div className="rounded-md border border-neutral-200 bg-white px-4 py-3">
-        <p className="text-sm text-neutral-500">
-          {video.width && video.height ? `${video.width}×${video.height} · ` : ''}
-          {video.duration > 0 ? `${formatDuration(video.duration)} · ` : ''}
-          {formatBytes(video.size)} · {video.container?.toUpperCase()}
-          {video.audio_codec ? ` · 音频 ${video.audio_codec}` : ''}
-          <span className={playable ? 'ml-2 text-emerald-600' : 'ml-2 text-amber-600'}>
-            {playable ? '可直连播放' : '不可直接播放'}
-          </span>
-          {isMp4Family(video.container) && !video.faststart && (
-            <span className="ml-2 text-amber-600" title="moov 位于文件尾部，浏览器需缓冲后才能拖动进度">
-              非快速启动
-            </span>
-          )}
-          {detail.data.series_id ? (
-            <Link to="/series/$id" params={{ id: detail.data.series_id }} className="ml-2 text-blue-600 hover:underline">
-              所属系列 →
-            </Link>
-          ) : null}
-        </p>
-      </div>
+      <VideoTechCard video={video} subtitleTracks={subtitles.data?.subtitles ?? []} />
+
+      {detail.data.series_id ? (
+        <Link to="/series/$id" params={{ id: detail.data.series_id }} className="text-sm text-blue-600 hover:underline">
+          所属系列 →
+        </Link>
+      ) : null}
 
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
