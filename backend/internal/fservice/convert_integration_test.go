@@ -94,7 +94,7 @@ func TestConvertFileProducesFaststartMp4(t *testing.T) {
 	base := t.TempDir()
 	src := makeSampleMkv(t, base, "sample.mkv")
 	s := testService()
-	if err := s.convertFile(context.Background(), src, ConvertParams{}, noopReporter{}); err != nil {
+	if _, err := s.convertFile(context.Background(), src, ConvertParams{}, noopReporter{}); err != nil {
 		t.Fatalf("convertFile: %v", err)
 	}
 	out := filepath.Join(base, "sample.mp4")
@@ -127,7 +127,7 @@ func TestConvertDirCreatesSiblingCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := testService()
-	if err := s.convertDir(context.Background(), dir, ConvertParams{}, noopReporter{}); err != nil {
+	if _, err := s.convertDir(context.Background(), dir, ConvertParams{}, noopReporter{}); err != nil {
 		t.Fatalf("convertDir: %v", err)
 	}
 	outDir := filepath.Join(base, "show (MP4)")

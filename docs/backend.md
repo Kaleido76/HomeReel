@@ -38,6 +38,9 @@
 - **单写权**：scan / mark / probe / sync 经 `scanner` 互斥锁串行；同步 API 短写由 SQLite 单连接 +
   busy_timeout 保证。
 - **覆盖规则**：路径 / 归属 / 文件名字段同步时一律覆盖为磁盘现状；标题 / 描述 / 标签等手动编辑字段保留。
+  title 经 `videos.title_source`（`file`|`manual`）区分：手动编辑过（`manual`，`UpdateMetadata` 置位）
+  永不被扫描/探测覆盖（`processInline`/`handleProbe` 尊重）；系列成员标题始终随文件名刷新
+  （`BindMembers` 置回 `file`）。
 - `series_links` 无名称、`sort_index` 排序，手动增删（`/api/series/{id}/links`）。
 - `videos_bd` 触发器删光某 show 最后一集时删空 show；空系列由 `pruneEmptyShows` 兜底。
 - 数据结构：`seasons.root_path` 唯一（NULL 除外）；`manual_resources` / `videos.resource_id` 已移除
@@ -94,19 +97,30 @@
   `scanner` 互斥锁串行（单写权）。
 - **生命周期通知**：`Worker.SetNotify` 在任务落库后回调 `(job, err)`，`main.go` 据此发布
   `events.JobDone` / `events.JobFailed`（ADR-010 事件总线）。
-- **多媒体源路由表**：扫描父源时遇到子源（`files.UnderRoot(o.Path, src.Path)` 且非自身）根目录
-  → `collect` 整棵 `SkipDir`；`MarkMissingBySource` 跳过绝对路径落在任一子源根下的行（防「父源先删、
-  子源重建」抖动）。file_id **全局匹配**：跨源移动仅更新 path/source_id/relative_path，不新建记录。
+- **统一进口/出口管线（ADR-017）**：扫描、标记、同步与文件浏览器操作共用**同一套归一化函数**
+  `normalizeCandidate`（probe + file_id 指纹 + 建行/重定位；`scanner/ingest.go`）。scanner 暴露两个统一
+  入口：`IngestPaths(paths)`（文件进入维护范围：定位所属媒体源 → 建行/重定位 → 系列收敛 →
+  `VideoImported`/`VideoUpdated`）与 `EvictPaths(paths)`（文件离开维护范围：删行 + 系列收敛 +
+  `VideoDeleted`）。文件浏览器经 `fservice.SetLibraryNotifier` 注入回调挂钩：copy/convert 产物 → Ingest，
+  move/rename → **Ingest(新路径) 先、Evict(旧路径) 后**（保住 file_id 身份与历史/手动元数据），delete →
+  Evict。任何经 HomeReel 的文件变更在**操作完成瞬间**即归一化，不再等下次扫描；未来 upload / fsnotify
+  复用同一入口。单文件 Ingest 经 `VideoImported` 走异步缩略图任务，bulk 扫描内联生成（不重复发布事件）。
+- **多媒体源路由表**：媒体源**新建即禁止嵌套**（`fservice.AddSource` 校验，路径位于/包含既有源 →
+  400 `nested_source`）；路由表（`files.UnderRoot(o.Path, src.Path)` 且非自身 → `collect` 整棵 `SkipDir`；
+  `MarkMissingBySource` 跳过子源根下各行）仅防御**历史遗留**嵌套源。file_id **全局匹配**：跨源移动仅更新
+  path/source_id/relative_path，不新建记录。
 - **convert 任务**：`fservice.HandleConvert`（`fservice/convert.go`）——先 ffprobe 探测流（音频是否浏览器
   可播、有无字幕），文件夹按「已完成文件数/总数」上报确定进度 + 子任务「转换 <名>（n/N）」，逐文件收集失败
   为任务错误；`convertMeta` 携带操作面板的 `ConvertParams`（video/crf/audio/akbps/burn，`norm()` 归一化）。
-  预设、两级尝试链与进度算法详见 [media.md](media.md) §3.1。
+  预设、两级尝试链与进度算法详见 [media.md](media.md) §3.1。转换完成后把**实际产物路径**交给统一
+  `Ingest`，产物立即入库。
 - 事件总线（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
 
 ## 10. 泛用文件浏览器（fservice，2026-08 增量）
 
-- 独立于视频库的**机器级文件服务**（「文件」页签）：绝对路径列目录 + 剪贴板式 copy/move/rename/delete，
-  **不索引、不入库**（仅 pin 与多媒体源标记持久化）。
+- 独立于视频库的**机器级文件服务**（「文件」页签）：绝对路径列目录 + 剪贴板式 copy/move/rename/delete。
+  自身不索引；每个操作完成后经 `SetLibraryNotifier` 把受影响路径交给 scanner 的统一 ingest/evict 管线
+  （ADR-017），使库在操作完成瞬间即一致。仅 pin 与多媒体源标记持久化。
 - `fservice` 包（`internal/fservice`）：`/api/disks`（Windows 本地盘枚举，fixed/removable，排除网络盘，
   build-tag 实现）；`/api/files/list?path=`（实时 readdir，**Lstat 读条目自身属性过滤 Windows
   HIDDEN/SYSTEM 条目**——$RECYCLE.BIN、System Volume Information、desktop.ini 等特殊目录/文件不出现在
@@ -115,7 +129,7 @@
    copy+delete，复制跳过符号链接/junction 防环路）；`/api/files/pins`（增删查，settings 键 `files.pins`）。
   - **多媒体源**（`media_sources` 表，见 [decisions.md](decisions.md) §2.2）：`/api/files/sources`（GET 列表，附每源
     `available`=根可达性、`scanning`=有无进行中 scan_source 任务）、`POST`（标记 + 入队 `scan_source`
-    Job）、`DELETE`（取消标记：**先按源删除其下全部视频** `videos.DeleteBySource`，逐视频发布
+    Job；**禁止嵌套**——路径位于/包含既有源时返回 400 `nested_source`）、`DELETE`（取消标记：**先按源删除其下全部视频** `videos.DeleteBySource`，逐视频发布
     `VideoDeleted` 清缓存，再删标记——该源的单集与系列随之全部从库中消失；`videos_bd` 触发器随最后成员
     清空系列；磁盘文件不受影响）、`/api/files/sources/scan`（手动重扫）。源路径在
     `fservice.sources.go` 做规范化（`filepath.Clean`，盘符根保留尾分隔符）以便路由前缀比较。

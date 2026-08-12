@@ -317,3 +317,68 @@ func TestFilesCopyEnqueue(t *testing.T) {
 		t.Fatalf("copy response = %+v, want ok+job_id", out)
 	}
 }
+
+// TestAddSourceRejectsNested verifies marking a directory inside an existing
+// source (or one containing it) is rejected with nested_source (ADR-017).
+func TestAddSourceRejectsNested(t *testing.T) {
+	ts, cookie := newTestServer(t, "secret")
+	cookie = loginCookie(t, ts, "secret")
+
+	base := t.TempDir()
+	parent := filepath.Join(base, "videos")
+	child := filepath.Join(parent, "movies")
+	for _, d := range []string{parent, child} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add := func(path string) (int, string) {
+		resp, body := doJSON(t, "POST", ts.URL+"/api/files/sources",
+			mustJSON(t, map[string]string{"path": path}), cookie)
+		return resp.StatusCode, body
+	}
+	if status, body := add(parent); status != http.StatusOK {
+		t.Fatalf("add parent = %d (body %s)", status, body)
+	}
+	if status, body := add(child); status != http.StatusBadRequest {
+		t.Fatalf("add nested child = %d, want 400 (body %s)", status, body)
+	}
+	if status, body := add(base); status != http.StatusBadRequest {
+		t.Fatalf("add containing parent = %d, want 400 (body %s)", status, body)
+	}
+}
+
+// TestFileDeleteEvictsLibraryRow verifies deleting a file in the browser evicts
+// its library row right away through the unified evict pipeline (ADR-017).
+func TestFileDeleteEvictsLibraryRow(t *testing.T) {
+	ts, cookie, database := newTestServerDB(t, "secret")
+	cookie = loginCookie(t, ts, "secret")
+	ctx := context.Background()
+
+	root := t.TempDir()
+	sources := store.NewSourceRepo(database)
+	if err := sources.Create(ctx, domain.MediaSource{ID: "s1", Path: root, CreatedAt: ts2026}); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "movie.mp4")
+	if err := os.WriteFile(file, []byte("fake-video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	videos := store.NewVideoRepo(database)
+	if err := videos.Create(ctx, domain.Video{
+		ID: "v1", SourceID: "s1", FileID: "f1", RelativePath: "movie.mp4",
+		Path: file, Size: 10, MTime: 1, Title: "movie", Kind: "movie",
+		CreatedAt: ts2026, UpdatedAt: ts2026, LastScannedAt: ts2026,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := doJSON(t, "POST", ts.URL+"/api/files/delete",
+		mustJSON(t, map[string][]string{"paths": []string{file}}), cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d (body %s)", resp.StatusCode, body)
+	}
+	if _, err := videos.Get(ctx, "v1"); err != domain.ErrNotFound {
+		t.Fatalf("video after file delete = %v, want ErrNotFound", err)
+	}
+}

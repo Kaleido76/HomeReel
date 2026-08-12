@@ -84,6 +84,10 @@ func run() error {
 	// feed the video library.
 	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo,
 		cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
+	// Every file operation in the browser feeds the unified library pipeline
+	// (ADR-017): after a copy/move/rename/delete/convert, the scanner ingests
+	// or evicts the affected paths so the library is never left stale.
+	fsvc.SetLibraryNotifier(scannerSvc.IngestPaths, scannerSvc.EvictPaths)
 
 	// VideoImported → enqueue thumbnail generation (ADR-010, ADR-012).
 	go func() {
@@ -96,12 +100,21 @@ func run() error {
 		}
 	}()
 
-	// VideoDeleted/VideoUpdated → drop the generated cover/thumb files so a
-	// deleted or replaced file is never served stale.
+	// VideoDeleted → drop the generated cover/thumb/subtitle files so a deleted
+	// video is never served stale. VideoUpdated → only the extracted-subtitle
+	// cache: the scanner regenerates covers whenever it re-probes (processInline)
+	// and a pure rename/move leaves them valid (ADR-017).
 	go func() {
-		for ev := range bus.Subscribe(events.VideoDeleted, events.VideoUpdated) {
+		for ev := range bus.Subscribe(events.VideoDeleted) {
 			if id := ev.Data["video_id"]; id != "" {
 				streamingSvc.RemoveCache(id)
+			}
+		}
+	}()
+	go func() {
+		for ev := range bus.Subscribe(events.VideoUpdated) {
+			if id := ev.Data["video_id"]; id != "" {
+				streamingSvc.RemoveSubtitles(id)
 			}
 		}
 	}()

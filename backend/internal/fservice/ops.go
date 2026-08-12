@@ -95,15 +95,34 @@ func (s *Service) runFsJob(ctx context.Context, sources []string, dest, verb str
 }
 
 // copyJob copies each source into dest; a source directory is copied
-// recursively, mirroring its relative layout under dest.
+// recursively, mirroring its relative layout under dest. On completion the
+// created paths are ingested so the library indexes them immediately (ADR-017).
 func (s *Service) copyJob(ctx context.Context, sources []string, dest string, report jobs.Reporter) error {
-	return s.runFsJob(ctx, sources, dest, "复制", report, copyTree)
+	err := s.runFsJob(ctx, sources, dest, "复制", report, copyTree)
+	s.notifyIngest(ctx, joinedDest(sources, dest))
+	return err
 }
 
 // moveJob moves each source into dest, preferring a same-volume rename and
-// falling back to copy+delete across volumes (EXDEV).
+// falling back to copy+delete across volumes (EXDEV). On completion the new
+// locations are ingested first (rows relocate by global file_id, keeping
+// identity) and the old locations are then evicted — a file that left every
+// media source is removed from the library right away (ADR-017).
 func (s *Service) moveJob(ctx context.Context, sources []string, dest string, report jobs.Reporter) error {
-	return s.runFsJob(ctx, sources, dest, "移动", report, moveTree)
+	err := s.runFsJob(ctx, sources, dest, "移动", report, moveTree)
+	s.notifyIngest(ctx, joinedDest(sources, dest))
+	s.notifyEvict(ctx, sources)
+	return err
+}
+
+// joinedDest maps each source to its destination path under dest (dirs keep
+// their base name, mirroring runFsJob's layout).
+func joinedDest(sources []string, dest string) []string {
+	out := make([]string, 0, len(sources))
+	for _, src := range sources {
+		out = append(out, filepath.Join(dest, filepath.Base(src)))
+	}
+	return out
 }
 
 func collectErrors(errs []string) error {

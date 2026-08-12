@@ -2,6 +2,8 @@ package fservice
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/files"
 )
 
 // MediaSource CRUD for the generic file browser. A multimedia source is a
@@ -31,7 +34,13 @@ func normalizeSourcePath(p string) string {
 	return clean
 }
 
+// ErrNestedSource reports marking a directory that nests inside (or contains)
+// an existing media source — media sources may not overlap (ADR-017).
+var ErrNestedSource = errors.New("nested media source")
+
 // AddSource marks a directory as a multimedia source, deduplicating by path.
+// Media sources may not nest: a directory inside another source (or containing
+// one) is rejected, so every file in the library belongs to exactly one source.
 func (s *Service) AddSource(ctx context.Context, path string) (domain.MediaSource, error) {
 	path = normalizeSourcePath(path)
 	if path == "" {
@@ -51,6 +60,18 @@ func (s *Service) AddSource(ctx context.Context, path string) (domain.MediaSourc
 		return src, nil
 	} else if err != domain.ErrNotFound {
 		return domain.MediaSource{}, err
+	}
+	existing, err := s.sources.List(ctx)
+	if err != nil {
+		return domain.MediaSource{}, err
+	}
+	for _, e := range existing {
+		if files.UnderRoot(path, e.Path) {
+			return domain.MediaSource{}, fmt.Errorf("%w: 该目录位于多媒体源「%s」内部，多媒体源不允许嵌套", ErrNestedSource, e.Path)
+		}
+		if files.UnderRoot(e.Path, path) {
+			return domain.MediaSource{}, fmt.Errorf("%w: 该目录包含了多媒体源「%s」，多媒体源不允许嵌套", ErrNestedSource, e.Path)
+		}
 	}
 	src := domain.MediaSource{
 		ID:        ulid.Make().String(),

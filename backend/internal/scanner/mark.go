@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/oklog/ulid/v2"
-
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/files"
@@ -46,25 +44,8 @@ func (s *Service) handleMarkResource(ctx context.Context, j jobs.Job, report job
 
 // containingSource resolves the deepest media source that contains path.
 func (s *Service) containingSource(ctx context.Context, path string) (string, bool) {
-	all, err := s.sources.List(ctx)
-	if err != nil {
-		slog.Warn("list sources for mark", "err", err)
-		return "", false
-	}
-	roots := make([]string, 0, len(all))
-	for _, src := range all {
-		roots = append(roots, src.Path)
-	}
-	root, ok := files.ContainingRoot(path, roots)
-	if !ok {
-		return "", false
-	}
-	for _, src := range all {
-		if src.Path == root {
-			return src.ID, true
-		}
-	}
-	return "", false
+	id, _, ok := s.containingSourceRoot(ctx, path)
+	return id, ok
 }
 
 // markSeries turns one folder into one series: its direct video children become
@@ -242,9 +223,9 @@ func (s *Service) collectDirectChildren(root string) ([]candidate, error) {
 }
 
 // importCandidates imports every candidate (creating the row with full probe
-// metadata, or re-binding an existing row by global file_id), generates the
-// thumbnail and publishes VideoImported. It returns the imported video ids in
-// candidate order (ids match cands[i]).
+// metadata, or re-binding an existing row by global file_id), and returns the
+// imported video ids in candidate order (ids match cands[i]). New rows publish
+// VideoImported so the async thumbnail listener covers covers (ADR-010).
 func (s *Service) importCandidates(ctx context.Context, cands []candidate, srcID string, progress func(done, total int)) ([]string, error) {
 	all, err := s.videos.ListAll(ctx)
 	if err != nil {
@@ -262,7 +243,7 @@ func (s *Service) importCandidates(ctx context.Context, cands []candidate, srcID
 		if err := ctx.Err(); err != nil {
 			return ids, err
 		}
-		id, err := s.ensureVideo(ctx, c, srcID, byFile)
+		id, err := s.normalizeCandidate(ctx, c, srcID, byFile, false, nil)
 		if err != nil {
 			slog.Warn("import candidate", "path", c.path, "err", err)
 			continue
@@ -270,56 +251,6 @@ func (s *Service) importCandidates(ctx context.Context, cands []candidate, srcID
 		ids = append(ids, id)
 	}
 	return ids, nil
-}
-
-// ensureVideo re-binds an existing video (matched globally by file_id) to the
-// current source and path, or probes and creates a new row atomically.
-func (s *Service) ensureVideo(ctx context.Context, c candidate, srcID string, byFile map[string]domain.Video) (string, error) {
-	now := s.now().UTC().Format(domain.TimeLayout)
-	if cur, ok := byFile[c.fileID]; ok {
-		if cur.Size != c.size || cur.MTime != c.mtime || cur.Path != c.path || cur.SourceID != srcID {
-			if err := s.videos.UpdateFingerprint(ctx, cur.ID, srcID, c.path, c.rel, c.size, c.mtime, now); err != nil {
-				return "", err
-			}
-		}
-		if needsProbe(cur) {
-			s.processInline(ctx, cur.ID, nil)
-		}
-		return cur.ID, nil
-	}
-
-	v := domain.Video{
-		ID:            ulid.Make().String(),
-		SourceID:      srcID,
-		FileID:        c.fileID,
-		RelativePath:  c.rel,
-		Path:          c.path,
-		Size:          c.size,
-		MTime:         c.mtime,
-		Kind:          "movie",
-		Title:         titleFromPath(c.rel),
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		LastScannedAt: now,
-	}
-	if info, perr := s.probe(ctx, s.ffprobePath, c.path); perr == nil {
-		v.Duration = info.Duration
-		v.Codec = info.Codec
-		v.AudioCodec = info.AudioCodec
-		v.Container = info.Container
-		v.Segmented = info.Segmented
-		v.FastStart = info.FastStart
-		v.Width = info.Width
-		v.Height = info.Height
-	} else {
-		slog.Warn("mark probe", "path", c.path, "err", perr)
-	}
-	if err := s.videos.Create(ctx, v); err != nil {
-		return "", err
-	}
-	s.thumbnailFor(ctx, v.ID, c.path, v.Duration)
-	s.bus.Publish(events.Event{Type: events.VideoImported, Data: map[string]string{"video_id": v.ID}})
-	return v.ID, nil
 }
 
 // collect walks a source root for video candidates, skipping the subtrees of

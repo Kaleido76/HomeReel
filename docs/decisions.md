@@ -196,7 +196,7 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | POST | `/api/files/delete` | 永久删除（批量） |
 | GET/POST/DELETE | `/api/files/pins` | 常用路径固定（settings 表） |
 | GET | `/api/files/sources` | 多媒体源列表（含 `available` 离线状态 / `scanning` 扫描中） |
-| POST | `/api/files/sources` | 标记当前目录为多媒体源并**入队全量扫描** |
+| POST | `/api/files/sources` | 标记当前目录为多媒体源并**入队全量扫描**；**禁止嵌套**（路径位于/包含既有源 → 400 `nested_source`） |
 | DELETE | `/api/files/sources?path=` | 取消标记（**其下所有已入库单集与系列从库中移除**，磁盘文件不受影响；先删库再删标记，逐视频发布 `VideoDeleted` 清理缓存） |
 | POST | `/api/files/sources/scan` | 手动重新扫描 |
 | POST | `/api/files/resources` | 标记所选文件夹为系列 `{ paths, kind: series }` → 入队 mark_resource 任务（离散「单集」概念已清除，仅支持 series） |
@@ -346,7 +346,7 @@ api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner �
 | 源文件被外部程序改名/移动 | 以 file_id 校正（全局匹配，path 变化仍识别为同一视频）；last_scanned_at 校正删除 |
 | 文件移动后数据库失效（仅按 path 识别时） | 以 (source_id, file_id, relative_path) 为身份，移动只更新路径/所属源 |
 | 多媒体源根不可达被误判为「文件全部删除」 | 扫描前置可达性探测：不可达 → 中止、不动库；仅根可达且遍历完成才 MarkMissing |
-| 嵌套/重叠多媒体源 | 路由表：子源更小范围优先，父源扫描跳过子源子树；同文件无论哪个源扫出元数据一致 |
+| 嵌套/重叠多媒体源 | **新建源禁止嵌套**（`AddSource` 校验拒绝，400 `nested_source`）；历史遗留嵌套源由扫描路由表防御（子源拥有其子树，父源跳过子源子树，MarkMissing 不越界） |
 | 剧集命名不规范导致归组错误 | 系列由用户手动创建（路径 + FileID 对应），识别错误由用户手动归组兜底 |
 | 浏览器编码兼容（HEVC/MKV/AC3 等） | 前端运行期 canPlayType 核对（probe → MIME/codecs）；可直连则 Range，否则播放按钮禁用并引导格式工厂转换 |
 | SQLite 并发写冲突 | WAL + 单写者模式（写操作收敛到 store 层串行） |
@@ -364,6 +364,7 @@ api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner �
 6. 移动端 / PWA 离线壳。
 7. 媒体转码队列化（批量预转码到统一格式）。
 8. TV Mode（仅保留 Library 的电视端界面，ADR-013）。
-9. 多媒体源变更监控：fsnotify 监视源目录，文件增/删/迁移自动反映到视频库（ADR-012 下阶段）。
+9. 多媒体源变更监控：fsnotify 监视源目录，文件增/删/迁移自动反映到视频库（ADR-012 下阶段，复用统一
+   `IngestPaths`/`EvictPaths` 入口，与 HomeReel 自身操作同一套归一化）。
 10. 离散资源手动入库：源目录外的文件可直接加入库（videos.source_id 已预留 NULL）。
 11. 基于元数据与播放历史的轻量推荐（「你可能想看」行）——在 AI 落地前即可用规则实现。

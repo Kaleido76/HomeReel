@@ -3,7 +3,9 @@
 // cut/copy/paste/rename/delete against the host filesystem. It never touches
 // the database for file contents — no indexing, no scanning, no watchers.
 // Only user pins (favorite paths) and multimedia-source markers persist, in
-// the settings/DB layer.
+// the settings/DB layer. After every file operation that changes what the
+// video library should index, it reports the affected paths to the injected
+// library notifier (the scanner's unified ingest/evict pipeline, ADR-017).
 package fservice
 
 import (
@@ -12,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,15 +67,47 @@ type Service struct {
 	sources     domain.SourceRepo
 	ffmpegPath  string
 	ffprobePath string
+	ingest      func(ctx context.Context, paths []string) error
+	evict       func(ctx context.Context, paths []string) error
 }
 
 // New builds the generic file service. jobsSvc backs background copy/move and
 // format-factory conversions; pins persists favorite paths and sources the
 // multimedia-source markers, both in the settings/DB layer. ffmpegPath /
 // ffprobePath are the binaries used by the format-factory convert jobs (empty
-// → rely on PATH).
+// → rely on PATH). The library notifier (SetLibraryNotifier) is wired by the
+// server; without it every operation stays a pure filesystem action.
 func New(jobsSvc *jobs.Service, pins domain.SettingsRepo, sources domain.SourceRepo, ffmpegPath, ffprobePath string) *Service {
 	return &Service{jobs: jobsSvc, pins: pins, sources: sources, ffmpegPath: ffmpegPath, ffprobePath: ffprobePath}
+}
+
+// SetLibraryNotifier wires the unified ingest/evict pipeline (ADR-017): after a
+// file operation that changes what the library indexes, ingest receives paths
+// that entered the maintenance scope and evict receives paths that left it.
+func (s *Service) SetLibraryNotifier(ingest, evict func(ctx context.Context, paths []string) error) {
+	s.ingest = ingest
+	s.evict = evict
+}
+
+// notifyIngest reports newly-created/relocated paths to the library, best-effort
+// (a library failure never fails the file operation that already succeeded).
+func (s *Service) notifyIngest(ctx context.Context, paths []string) {
+	if s.ingest == nil || len(paths) == 0 {
+		return
+	}
+	if err := s.ingest(ctx, paths); err != nil {
+		slog.Warn("library ingest", "paths", paths, "err", err)
+	}
+}
+
+// notifyEvict reports removed/moved-away paths to the library, best-effort.
+func (s *Service) notifyEvict(ctx context.Context, paths []string) {
+	if s.evict == nil || len(paths) == 0 {
+		return
+	}
+	if err := s.evict(ctx, paths); err != nil {
+		slog.Warn("library evict", "paths", paths, "err", err)
+	}
 }
 
 // ListDisks enumerates the host's local drives (Windows) or the root (unix).
@@ -128,12 +163,22 @@ func (s *Service) ListDir(_ context.Context, path string) ([]Entry, error) {
 	return out, nil
 }
 
-// Rename renames the entry at path to newName within the same directory.
-func (s *Service) Rename(_ context.Context, path, newName string) error {
+// Rename renames the entry at path to newName within the same directory. The
+// library follows immediately: a renamed file is the same video (file_id
+// unchanged), so Ingest relocates the row before Evict can mistake the old
+// path for a deletion (ADR-017).
+func (s *Service) Rename(ctx context.Context, path, newName string) error {
 	if !files.ValidName(newName) {
 		return ErrInvalidName
 	}
-	return os.Rename(filepath.Clean(path), filepath.Join(filepath.Dir(filepath.Clean(path)), newName))
+	old := filepath.Clean(path)
+	newPath := filepath.Join(filepath.Dir(old), newName)
+	if err := os.Rename(old, newPath); err != nil {
+		return err
+	}
+	s.notifyIngest(ctx, []string{newPath})
+	s.notifyEvict(ctx, []string{old})
+	return nil
 }
 
 // Rename describes a single in-place rename for the batch endpoint.
@@ -158,16 +203,21 @@ func (s *Service) RenameMany(ctx context.Context, renames []Rename) OpResult {
 }
 
 // Delete permanently removes each path (files and directories recursively).
+// Library rows whose source file was just deleted are evicted right away (they
+// are gone from disk, so Evict prunes them and converges series membership).
 // It is the caller's duty to have confirmed with the user first.
-func (s *Service) Delete(_ context.Context, paths []string) OpResult {
+func (s *Service) Delete(ctx context.Context, paths []string) OpResult {
 	var res OpResult
+	var removed []string
 	for _, p := range paths {
 		if err := os.RemoveAll(p); err != nil {
 			res.Errors = append(res.Errors, OpError{Path: p, Message: err.Error()})
 			continue
 		}
 		res.Done++
+		removed = append(removed, p)
 	}
+	s.notifyEvict(ctx, removed)
 	return res
 }
 

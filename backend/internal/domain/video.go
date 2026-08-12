@@ -40,6 +40,7 @@ type Video struct {
 	Studio         string  `json:"studio,omitempty"`
 	CastText       string  `json:"cast_text,omitempty"`
 	MetadataSource string  `json:"metadata_source"`
+	TitleSource    string  `json:"title_source"`
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      string  `json:"updated_at"`
 	LastScannedAt  string  `json:"last_scanned_at"`
@@ -84,6 +85,15 @@ type VideoPage struct {
 	Videos []Video
 	Total  int
 }
+
+// TitleSource tells where a video's title came from: "file" (derived from the
+// file name, refreshed on scan/probe) or "manual" (user-edited, never
+// overwritten by scans). Series members always follow the file name and are
+// reset to "file" by BindMembers (ADR-017).
+const (
+	TitleSourceFile   = "file"
+	TitleSourceManual = "manual"
+)
 
 // EpisodeAssign is one member of a show/season grouping applied atomically in
 // a single transaction by ShowRepo.AssignSeason.

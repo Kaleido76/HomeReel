@@ -12,8 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oklog/ulid/v2"
-
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/files"
@@ -102,17 +100,13 @@ func (s *Service) scan(ctx context.Context, src domain.MediaSource, progress fun
 	scanStart := s.now().UTC().Format(domain.TimeLayout)
 
 	// Routing table: skip the subtrees of any descendant source during this
-	// scan — those directories are scanned by their own source.
+	// scan — those directories are scanned by their own source (legacy nested
+	// sources; new sources reject nesting at creation).
 	all, err := s.sources.List(ctx)
 	if err != nil {
 		return res, err
 	}
-	skipSet := map[string]bool{}
-	for _, o := range all {
-		if o.ID != src.ID && files.UnderRoot(o.Path, src.Path) {
-			skipSet[filepath.Clean(o.Path)] = true
-		}
-	}
+	skipSet := descendantSourceSkipSet(all, src.Path, src.ID)
 
 	// Global file_id matching lets a file that moved into this source (from
 	// another source or an unmanaged path) be recognised as the same video.
@@ -133,6 +127,10 @@ func (s *Service) scan(ctx context.Context, src domain.MediaSource, progress fun
 	}
 	total := len(candidates)
 
+	// Every file converges through the same normalizeCandidate as the ad-hoc
+	// IngestPaths route: probe + fingerprint + create/relocate + series
+	// maintenance (ADR-017). inlineThumb=true keeps the serial thumbnail
+	// progress UX; the shared step stays exactly one implementation.
 	for i, c := range candidates {
 		if progress != nil {
 			progress(i, total)
@@ -147,68 +145,32 @@ func (s *Service) scan(ctx context.Context, src domain.MediaSource, progress fun
 					s.processInline(ctx, cur.ID, subtask)
 				}
 				res.Unchanged++
-			} else {
-				_ = s.videos.UpdateFingerprint(ctx, cur.ID, src.ID, c.path, c.rel, c.size, c.mtime, scanStart)
-				s.processInline(ctx, cur.ID, subtask)
-				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": cur.ID}})
-				res.Updated++
+				continue
 			}
+			if _, err := s.normalizeCandidate(ctx, c, src.ID, byFile, true, subtask); err != nil {
+				slog.Warn("scan normalize", "path", c.path, "err", err)
+				continue
+			}
+			res.Updated++
 			continue
 		}
-		if moved, ok := byFile[c.fileID]; ok {
+		if _, ok := byFile[c.fileID]; ok {
 			// Same file moved/renamed (possibly across sources): keep the
 			// record, update path and ownership.
-			_ = s.videos.UpdateFingerprint(ctx, moved.ID, src.ID, c.path, c.rel, c.size, c.mtime, scanStart)
-			if moved.Size != c.size || moved.MTime != c.mtime || needsProbe(moved) {
-				s.processInline(ctx, moved.ID, subtask)
-				s.bus.Publish(events.Event{Type: events.VideoUpdated, Data: map[string]string{"video_id": moved.ID}})
+			if _, err := s.normalizeCandidate(ctx, c, src.ID, byFile, true, subtask); err != nil {
+				slog.Warn("scan normalize moved", "path", c.path, "err", err)
+				continue
 			}
 			res.Updated++
 			continue
 		}
 
-		// New video: probe first, then create the row with its full metadata in
-		// one statement — a video never appears in the library half-filled. A
-		// failed probe still creates a base row (self-healing on the next scan).
-		v := domain.Video{
-			ID:            ulid.Make().String(),
-			SourceID:      src.ID,
-			FileID:        c.fileID,
-			RelativePath:  c.rel,
-			Path:          c.path,
-			Size:          c.size,
-			MTime:         c.mtime,
-			Kind:          "movie",
-			Title:         titleFromPath(c.rel),
-			CreatedAt:     scanStart,
-			UpdatedAt:     scanStart,
-			LastScannedAt: scanStart,
-		}
-		if subtask != nil {
-			subtask("探测 "+filepath.Base(c.path), 5)
-		}
-		if info, perr := s.probe(ctx, s.ffprobePath, c.path); perr == nil {
-			v.Duration = info.Duration
-			v.Codec = info.Codec
-			v.AudioCodec = info.AudioCodec
-			v.Container = info.Container
-			v.Segmented = info.Segmented
-			v.FastStart = info.FastStart
-			v.Width = info.Width
-			v.Height = info.Height
-		} else {
-			slog.Warn("inline probe", "path", c.path, "err", perr)
-		}
-		if err := s.videos.Create(ctx, v); err != nil {
-			slog.Warn("create video", "path", c.path, "err", err)
+		// New video: probed and created with its full metadata in one step —
+		// a video never appears in the library half-filled (a failed probe
+		// still creates a base row, self-healing on the next scan).
+		if _, err := s.normalizeCandidate(ctx, c, src.ID, byFile, true, subtask); err != nil {
+			slog.Warn("scan create", "path", c.path, "err", err)
 			continue
-		}
-		if subtask != nil {
-			subtask("生成 "+filepath.Base(c.path)+" 的缩略图", 60)
-		}
-		s.thumbnailFor(ctx, v.ID, c.path, v.Duration)
-		if subtask != nil {
-			subtask("", -1)
 		}
 		res.Added++
 	}
@@ -270,7 +232,9 @@ func (s *Service) processInline(ctx context.Context, videoID string, subtask sub
 		return
 	}
 	upd := v
-	upd.Title = titleFromPath(v.RelativePath)
+	if v.TitleSource != domain.TitleSourceManual {
+		upd.Title = titleFromPath(v.RelativePath)
+	}
 	upd.Duration = info.Duration
 	upd.Codec = info.Codec
 	upd.AudioCodec = info.AudioCodec
@@ -409,7 +373,9 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job, _ jobs.Reporter) 
 		return err
 	}
 	upd := v
-	upd.Title = titleFromPath(v.RelativePath)
+	if v.TitleSource != domain.TitleSourceManual {
+		upd.Title = titleFromPath(v.RelativePath)
+	}
 	upd.Duration = info.Duration
 	upd.Codec = info.Codec
 	upd.AudioCodec = info.AudioCodec

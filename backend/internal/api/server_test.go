@@ -74,6 +74,7 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	dataDir := t.TempDir()
 	bus := events.New()
 	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, "ffmpeg", "ffprobe")
+	fsvc.SetLibraryNotifier(scannerSvc.IngestPaths, scannerSvc.EvictPaths)
 	handler := New(authSvc, jobsSvc, scannerSvc, fsvc,
 		videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
 		search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)

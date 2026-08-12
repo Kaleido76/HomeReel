@@ -115,7 +115,9 @@ func (s *Service) EnqueueConvert(ctx context.Context, paths []string, params Con
 	return out, errs
 }
 
-// HandleConvert runs one TypeConvert job.
+// HandleConvert runs one TypeConvert job. On success the produced mp4 paths are
+// ingested so the library indexes them immediately (ADR-017) — a conversion is
+// an import route, not something to wait for the next scan.
 func (s *Service) HandleConvert(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
 	var meta convertMeta
 	if err := json.Unmarshal([]byte(j.Extra), &meta); err != nil || meta.Path == "" {
@@ -126,29 +128,41 @@ func (s *Service) HandleConvert(ctx context.Context, j jobs.Job, report jobs.Rep
 	if err != nil {
 		return err
 	}
+	var outputs []string
 	if info.IsDir() {
-		return s.convertDir(ctx, meta.Path, params, report)
+		outputs, err = s.convertDir(ctx, meta.Path, params, report)
+	} else {
+		outputs, err = s.convertFile(ctx, meta.Path, params, report)
 	}
-	return s.convertFile(ctx, meta.Path, params, report)
+	if err != nil {
+		return err
+	}
+	s.notifyIngest(ctx, outputs)
+	return nil
 }
 
 // convertFile creates a faststart MP4 copy of one video next to the source,
-// with the same base name and a " (N)" suffix if the target name is taken.
-func (s *Service) convertFile(ctx context.Context, src string, params ConvertParams, report jobs.Reporter) error {
+// with the same base name and a " (N)" suffix if the target name is taken. It
+// returns the produced output path.
+func (s *Service) convertFile(ctx context.Context, src string, params ConvertParams, report jobs.Reporter) ([]string, error) {
 	stem := strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
 	dst := filepath.Join(filepath.Dir(src), freeName(filepath.Dir(src), stem, ".mp4"))
 	report.Subtask("转换 " + filepath.Base(src))
-	return s.runConvert(ctx, src, dst, params, func(f float64) { report.Progress(f) })
+	if err := s.runConvert(ctx, src, dst, params, func(f float64) { report.Progress(f) }); err != nil {
+		return nil, err
+	}
+	return []string{dst}, nil
 }
 
 // convertDir creates a sibling " (MP4)" folder of the source directory and
 // converts every direct-level video file inside it (non-recursive). Overall
 // progress advances by file count; per-file failures are collected into one
-// job error so a partially successful batch still shows in the task panel.
-func (s *Service) convertDir(ctx context.Context, dir string, params ConvertParams, report jobs.Reporter) error {
+// job error so a partially successful batch still shows in the task panel. It
+// returns the produced output paths.
+func (s *Service) convertDir(ctx context.Context, dir string, params ConvertParams, report jobs.Reporter) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var videos []string
 	for _, de := range entries {
@@ -161,16 +175,17 @@ func (s *Service) convertDir(ctx context.Context, dir string, params ConvertPara
 		}
 	}
 	if len(videos) == 0 {
-		return fmt.Errorf("目录下没有可转换的文件：%s", filepath.Base(dir))
+		return nil, fmt.Errorf("目录下没有可转换的文件：%s", filepath.Base(dir))
 	}
 	outDir := filepath.Join(filepath.Dir(dir), freeName(filepath.Dir(dir), filepath.Base(dir), " (MP4)"))
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return err
+		return nil, err
 	}
+	var outputs []string
 	var errs []string
 	for i, v := range videos {
 		if err := ctx.Err(); err != nil {
-			return err
+			return outputs, err
 		}
 		report.Subtask(fmt.Sprintf("转换 %s（%d/%d）", filepath.Base(v), i+1, len(videos)))
 		base := float64(i) / float64(len(videos))
@@ -179,10 +194,12 @@ func (s *Service) convertDir(ctx context.Context, dir string, params ConvertPara
 			report.Progress(base + f/float64(len(videos)))
 		}); err != nil {
 			errs = append(errs, filepath.Base(v)+": "+err.Error())
+			continue
 		}
+		outputs = append(outputs, dst)
 	}
 	report.Progress(1)
-	return collectErrors(errs)
+	return outputs, collectErrors(errs)
 }
 
 // sourceProbe is the ffprobe snapshot that decides how a source is converted:

@@ -328,6 +328,10 @@ var migrations = []string{
 	// 播放能力元数据（2026-08）：audio_codec 供「前后端协同能力判定」核对音频
 	// 是否可解码；faststart 标记 mp4 家族文件是否 moov 前置（浏览器可立即 seek）。
 	`ALTER TABLE videos ADD COLUMN faststart INTEGER NOT NULL DEFAULT 0`,
+	// 统一资源进口管线（ADR-017）：title_source 区分「文件派生标题」（file，
+	// 扫描/探测时随文件名刷新）与「用户手动编辑标题」（manual，永不被覆盖）。
+	// 系列成员标题始终随文件名刷新（BindMembers 置回 file）。
+	`ALTER TABLE videos ADD COLUMN title_source TEXT NOT NULL DEFAULT 'file'`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

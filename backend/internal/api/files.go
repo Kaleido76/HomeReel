@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
-	"homereel/backend/internal/files"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 )
@@ -105,8 +103,9 @@ func (s *Server) handleFilesRenames(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFilesDelete permanently deletes the given paths. Library rows whose
-// source file was just deleted are removed right away (publishing VideoDeleted),
-// so the file browser and the video library stay consistent.
+// source file was just deleted are evicted right away (the fservice Delete
+// reports the removed paths to the unified evict pipeline, ADR-017), so the
+// file browser and the video library stay consistent.
 func (s *Server) handleFilesDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Paths []string `json:"paths"`
@@ -114,30 +113,7 @@ func (s *Server) handleFilesDelete(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	res := s.fsvc.Delete(r.Context(), req.Paths)
-	s.pruneVideosUnderPaths(r.Context(), req.Paths)
-	writeJSON(w, http.StatusOK, res)
-}
-
-// pruneVideosUnderPaths removes library rows whose source file was just deleted
-// in the file browser (and is no longer on disk). Deleting a folder prunes all
-// its video rows.
-func (s *Server) pruneVideosUnderPaths(ctx context.Context, paths []string) {
-	all, err := s.videos.ListAll(ctx)
-	if err != nil {
-		return
-	}
-	for _, v := range all {
-		if !files.UnderAnyRoot(v.Path, paths) {
-			continue
-		}
-		if _, err := os.Stat(v.Path); err == nil {
-			continue
-		}
-		if err := s.videos.Delete(ctx, v.ID); err == nil {
-			s.bus.Publish(events.Event{Type: events.VideoDeleted, Data: map[string]string{"video_id": v.ID}})
-		}
-	}
+	writeJSON(w, http.StatusOK, s.fsvc.Delete(r.Context(), req.Paths))
 }
 
 // handleFilesPinsList returns the pinned favorite paths.
@@ -234,6 +210,8 @@ func (s *Server) handleFilesSourcesAdd(w http.ResponseWriter, r *http.Request) {
 	src, err := s.fsvc.AddSource(r.Context(), req.Path)
 	if err != nil {
 		switch {
+		case errors.Is(err, fservice.ErrNestedSource):
+			writeError(w, http.StatusBadRequest, "nested_source", err.Error())
 		case errors.Is(err, domain.ErrInvalid):
 			writeError(w, http.StatusBadRequest, "invalid_input", "路径不合法或不是目录")
 		case errors.Is(err, domain.ErrNotFound):

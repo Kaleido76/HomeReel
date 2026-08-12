@@ -35,7 +35,7 @@ type queryer interface {
 const videoCols = `id, source_id, file_id, relative_path, path, size, mtime, title,
 	kind, description, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
 	cover_path, thumb_path, backdrop_path, show_id, season_number, episode_number, episode_title,
-	year, rating, genre, overview, studio, cast_text, metadata_source,
+	year, rating, genre, overview, studio, cast_text, metadata_source, title_source,
 	created_at, updated_at, last_scanned_at, faststart`
 
 // qualify prefixes every column with a table alias so videoCols can be used in
@@ -82,7 +82,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
 		&year, &rating, &genre, &overview, &studio, &castText, &v.MetadataSource,
-		&v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt, &faststart); err != nil {
+		&v.TitleSource, &v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt, &faststart); err != nil {
 		return domain.Video{}, err
 	}
 	if sourceID.Valid {
@@ -277,15 +277,18 @@ func (r *videoRepo) Create(ctx context.Context, v domain.Video) error {
 	if v.Kind == "" {
 		v.Kind = "movie"
 	}
+	if v.TitleSource == "" {
+		v.TitleSource = domain.TitleSourceFile
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO videos (id, source_id, file_id, relative_path, path, size, mtime,
 			title, kind, description, duration, codec, audio_codec, container, segmented, width, height,
-			faststart, created_at, updated_at, last_scanned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			faststart, title_source, created_at, updated_at, last_scanned_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.ID, nullString(v.SourceID), v.FileID, v.RelativePath, v.Path, v.Size, v.MTime,
 		v.Title, v.Kind, v.Description, nullFloat(v.Duration), nullString(v.Codec),
 		nullString(v.AudioCodec), nullString(v.Container), segmentedInt(v.Segmented), v.Width, v.Height,
-		faststartInt(v.FastStart), v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
+		faststartInt(v.FastStart), v.TitleSource, v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
 	if err != nil {
 		return err
 	}
@@ -404,8 +407,8 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 	sets := []string{}
 	args := []any{}
 	if patch.Title != nil {
-		sets = append(sets, "title = ?")
-		args = append(args, *patch.Title)
+		sets = append(sets, "title = ?", "title_source = ?")
+		args = append(args, *patch.Title, domain.TitleSourceManual)
 	}
 	if patch.Description != nil {
 		sets = append(sets, "description = ?")

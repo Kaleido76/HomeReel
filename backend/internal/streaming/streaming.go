@@ -259,14 +259,22 @@ func sidecarMime(p string) string {
 }
 
 // RemoveCache deletes a video's generated cover/thumb files and extracted
-// subtitles (called when the video is deleted or its file changes so stale
-// images or subtitles are never served).
+// subtitles (called when the video is deleted so stale images or subtitles are
+// never served).
 func (s *Service) RemoveCache(videoID string) {
 	covers := filepath.Join(s.dataDir, "covers")
 	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
 		_ = os.Remove(filepath.Join(covers, videoID+ext))
 	}
 	_ = os.Remove(filepath.Join(s.dataDir, "thumbs", videoID+".thumb.jpg"))
+	s.RemoveSubtitles(videoID)
+}
+
+// RemoveSubtitles deletes a video's extracted-subtitle cache. It is what an
+// update event clears: the cover/thumb survive a content change because the
+// scanner regenerates them (processInline) whenever it re-probes; a pure
+// rename/move does not even change them (ADR-017).
+func (s *Service) RemoveSubtitles(videoID string) {
 	matches, _ := filepath.Glob(filepath.Join(s.subDir, videoID+"-*.vtt"))
 	for _, m := range matches {
 		_ = os.Remove(m)

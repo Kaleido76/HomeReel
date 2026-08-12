@@ -231,7 +231,7 @@ func (r *seriesRepo) BindMembers(ctx context.Context, seriesID string, members [
 	for _, m := range members {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE videos SET kind = 'episode', title = ?, show_id = ?, season_number = ?,
-				episode_number = ?, episode_title = ?, updated_at = ?
+				episode_number = ?, episode_title = ?, title_source = 'file', updated_at = ?
 			WHERE id = ?`,
 			m.Title, showID, season, m.EpisodeNumber, nullString(m.Title), now, m.VideoID); err != nil {
 			return err
