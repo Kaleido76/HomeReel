@@ -2,6 +2,7 @@
 
 > 改动 `frontend/src/{tabs,features}` 前必读。技术栈：React 19 + TypeScript、Vite、Tailwind CSS 4、
 > TanStack Router / Query、Vidstack（Range 直连，无 HLS）；**前端命令一律用 `pnpm`**。
+> UI 视觉规范（配色 / 间距 / 组件风格）见根目录 `UI.md`。
 
 ## 1. 多 Router 页签（keep-alive）
 
@@ -57,7 +58,7 @@
 - **手动标记系列（2026-08 管理面定稿）**：工具栏「标记为系列」入队 mark_resource 后台任务（复用
   JobsIndicator 进度），把所选文件夹（或当前目录）打包为系列——须位于媒体源内（源外路径被拒绝并提示先
   添加为多媒体源），成员 = 根目录直接一级子文件。**「标记为单集」与离散资源概念已彻底清除**。详见
-  [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) §6.12。
+  [backend.md](backend.md) §4。
 - **详情页按需同步（2026-08 管理面定稿）**：
   - 单集详情（`VideoDetailPane`）：详情响应带 `source_status`（ok | moved | missing）。moved →
     黄色警告「源文件已改名或移动」+「同步」按钮（`POST /api/videos/{id}/sync`）；missing → 红色警告
@@ -174,16 +175,7 @@
   动态滑条（`index.css`）。进行中的确定进度任务展示**剩余时间估算**（`job.eta_seconds`，后端按
   进度×耗时推算，`formatEta` 格式化）。只显示 `internal=false` 的长时任务（扫描/转换/复制/移动）。
 
-## 6. Explorer 文件页
-
-> 已移除（2026-08）：旧 Explorer（存储卷模型）随后端 storages 一并删除，由「文件」页签
-> （files，见 1.1）取代。本节保留历史说明供参考。
->
-> - 原实现为存储卷可折叠侧边栏（宽屏默认收成窄图标轨 `w-14`，展开为管理面板；窄屏为顶部横向 chips 条）。
-> - 宽屏（≥lg）Finder 多列浏览（`ColumnBrowser`，每级目录一列，点文件夹右侧开新列、点列头回退），
->   窄屏回退单列表（`FileList`）。
-
-## 7. 卡片 / 网格
+## 6. 卡片 / 网格
 
 - `VideoCard` 横版 16:9（row-span-2）、`MediaGrid` dense 混排仅用于首页/搜索。
 - 库内列表不再用卡片网格（`LibraryGrid`/`SeriesCard` 已删除）。

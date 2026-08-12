@@ -28,3 +28,4 @@ Thumbs.db
 *.md
 !docs/*
 !AGENTS.md
+!README.md

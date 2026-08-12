@@ -1,7 +1,7 @@
 # backend.md — 后端与数据层约定
 
-> 改动 `backend/internal/{store,scanner,storage,files,jobs,events,db,config}` 等后端代码前必读。
-> 架构级背景见 [architecture.md](architecture.md)；媒体管线见 [media.md](media.md)。
+> 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config}` 等后端代码前必读。
+> 架构级背景见 [AGENTS.md](../AGENTS.md) §4 ADR；媒体管线见 [media.md](media.md)。
 
 ## 1. 时间戳
 
@@ -97,11 +97,10 @@
 - **多媒体源路由表**：扫描父源时遇到子源（`files.UnderRoot(o.Path, src.Path)` 且非自身）根目录
   → `collect` 整棵 `SkipDir`；`MarkMissingBySource` 跳过绝对路径落在任一子源根下的行（防「父源先删、
   子源重建」抖动）。file_id **全局匹配**：跨源移动仅更新 path/source_id/relative_path，不新建记录。
-- **convert 进度**：`fservice.HandleConvert`（`fservice/convert.go`）——先 ffprobe 探测流（音频是否浏览器
-  可播、有无字幕），单文件流拷贝极快进度保持不确定、烧录重编码较慢；文件夹按「已完成文件数/总数」上报
-  确定进度 + 子任务「转换 <名>（n/N）」，逐文件收集失败为任务错误。`convertMeta` 携带操作面板的
-  `ConvertParams`（video/crf/audio/akbps/burn，`norm()` 归一化）；按 `convertAttempts` 尝试链逐级重试
-  （快速 MP4：无损拷贝 → 烧录重编码；H.264/H.265：重编码 → 烧录 → 丢字幕），详见 [media.md](media.md) §3.1。
+- **convert 任务**：`fservice.HandleConvert`（`fservice/convert.go`）——先 ffprobe 探测流（音频是否浏览器
+  可播、有无字幕），文件夹按「已完成文件数/总数」上报确定进度 + 子任务「转换 <名>（n/N）」，逐文件收集失败
+  为任务错误；`convertMeta` 携带操作面板的 `ConvertParams`（video/crf/audio/akbps/burn，`norm()` 归一化）。
+  预设、两级尝试链与进度算法详见 [media.md](media.md) §3.1。
 - 事件总线（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
 
 ## 10. 泛用文件浏览器（fservice，2026-08 增量）
@@ -114,7 +113,7 @@
   列表，非名称过滤；junction 取其自身属性而非目标；再 Stat 取目录/尺寸/时间）；`/api/files/rename|delete`
    （同步）；`/api/files/copy|move`（**入 jobs** `fscopy`/`fsmove`，后台任务带字节进度，跨卷 move 自动
    copy+delete，复制跳过符号链接/junction 防环路）；`/api/files/pins`（增删查，settings 键 `files.pins`）。
-  - **多媒体源**（`media_sources` 表，见 plan §5.2/6.2）：`/api/files/sources`（GET 列表，附每源
+  - **多媒体源**（`media_sources` 表，见 [decisions.md](decisions.md) §2.2）：`/api/files/sources`（GET 列表，附每源
     `available`=根可达性、`scanning`=有无进行中 scan_source 任务）、`POST`（标记 + 入队 `scan_source`
     Job）、`DELETE`（取消标记：**先按源删除其下全部视频** `videos.DeleteBySource`，逐视频发布
     `VideoDeleted` 清缓存，再删标记——该源的单集与系列随之全部从库中消失；`videos_bd` 触发器随最后成员
@@ -124,5 +123,5 @@
   scan_source）交给 `scannerSvc.HandleJob`。
 - **格式工厂（2026-09，替代原「重封」页签）**：`POST /api/convert`（body 含 `paths` + 可选 `params`）→
   `fservice.EnqueueConvert` 逐个入队 `convert` 任务；`POST /api/convert/probe` → `fservice.ProbeConvert`
-  逐个 ffprobe 返回流事实供操作面板指引/禁用；单集→同目录 `X.mp4`、系列/文件夹→同级 `X (MP4)\`
-  （collision 时 ` (N)` 递增，绝不覆盖源文件），详见 [media.md](media.md) §3.1。
+  逐个 ffprobe 返回流事实供操作面板指引/禁用。转换路径（单集→同目录 `X.mp4`、系列/文件夹→同级
+  `X (MP4)\`，collision 时 ` (N)` 递增）、预设与两级策略详见 [media.md](media.md) §3.1。

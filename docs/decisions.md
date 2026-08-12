@@ -1,0 +1,369 @@
+# decisions.md — 契约与决策细节
+
+> 本文件承载原 `DEVELOPMENT_PLAN.md`（2026-09 删除）中的**契约**部分：数据模型、API 契约、配置示例、
+> AI 扩展预留、开发阶段与测试、风险对策、演进路线。**架构「为什么这样」的决策依据（ADR）在
+> [AGENTS.md](../AGENTS.md) §4**。实现细节以 backend / media / frontend / environment 各领域文档为准。
+
+## 1. 数据模型与存储布局
+
+### 1.1 存储布局
+
+```
+<data_dir>/            # 默认 C:\HomeReel\data（config 可改）
+├── data.db            # SQLite（WAL 模式）
+├── covers/            # <video_id>.jpg  （大图，供 Library 卡片）
+├── thumbs/            # <video_id>.thumb.jpg （小图，供网格列表）
+└── subtitles/         # <video_id>/ 抽取的轨道（可选）
+```
+
+媒体源文件**不复制入库**，始终引用磁盘上的原始路径。视频库的入库单位是用户标记的**多媒体源**目录
+（见 AGENTS §4 ADR-011），与文件浏览系统无生命周期绑定。
+
+### 1.2 表结构
+
+```sql
+-- 多媒体源（ADR-011 替换 storages）：轻量持久化标记 + 扫描单位，不参与文件浏览生命周期
+CREATE TABLE media_sources (
+  id           TEXT PRIMARY KEY,            -- ULID
+  path         TEXT NOT NULL UNIQUE,        -- 规范化绝对路径，如 D:\Videos
+  created_at   TEXT NOT NULL,
+  last_scan_at TEXT                         -- 最近一次成功扫描的开始时间
+);
+
+-- 视频主表（身份：source_id + file_id + relative_path，ADR-007；file_id 全局匹配）
+CREATE TABLE videos (
+  id               TEXT PRIMARY KEY,            -- ULID
+  source_id        TEXT REFERENCES media_sources(id) ON DELETE SET NULL, -- 归属媒体源（2026-08 管理面定稿：所有单集必须归属媒体源；NULL 仅历史兼容）
+  file_id          TEXT NOT NULL,               -- inode / Windows FileID（NTFS 文件 ID）
+  relative_path    TEXT NOT NULL,               -- 相对所属多媒体源根的路径
+  path             TEXT NOT NULL,               -- 绝对路径（冗余，便于流式/直接访问）
+  hash             TEXT,                        -- SHA-256（可选后台任务，可空）
+  mtime            INTEGER,                     -- 修改时间（毫秒），与 size 一起作为变更指纹
+  kind             TEXT NOT NULL DEFAULT 'movie', -- movie（单集）| episode（系列成员）
+  title            TEXT NOT NULL,               -- 电影标题 / 剧集默认为 Show 名
+  description      TEXT NOT NULL DEFAULT '',
+  duration         REAL,                        -- 秒
+  codec            TEXT,                        -- 视频编码（如 h264 / hevc）
+  audio_codec      TEXT,
+  container        TEXT,                        -- mkv / mp4 / mov ...
+  width            INTEGER,
+  height           INTEGER,
+  fps              REAL,
+  file_size        INTEGER,
+  cover_path       TEXT,                        -- 相对 data_dir 的封面路径
+  thumb_path       TEXT,
+  backdrop_path    TEXT,                        -- 详情页背景大图（刮削/手动）
+  show_id          TEXT REFERENCES shows(id),   -- 归属剧集（episode 必填）
+  season_number    INTEGER,                     -- 第几季
+  episode_number   INTEGER,                     -- 第几集
+  episode_title    TEXT,                        -- 单集名（默认为文件名）
+  year             INTEGER,
+  rating           REAL,                        -- 评分 0~10（刮削或用户）
+  genre            TEXT,                        -- 逗号分隔类型
+  overview         TEXT,                        -- 简介
+  studio           TEXT,
+  cast_text        TEXT,                        -- 演职员（逗号分隔）
+  metadata_source  TEXT DEFAULT 'manual',       -- manual | nfo | tmdb
+  search_text      TEXT,                        -- 反规范化文本（title+description+tags+show），供 FTS5
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL,
+  last_scanned_at  TEXT,                        -- 最近一次被扫描确认的时间
+  UNIQUE (source_id, relative_path)
+);
+CREATE INDEX idx_videos_source ON videos(source_id);
+CREATE INDEX idx_videos_mtime   ON videos(updated_at);
+CREATE INDEX idx_videos_show    ON videos(show_id, season_number, episode_number);
+CREATE INDEX idx_videos_kind    ON videos(kind);
+
+-- 多媒体源的「离线」是运行期状态（其根目录当前不可达），不入库；扫描遇不可达源直接中止、
+-- 不更新元数据（ADR-014）。若将来同一视频可存在于多源（去重/镜像）再增加冗余可用性列。
+
+-- 剧集（Show，ADR-015，JellyFin 式剧集分组）
+CREATE TABLE shows (
+  id              TEXT PRIMARY KEY,             -- ULID
+  name            TEXT NOT NULL,
+  overview        TEXT,
+  year            INTEGER,
+  rating          REAL,
+  genre           TEXT,
+  poster_path     TEXT,                         -- 相对 data_dir
+  backdrop_path   TEXT,
+  metadata_source TEXT DEFAULT 'manual',        -- manual | nfo | tmdb
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX idx_shows_name ON shows(name);
+
+-- 系列（2026-08 管理面定稿，ADR-015）：用户显式创建的管理容器，绑定一个根目录
+-- （seasons.root_path）；成员 = 根目录**直接一级子文件**，文件名序 1..N，无季号结构。
+CREATE TABLE seasons (
+  id          TEXT PRIMARY KEY,                 -- ULID（即系列 id）
+  show_id     TEXT NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+  number      INTEGER NOT NULL,                 -- 恒为 1（系列无季号/部号）
+  root_path   TEXT UNIQUE,                      -- 系列根目录（成员=其直接一级子文件；NULL 除外唯一）
+  name        TEXT,                             -- 系列名 = 文件夹名（无「第 N 季」后缀）
+  overview    TEXT,
+  poster_path TEXT,
+  kind        TEXT NOT NULL DEFAULT 'tv',       -- tv=剧集季 | movie=电影部（历史列，无电影/tv 结构类型）
+  UNIQUE (show_id, number)
+);
+
+-- 系列间弱关联（无名称，sort_index 排序，同 show 相邻季自动关联 + 手动增删）
+CREATE TABLE series_links (
+  series_id        TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  linked_series_id TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  sort_index       INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL,
+  PRIMARY KEY (series_id, linked_series_id)
+);
+
+-- 标签（多值）
+CREATE TABLE video_tags (
+  video_id  TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  tag       TEXT NOT NULL,
+  PRIMARY KEY (video_id, tag)
+);
+
+-- 播放历史 / 续播（单用户固定 user='local'，字段保留以兼容未来多用户）
+CREATE TABLE history (
+  video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  user       TEXT NOT NULL DEFAULT 'local',
+  progress   REAL NOT NULL DEFAULT 0,           -- 秒
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (video_id, user)
+);
+
+-- 会话（登录后签发）
+CREATE TABLE sessions (
+  token      TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+-- 任务队列（ADR-008）
+CREATE TABLE jobs (
+  id         TEXT PRIMARY KEY,
+  type       TEXT NOT NULL,        -- probe | thumbnail | scan_source | convert | fscopy | fsmove | mark_resource | hash | rescan
+  target     TEXT NOT NULL,        -- 目标文件/目录路径（probe/thumbnail 用 extra.video_id 定位）
+  extra      TEXT NOT NULL DEFAULT '', -- JSON：{video_id, source_id} 等
+  status     TEXT NOT NULL,        -- queued | running | done | failed
+  progress   REAL DEFAULT 0,       -- 0~1
+  error      TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- FTS5（external content，指向 videos，ADR-009）
+CREATE VIRTUAL TABLE videos_fts USING fts5(
+  content='videos', content_rowid='rowid',
+  title, description, search_text
+);
+-- ai/ad/au 触发器同步；search_text = title + description + tags + show 名（store 层维护），
+-- 剧集单集并入 Show 名称，便于按剧名命中。
+```
+
+> 迁移说明：`db/` 包内置顺序迁移（简单版本表 + `CREATE TABLE IF NOT EXISTS` 序列），不引入重型迁移框架。
+> 将来迁 PostgreSQL 时按 `domain/repo.go` 接口换实现即可。集合子系统已于 2026-08 移除：新库不再建集合表，
+> 老库经追加的 `DROP TABLE` 迁移物理删除。
+>
+> 落地说明：**所有时间戳统一为固定宽度纳秒 RFC3339（`2006-01-02T15:04:05.000000000Z07:00`）**，
+> 保证字符串字典序即时间序（扫描 recency 比较依赖此约定）。
+
+## 2. 后端 API 契约
+
+统一前缀 `/api`；除 `auth` 外均需会话 Cookie。JSON 请求/响应；错误统一为
+`{ "error": { "code": "...", "message": "..." } }`。
+
+### 2.1 认证
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/auth/login` | `{ password }` → 校验口令，签发会话 Cookie |
+| POST | `/api/auth/logout` | 注销会话 |
+| GET | `/api/auth/status` | 是否已登录（前端路由守卫用） |
+
+### 2.2 文件浏览与多媒体源（「文件」页签，2026-08 重构）
+
+泛用机器级文件浏览器按**绝对路径**浏览，与视频库解耦。实现细节见 [backend.md](backend.md) §10。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/disks` | Windows 本地盘符枚举（fixed/removable，排除网络盘） |
+| GET | `/api/files/list?path=` | 按绝对路径实时列目录（过滤 HIDDEN/SYSTEM；junction 取自身属性） |
+| POST | `/api/files/copy\|move` | 剪贴板式复制/移动（入 jobs 后台任务，带字节进度） |
+| POST | `/api/files/rename` | 重命名 |
+| POST | `/api/files/renames` | 批量重命名（同步，OpResult 收集逐项错误） |
+| POST | `/api/files/delete` | 永久删除（批量） |
+| GET/POST/DELETE | `/api/files/pins` | 常用路径固定（settings 表） |
+| GET | `/api/files/sources` | 多媒体源列表（含 `available` 离线状态 / `scanning` 扫描中） |
+| POST | `/api/files/sources` | 标记当前目录为多媒体源并**入队全量扫描** |
+| DELETE | `/api/files/sources?path=` | 取消标记（**其下所有已入库单集与系列从库中移除**，磁盘文件不受影响；先删库再删标记，逐视频发布 `VideoDeleted` 清理缓存） |
+| POST | `/api/files/sources/scan` | 手动重新扫描 |
+| POST | `/api/files/resources` | 标记所选文件夹为系列 `{ paths, kind: series }` → 入队 mark_resource 任务（离散「单集」概念已清除，仅支持 series） |
+| POST | `/api/convert` | 格式工厂：`{ paths }` 把所选文件/文件夹转换为**浏览器可播放的 Faststart MP4 副本**，逐个入队 `convert` 后台任务（单集→同目录 `X.mp4`；系列/文件夹→同级 `X (MP4)\`）。首选无损流拷贝（`-c copy`，音频浏览器不支持的编码自动转 AAC），无损失败自动降级为烧录字幕的高质量重编码（h264 CRF19，详见 [media.md](media.md) §3.1） |
+
+> 旧存储卷 API（`/api/storages*`、`/api/fs/*`、`/api/upload`）已随旧 Explorer 一并移除（2026-08）。
+
+### 2.3 视频库（Library，简易 JellyFin 媒体库）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/videos` | 列表，支持 `q / desc / genre / year / tag（可重复，多标签 AND）/ kind / showId / ungrouped / sort / order / page / pageSize`；`ungrouped=1` 查单集 |
+| GET | `/api/videos/:id` | 详情（含标签、历史、所属系列 `series_id`） |
+| PATCH | `/api/videos/:id` | 更新 `title / description / tags / year / rating / genre / overview / studio / cast_text` |
+| DELETE | `/api/videos/:id` | 删除元数据（可选 `?deleteFile=true` 同时删源文件） |
+| POST | `/api/videos/:id/refresh` | 重新 ffprobe 并更新元数据 |
+| GET | `/api/series` | 系列列表（一季/一部一个系列，含 kind / 成员数 / 关联系数 / 总时长 `total_duration`），支持 `q`（剧名/简介）/ `genre / year / tag（可重复，成员标签 AND）` |
+| GET | `/api/series/:id` | 系列详情（含 members / links） |
+| GET | `/api/series/:id/members` | 系列成员（位次排序、允许缺失，含进度） |
+| GET | `/api/series/:id/links` | 系列弱关联列表 |
+| POST | `/api/series/:id/links` | 添加关联 `{ linkedId, sortIndex }` |
+| DELETE | `/api/series/:id/links/:linkedId` | 移除关联 |
+| GET | `/api/series/:id/poster` | 系列海报（fallback 成员封面） |
+| GET | `/api/tags` | 全部标签及出现次数（用于筛选器） |
+
+> `/api/shows*` 为历史遗留（Phase 3 旧接口），前端已不再使用，仅保留兼容。
+
+### 2.4 播放 / 流媒体
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/stream/:id` | 直连播放：HTTP Range 输出源文件（原生 `Content-Type`） |
+| GET | `/api/stream/:id/cover` | 封面图 |
+| GET | `/api/stream/:id/subtitle` | 字幕（侧边 `.srt/.vtt/.ass` 优先；`?track=<index>` 指定内封文本轨，按需提取为 vtt） |
+| GET | `/api/videos/:id/subtitles` | 字幕轨清单（侧边 + 内封文本轨，供播放器字幕菜单） |
+| GET | `/api/cache` | 缓存概览：孤儿统计（封面/缩略图/字幕）+ 字幕缓存按视频分组列表（含剧集系列标题） |
+| DELETE | `/api/cache?kind=subtitle` | 清空全部字幕缓存（可重建，不影响源文件） |
+| DELETE | `/api/cache/orphans` | 清空孤儿缓存（库中已无对应视频的残留文件） |
+| DELETE | `/api/cache/subtitles/{videoId}` | 清空该视频全部字幕缓存 |
+| DELETE | `/api/cache/subtitles/{videoId}/{track}` | 删除该视频指定轨的字幕缓存（track=-1 指旧式 `<id>.vtt`） |
+
+> 2026-08 修订：**无 HLS 转码路径**（`/api/stream/:id/hls/*` 已删除）。可播放性由前端运行期
+> `canPlayType()` 核对（probe 元数据 → MIME/codecs），不可播放的引导格式工厂转换。
+
+### 2.5 历史 / 搜索 / 设置
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/videos/:id/history` | 读取续播位置 |
+| PUT | `/api/videos/:id/history` | `{ progress }` 保存（节流由前端控制） |
+| GET | `/api/home` | 首页行：继续观看 / 最近添加（单次拉取） |
+| GET | `/api/search?q=` | 统一搜索（文件名 / 标签 / 描述 / 剧名，FTS5） |
+| GET/PUT | `/api/settings` | 读 / 写可运行时配置 |
+| GET | `/api/jobs` | 任务队列状态（索引进度） |
+| GET | `/api/health` | 健康检查 |
+
+## 3. 配置（config.yaml 示例）
+
+```yaml
+server:
+  host: "0.0.0.0"          # 局域网访问
+  port: 8080
+  data_dir: "C:\\HomeReel\\data"
+  static_dir: ""           # 前端构建产物（SPA）目录；空=自动探测 ./static 或 ../frontend/dist，均不存在则仅 API
+
+auth:
+  password: ""             # 空 → 首启自动生成并打印
+  session_days: 30
+
+# 多媒体源（media_sources）由前端在「文件」页签标记，不在 config.yaml 中声明；
+# 首个全量扫描经 jobs 队列异步执行。
+
+media:
+  ffmpeg_path: ""          # 空则用 PATH
+  ffprobe_path: ""
+  thumb_interval_s: 1      # 取帧位置
+  probe_concurrency: 2
+  delete_mode: "trash"     # trash | permanent（删除文件时）
+
+scan:
+  watch: true
+  debounce_ms: 5000
+  availability_check_s: 60 # 外接卷可用性探测间隔（秒）
+```
+
+## 4. AI 模块扩展契约（仅预留，默认不实现）
+
+**目标**：保持主服务干净，AI 以独立进程/服务接入，通过**事件（Event）** + REST + 任务队列解耦；
+AI 侧只需订阅 `VideoImported` 等事件，**不修改 Upload / 主流程**（ADR-010）。
+
+| 能力 | 预留点 | 接入方式 |
+|---|---|---|
+| Whisper 转写 | `videos.transcript` 预留字段（见下表）+ jobs 增加 `whisper` 类型 | Listener 监听 `VideoImported` → 拉取源文件 → 回写 transcript + 关键词 |
+| OCR | `frames` 任务：从关键帧 OCR | Listener 消费封面/抽帧结果 |
+| AI 标签 / 摘要 | `video_tags`（AI 生成带 `source=ai` 标记）、`videos.summary` | Listener 回写元数据 API |
+| Embedding | `videos.embedding_id` 预留 + 独立向量表 | Listener 维护向量库 |
+| 智能搜索 | `search` 包 `SearchProvider` 新增 `ai` 实现即可 | 前端搜索框并列入口 |
+
+```sql
+-- Phase 4 启用时新增（初期不建表，避免空表）
+ALTER TABLE videos ADD COLUMN transcript TEXT;
+ALTER TABLE videos ADD COLUMN summary   TEXT;
+ALTER TABLE videos ADD COLUMN embedding_id TEXT;
+```
+
+AI 服务侧建议：Python/Go 独立服务 + 队列（复用现有 jobs 表或独立消息），通过 API Key 与主服务通信。
+
+## 5. 开发阶段计划
+
+> **v1.0 的目标**：把「视频管理」做到每天愿意用——文件导入稳定可靠、缩略图生成快、播放流畅
+> （续播 / 字幕 / 倍速 / 历史记录）、搜索与标签好用、视频库与文件页签切换自然；Library
+> 达到**简易 JellyFin** 体验（海报墙、元数据、单集/系列分组、首页行）。基础层稳定之前**不引入 AI**，
+> 避免基础层反复调整导致 AI 反复返工。
+
+- **Phase 0 —— 骨架与认证（已完成）**：Go 后端（config/db/auth/api）+ React 前端脚手架 + 单口令会话认证闭环。
+- **Phase 1 —— 文件管理与索引（已完成）**：泛用文件浏览器（files）盘符/pin/剪贴板式操作；**多媒体源**
+  标记 + 全量扫描入库（jobs 队列 + ffprobe 探测 + 缩略图）。分块上传已随旧 Explorer 移除（2026-08）。
+- **Phase 2 —— 播放与媒体体验（已完成）**：视频库 API + 网格页；直连播放（HTTP Range）+ 封面；历史与续播；
+  能力判定（2026-08 起纯 Range 直连，HLS 转码已移除）+ 侧边字幕；Vidstack 播放器。
+- **Phase 3 —— 媒体库体验（已完成）**：数据迁移（videos 补元数据/分组列 + shows/seasons/video_tags + FTS5）；
+  单集/系列模型与扫描归组（2026-08 管理面定稿，含系列间弱关联）；FTS5 搜索；首页行、搜索、播放页元数据面板等
+  前端页面。（2026-08：元数据刮削子系统已移除，仅留手动编辑）
+- **Phase 4 —— AI 扩展（预留，默认不实现）**：仅在接口/数据上预留（见 §4），按需以独立 Go 服务或子模块接入，
+  不耦合主服务。
+
+> 每阶段完成后建议打 tag 并写简短的阶段小结（走查 ADR 与目录结构）。
+
+### 5.1 测试策略
+
+**后端**：`go test ./...`——domain 逻辑、store（`file::memory:` SQLite 或临时目录）、
+api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner 指纹算法、events 总线。
+媒体相关（ffprobe/ffmpeg）：打 `//go:build integration` 标签，CI/本机有 FFmpeg 时运行，否则跳过；
+`testdata` 内置极小样例视频。关键路径必须覆盖：增量扫描去重、删除同步、FTS 同步、会话过期、
+外接卷拔出→离线→插回→重扫（mock 卷枚举后端）、系列归组规则。
+
+**前端**：Vitest + Testing Library——工具函数、组件（列表、筛选、历史节流）。
+播放器相关只做轻量冒烟（真实媒体验证依赖手动/后续 Playwright e2e）。
+
+**验收红线**：每个 Phase 的「验收」条目即该阶段完成判定；不得跳过测试进入下一阶段。
+
+## 6. 风险与对策
+
+| 风险 | 对策 |
+|---|---|
+| 大目录首次扫描耗时长/占资源 | 增量指纹 + 并发限制 + 进度可见 + 可中断重扫 |
+| NTFS 硬链接/符号链接/大小写歧义 | 明确「只跟踪普通文件+目录」，符号链接默认跳过（可配置） |
+| 源文件被外部程序改名/移动 | 以 file_id 校正（全局匹配，path 变化仍识别为同一视频）；last_scanned_at 校正删除 |
+| 文件移动后数据库失效（仅按 path 识别时） | 以 (source_id, file_id, relative_path) 为身份，移动只更新路径/所属源 |
+| 多媒体源根不可达被误判为「文件全部删除」 | 扫描前置可达性探测：不可达 → 中止、不动库；仅根可达且遍历完成才 MarkMissing |
+| 嵌套/重叠多媒体源 | 路由表：子源更小范围优先，父源扫描跳过子源子树；同文件无论哪个源扫出元数据一致 |
+| 剧集命名不规范导致归组错误 | 系列由用户手动创建（路径 + FileID 对应），识别错误由用户手动归组兜底 |
+| 浏览器编码兼容（HEVC/MKV/AC3 等） | 前端运行期 canPlayType 核对（probe → MIME/codecs）；可直连则 Range，否则播放按钮禁用并引导格式工厂转换 |
+| SQLite 并发写冲突 | WAL + 单写者模式（写操作收敛到 store 层串行） |
+| 多终端并发操作（两终端同时改名同一视频或文件） | 会话相互独立互不挤占；文件/DB 写操作收敛到 store/文件层串行；历史进度后写者胜；sessions 定期清理过期行 |
+| 局域网弱设备（手机/TV）播放卡顿 | 缩略图 + 格式工厂转换为低码率 MP4；带宽提示 |
+| 口令弱导致局域网内泄露 | 默认随机口令、登录限速（简单失败计数）、可选局域网 IP 白名单 |
+
+## 7. 未来演进路线（不在本期）
+
+1. PostgreSQL 迁移（repo 接口已隔离；**仅当 SQLite 真正遇到瓶颈才考虑**）。
+2. Meilisearch / OpenSearch 替换 FTS5（`SearchProvider` 新增实现）。
+3. AI 模块按 §4 落地（事件驱动，AI 作为 Listener 订阅 `VideoImported`）。
+4. 多用户与权限（数据层已留 user 字段）。
+5. 音频/图片资产支持（模型可扩展 `asset` 基类）。
+6. 移动端 / PWA 离线壳。
+7. 媒体转码队列化（批量预转码到统一格式）。
+8. TV Mode（仅保留 Library 的电视端界面，ADR-013）。
+9. 多媒体源变更监控：fsnotify 监视源目录，文件增/删/迁移自动反映到视频库（ADR-012 下阶段）。
+10. 离散资源手动入库：源目录外的文件可直接加入库（videos.source_id 已预留 NULL）。
+11. 基于元数据与播放历史的轻量推荐（「你可能想看」行）——在 AI 落地前即可用规则实现。
