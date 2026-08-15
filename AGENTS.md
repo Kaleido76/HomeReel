@@ -25,8 +25,7 @@ HomeReel 是部署在家里 PC 上的**个人视频资料管理平台**（DAM）
 | `docs/media.md` | 媒体管线实现事实源（ffprobe/容器判定/分段 MP4/格式工厂/能力判定/字幕/封面） | 改动 `backend/internal/{media,streaming}` 或前端播放器媒体相关 |
 | `docs/frontend.md` | 前端实现事实源（页签 keep-alive/栏位栈/Vidstack/响应式/文件浏览器/卡片） | 改动 `frontend/src/{tabs,features}` |
 | `docs/status.md` | 现状快照/遗留待办/人工验证清单/未来方向 | 规划新功能、验收、会话交接 |
-| `UI.md` | UI 设计语言（视觉规范） | 改动前端样式/布局前 |
-| `Personal_Media_DAM_Architecture.md` | 上游原始构想 | 可能滞后，仅作背景 |
+| `UI.md` | UI 设计语言（视觉规范；与实现冲突处以 frontend.md §5/§6 为准） | 改动前端样式/布局前 |
 
 **规则**：改代码或架构前先读本文档 §4 的 ADR 与 `docs/decisions.md` 契约；实现细节以各领域文档为准。
 发现文档与代码不一致时，以 ADR 与契约为准，并向用户指出差异。
@@ -56,7 +55,7 @@ HomeReel 是部署在家里 PC 上的**个人视频资料管理平台**（DAM）
 | ADR-003 | 部署形态 | 纯 Web 应用，监听 `0.0.0.0`，浏览器访问 | 任何局域网设备（PC/手机/平板/TV）无需安装即可用 |
 | ADR-004 | 文件入库 | 目录扫描 + **多媒体源标记**（`media_sources`）驱动视频库；手动分块上传与统一上传接口已随旧 Explorer 移除（2026-08，files 上传能力待后续补） | 入库只依赖「用户标记的目录」，与文件浏览完全解耦 |
 | ADR-005 | 数据库 | SQLite（纯 Go 驱动 + WAL 模式）；演进路线：WAL → FTS5 → Background Queue → Read Cache → 仅真正遇瓶颈才考虑 PostgreSQL | Windows 免 CGO、零依赖、单文件；个人量级瓶颈是 ffmpeg 而非数据库 |
-| ADR-006 | 播放策略 | **三层动态流（2026-08 修订，替代纯 Range 直连）**：前端把 probe 元数据映射成 MIME/codecs 串，用 `canPlayType()` 核对目标机能力。Direct（浏览器原生可解码）→ HTTP Range 直连 `/api/stream/{id}`；Remux（编码可解但容器不兼容，如 MKV h264+aac，仅限音频可流拷贝 aac/mp3/无声）→ 后端**整片流拷贝成缓存 MP4**（`-c:v copy -c:a copy`，faststart）走 `/api/stream/{id}/remux` Range；Transcode（编码不兼容 HEVC/rmvb/DTS 等，**或音频不可拷贝 AC3/EAC3/DTS/PCM**——浏览器无 Dolby 解码器且整条音频重编码 ~70× 实时会卡死 Remux 整片生成）→ `/api/stream/{id}/hls/*` **按需转码 HLS**（VOD 全量播放列表 + 关键帧对齐分片 + `-mpegts_copyts 1 -output_ts_offset` 保持源时间轴，每会话独立）。前端按 playMode 选层，三者皆不可才引导格式工厂（保留为可选预转码工具）。**多音轨选轨（2026-09）**：`GET /api/videos/{id}/audio` 枚举音轨，播放器菜单选轨后 Remux 以 `?audio=N`（按轨缓存 `<id>.mp4`/`<id>-a<N>.mp4`）、Transcode 以**新会话** + `&audio=N` 重建流，Direct 暂用浏览器默认轨。**实测依据**：ffmpeg 对 Matroska 的流拷贝按需 seek 不可靠（依赖 cluster 布局/版本），故 Remux 不切片；Transcode 用重编码精确 seek（`-ss 关键帧`）内容与 PTS 均精确 | 原「纯 Range + 引导转换」要用户手动操作；Remux 一次流拷贝成本极低且结果全片可拖；Transcode 只转用户实际看的部分。判定机制运行期固化（前后端协同），不逐格式堆硬编码布尔 |
+| ADR-006 | 播放策略 | **三层动态流（2026-08 修订，替代纯 Range 直连）**：前端把 probe 元数据映射成 MIME/codecs 串，用 `canPlayType()` 核对目标机能力决定播放层——Direct（浏览器原生可解码）→ HTTP Range 直连；Remux（编码可解但容器不兼容，如 MKV h264+aac）→ 后端**整片流拷贝成缓存 MP4** 走 Range（全片可拖）；Transcode（编码不兼容 HEVC/rmvb/DTS 等，**或音频不可拷贝 AC3/EAC3/DTS/PCM**——浏览器无 Dolby 解码器且整条音频重编码过慢会卡死 Remux 整片生成）→ **按需转码 HLS**（VOD 全量列表 + 关键帧对齐 + 每会话独立）。三者皆不可才引导格式工厂（保留为可选预转码工具）。**多音轨选轨（2026-09）**：播放器菜单选轨后 Remux 按轨缓存、Transcode 以新会话重建流、Direct 暂用默认轨。实现细节（命令/缓存命名/音轨号传递）见 [media.md](docs/media.md) §4/§6。**实测依据**：ffmpeg 对 Matroska 流拷贝按需 seek 不可靠，故 Remux 整片流拷贝不切片；Transcode 用重编码精确 seek，内容与 PTS 均精确 | 原「纯 Range + 引导转换」要用户手动操作；Remux 一次流拷贝成本极低且结果全片可拖；Transcode 只转用户实际看的部分。判定机制运行期固化（前后端协同），不逐格式堆硬编码布尔 |
 | ADR-007 | 文件身份 | `(source_id, file_id, relative_path)` 三元组唯一；**file_id 全局匹配**（跨源移动仍识别为同一视频）；`(file_id, size, mtime)` 为变更指纹；`hash` 为可选后台任务 | 文件移动目录（甚至移动出原多媒体源、进入另一源）后仍能识别为同一视频；大文件全量哈希代价高，首次索引快速 |
 | ADR-008 | 任务队列 | SQLite 持久化 `jobs` 表 + 进程内 worker 池 | 可展示进度、崩溃可恢复、实现简单 |
 | ADR-009 | 搜索 | 定义 `SearchProvider` 接口；当前实现 SQLite FTS5（反规范化 `search_text`），Meilisearch/AI 检索后续新增实现 | 控制器不直接写 SQL；替换搜索引擎无需改动 Controller |
@@ -72,17 +71,12 @@ HomeReel 是部署在家里 PC 上的**个人视频资料管理平台**（DAM）
 ## 5. 技术栈（速览）
 
 - 前端：**React 19** + TypeScript、Vite、Tailwind CSS 4、TanStack Router / Query、Vidstack（播放器；
-  Direct/Remux 走 Range，Transcode 走 **HLS + 本地 hls.js**，经 Vidstack `onProviderChange` +
-  `isHLSProvider` 注入 `provider.library = Hls`，不走 CDN）。**前端包管理器一律使用 `pnpm`**；**禁止**
+  Direct/Remux 走 Range，Transcode 走 HLS + 本地 hls.js，不走 CDN）。**前端包管理器一律使用 `pnpm`**；**禁止**
   用 `npm` / `cnpm` / `yarn`。
 - 后端：Go 1.22+、标准库 `net/http`、`modernc.org/sqlite`（免 CGO）、`fsnotify`、`slog`、ULID。
 - 媒体：FFmpeg / ffprobe（探测、缩略图、字幕、格式工厂转换、Remux 流拷贝、Transcode 按需转码）。
-- **播放策略（ADR-006，2026-08 修订）**：三层动态流。可播放性由前端运行期 `canPlayType()` 核对
-  （probe 元数据 → MIME/codecs，`lib/playability.ts` → `playMode`）：
-  - **Direct** → Range 直连 `/api/stream/{id}`；
-  - **Remux**（编码兼容、容器不兼容，如 MKV h264+aac）→ `/api/stream/{id}/remux` 流拷贝缓存 MP4 走 Range；
-  - **Transcode**（编码不兼容）→ `/api/stream/{id}/hls/*` 按需转码 HLS（VOD 全量列表 + 关键帧对齐分片）；
-  - 三者皆不可 → 播放按钮禁用并引导格式工厂转换。判定机制运行期固化，不逐格式堆硬编码布尔。
+- **播放策略（ADR-006）**：三层动态流（Direct / Remux / Transcode / 格式工厂兜底），判定与实现详见
+  [media.md](docs/media.md) §4 与 `frontend/src/lib/playability.ts`。
 - 部署：`CGO_ENABLED=0` 单 `.exe` + `data_dir` + `config.yaml` + ffmpeg 二进制。
 - 开发环境 / 部署细节见 [docs/environment.md](docs/environment.md)；UI 视觉规范见 `UI.md`。
 

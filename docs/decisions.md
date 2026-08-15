@@ -13,7 +13,9 @@
 ├── data.db            # SQLite（WAL 模式）
 ├── covers/            # <video_id>.jpg  （大图，供 Library 卡片）
 ├── thumbs/            # <video_id>.thumb.jpg （小图，供网格列表）
-└── subtitles/         # <video_id>/ 抽取的轨道（可选）
+├── subtitles/         # <video_id>/ 抽取的轨道（可选）
+├── remux/             # Remux 整片流拷贝的缓存 MP4 + 指纹 sidecar（可重建）
+└── hls/               # Transcode 会话分片（会话空闲约 10 分钟清理）
 ```
 
 媒体源文件**不复制入库**，始终引用磁盘上的原始路径。视频库的入库单位是用户标记的**多媒体源**目录
@@ -63,7 +65,7 @@ CREATE TABLE videos (
   overview         TEXT,                        -- 简介
   studio           TEXT,
   cast_text        TEXT,                        -- 演职员（逗号分隔）
-  metadata_source  TEXT DEFAULT 'manual',       -- manual | nfo | tmdb
+  metadata_source  TEXT DEFAULT 'manual',       -- manual（刮削源已移除）
   search_text      TEXT,                        -- 反规范化文本（title+description+tags+show），供 FTS5
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
@@ -88,7 +90,7 @@ CREATE TABLE shows (
   genre           TEXT,
   poster_path     TEXT,                         -- 相对 data_dir
   backdrop_path   TEXT,
-  metadata_source TEXT DEFAULT 'manual',        -- manual | nfo | tmdb
+  metadata_source TEXT DEFAULT 'manual',        -- manual（刮削源已移除）
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
@@ -386,5 +388,4 @@ api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner �
 8. TV Mode（仅保留 Library 的电视端界面，ADR-013）。
 9. 多媒体源变更监控：fsnotify 监视源目录，文件增/删/迁移自动反映到视频库（ADR-012 下阶段，复用统一
    `IngestPaths`/`EvictPaths` 入口，与 HomeReel 自身操作同一套归一化）。
-10. 离散资源手动入库：源目录外的文件可直接加入库（videos.source_id 已预留 NULL）。
-11. 基于元数据与播放历史的轻量推荐（「你可能想看」行）——在 AI 落地前即可用规则实现。
+10. 基于元数据与播放历史的轻量推荐（「你可能想看」行）——在 AI 落地前即可用规则实现。
