@@ -32,13 +32,15 @@ type SubtitleCacheFile struct {
 	Bytes   int64
 }
 
-// CacheOverview walks data_dir's cover/thumb/subtitle caches and reports each
-// class's totals and orphan counts (files whose owning video id is not indexed).
+// CacheOverview walks data_dir's cover/thumb/subtitle/remux caches and reports
+// each class's totals and orphan counts (files whose owning video id is not
+// indexed).
 func (s *Service) CacheOverview(videoIDs map[string]struct{}) map[string]CacheClass {
 	return map[string]CacheClass{
 		"cover":    scanCache("cover", filepath.Join(s.dataDir, "covers"), videoIDs),
 		"thumb":    scanCache("thumb", filepath.Join(s.dataDir, "thumbs"), videoIDs),
 		"subtitle": scanCache("subtitle", s.subDir, videoIDs),
+		"remux":    scanCache("remux", s.remuxDir, videoIDs),
 	}
 }
 
@@ -176,6 +178,7 @@ func (s *Service) cacheDirs() map[string]string {
 		"cover":    filepath.Join(s.dataDir, "covers"),
 		"thumb":    filepath.Join(s.dataDir, "thumbs"),
 		"subtitle": s.subDir,
+		"remux":    s.remuxDir,
 	}
 }
 
@@ -195,8 +198,10 @@ func removeDirFiles(dir string) int {
 
 // cacheIDFromName recovers the owning video id from a cached file base name:
 // covers are "<id>", thumbs "<id>.thumb" (both without extension), extracted
-// subtitles "<id>" or "<id>-<track>". Thumb files always carry the ".thumb"
-// marker; anything else is not a valid cache file and treated as an orphan.
+// subtitles "<id>" or "<id>-<track>", remuxed MP4s "<id>" (the "<id>.mp4.meta"
+// sidecar arrives as "<id>.mp4" once its extension is trimmed). Thumb files
+// always carry the ".thumb" marker; anything else is not a valid cache file
+// and treated as an orphan.
 func cacheIDFromName(kind, base string) (string, bool) {
 	switch kind {
 	case "thumb":
@@ -212,6 +217,8 @@ func cacheIDFromName(kind, base string) (string, bool) {
 			return base, true
 		}
 		return "", false
+	case "remux":
+		return remuxIDFromName(base)
 	default:
 		if base != "" {
 			return base, true

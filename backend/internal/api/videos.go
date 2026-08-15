@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/scanner"
@@ -85,12 +86,14 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("check video source", "video_id", v.ID, "err", checkErr)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"video":           v,
-		"tags":            tags,
-		"series_id":       seriesID,
-		"direct_playable": s.streaming.DirectPlayable(*v),
-		"source_status":   sourceStatus,
-		"new_path":        status.Path,
+		"video":             v,
+		"tags":              tags,
+		"series_id":         seriesID,
+		"direct_playable":   s.streaming.DirectPlayable(*v),
+		"remux_playable":    s.streaming.RemuxPlayable(*v),
+		"transcode_playable": s.streaming.TranscodePlayable(*v),
+		"source_status":     sourceStatus,
+		"new_path":          status.Path,
 	})
 }
 
@@ -132,6 +135,88 @@ func (s *Server) handleStreamDirect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("stream direct", "video_id", v.ID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 	}
+}
+
+// handleStreamRemux serves the cached remuxed MP4 of a video (ADR-006 修订):
+// the frontend requests it when canPlayType rejected the original container but
+// the streams are browser-decodable, so a stream copy makes the file playable
+// natively over HTTP Range with full seek.
+func (s *Server) handleStreamRemux(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.streamOrError(w, r)
+	if !ok {
+		return
+	}
+	if err := s.streaming.Remux(w, r, *v, audioIndex(r)); err != nil {
+		if errors.Is(err, streaming.ErrUnavailable) {
+			writeError(w, http.StatusConflict, "storage_unavailable", "源文件不可用（存储离线）")
+			return
+		}
+		slog.Error("stream remux", "video_id", v.ID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "转换失败")
+	}
+}
+
+// handleStreamHLSPlaylist serves the VOD playlist of the HLS transcode stream for
+// a video (ADR-006 修订): the frontend requests it when canPlayType rejected
+// direct play and the video is not remuxable (codec incompatible). The playlist
+// declares the full video timeline (segments snapped to keyframes), so hls.js
+// renders a draggable progress bar instead of a live window. Segments are
+// generated on demand at seg-{n}.ts.
+func (s *Server) handleStreamHLSPlaylist(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.streamOrError(w, r)
+	if !ok {
+		return
+	}
+	if err := s.streaming.Playlist(w, r, *v, r.URL.Query().Get("session"), audioIndex(r)); err != nil {
+		slog.Warn("hls playlist", "video_id", v.ID, "err", err)
+		writeError(w, http.StatusConflict, "stream_unavailable", "该视频暂时无法动态流式播放")
+	}
+}
+
+// audioIndex parses the "?audio=" track selector (default 0). A negative or
+// unparsable value falls back to the default track.
+func audioIndex(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("audio"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// handleStreamHLSSegment serves one on-demand HLS segment (seg-{n}.ts). Each
+// request maps to exactly one segment of the VOD playlist; the backend generates
+// it with ffmpeg when it is not already cached.
+func (s *Server) handleStreamHLSSegment(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.streamOrError(w, r)
+	if !ok {
+		return
+	}
+	file := r.PathValue("file")
+	n, ok := hlsSegmentIndex(file)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "分片不存在")
+		return
+	}
+	if err := s.streaming.Segment(w, r, *v, r.URL.Query().Get("session"), n); err != nil {
+		if errors.Is(err, streaming.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "分片不存在")
+			return
+		}
+		slog.Warn("hls segment", "video_id", v.ID, "n", n, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "分片生成失败")
+	}
+}
+
+// hlsSegmentIndex parses a "seg-N.ts" segment file name into its index.
+func hlsSegmentIndex(file string) (int, bool) {
+	if rest, ok := strings.CutPrefix(file, "seg-"); ok {
+		if name, ok := strings.CutSuffix(rest, ".ts"); ok {
+			if n, err := strconv.Atoi(name); err == nil && n >= 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func (s *Server) handleStreamCover(w http.ResponseWriter, r *http.Request) {
@@ -177,4 +262,14 @@ func (s *Server) handleVideoSubtitles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"subtitles": s.streaming.ListSubtitles(r.Context(), *v)})
+}
+
+// handleVideoAudioTracks returns every audio track of a video so the player can
+// offer an audio track menu (multi-track containers like 国语/粤语 MKVs).
+func (s *Server) handleVideoAudioTracks(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.videoOrError(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audio": s.streaming.ListAudioTracks(r.Context(), *v)})
 }

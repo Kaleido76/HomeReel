@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"homereel/backend/internal/domain"
@@ -24,7 +26,7 @@ func TestDirectPlayable(t *testing.T) {
 		{"comma list mp4", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Codec: "h264"}, true},
 		{"comma list mov", domain.Video{Container: "mov,mp4,m4a,3gp,3g2,mj2", Codec: "h264"}, true},
 		{"h264 mp4 aac", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "aac"}, true},
-		{"h264 mp4 ac3", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "ac3"}, true},
+		{"h264 mp4 ac3", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "ac3"}, false},
 		{"h264 mp4 dts", domain.Video{Container: "mp4", Codec: "h264", AudioCodec: "dts"}, false},
 		{"segmented mp4", domain.Video{Container: "mp4", Codec: "h264", Segmented: true}, false},
 		{"hevc mp4", domain.Video{Container: "mp4", Codec: "hevc"}, false},
@@ -301,5 +303,208 @@ func TestClearOrphans(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(s.dataDir, gone)); err == nil {
 			t.Fatalf("%s should have been removed", gone)
 		}
+	}
+}
+
+func TestRemuxPlayable(t *testing.T) {
+	withFFmpeg := &Service{ffmpegPath: "ffmpeg"}
+	cases := []struct {
+		name string
+		v    domain.Video
+		want bool
+	}{
+		{"mkv h264 aac", domain.Video{Codec: "h264", AudioCodec: "aac", Container: "matroska"}, true},
+		{"mkv h264 mp3", domain.Video{Codec: "h264", AudioCodec: "mp3", Container: "matroska"}, true},
+		{"h264 no audio", domain.Video{Codec: "h264"}, true},
+		{"h264 ac3", domain.Video{Codec: "h264", AudioCodec: "ac3"}, false},
+		{"h264 eac3", domain.Video{Codec: "h264", AudioCodec: "eac3"}, false},
+		{"h264 dts", domain.Video{Codec: "h264", AudioCodec: "dts"}, false},
+		{"h264 pcm", domain.Video{Codec: "h264", AudioCodec: "pcm_s16le"}, false},
+		{"h264 truehd", domain.Video{Codec: "h264", AudioCodec: "truehd"}, false},
+		{"hevc aac", domain.Video{Codec: "hevc", AudioCodec: "aac"}, false},
+		{"rv40 aac", domain.Video{Codec: "rv40", AudioCodec: "aac"}, false},
+	}
+	for _, c := range cases {
+		if got := withFFmpeg.RemuxPlayable(c.v); got != c.want {
+			t.Errorf("%s: RemuxPlayable = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if (&Service{}).RemuxPlayable(domain.Video{Codec: "h264", AudioCodec: "aac"}) {
+		t.Fatal("no ffmpeg should not be remuxable")
+	}
+}
+
+func TestTranscodePlayable(t *testing.T) {
+	withFFmpeg := &Service{ffmpegPath: "ffmpeg"}
+	noFFmpeg := &Service{}
+	if !withFFmpeg.TranscodePlayable(domain.Video{Duration: 100}) {
+		t.Fatal("ffmpeg + duration should be transcodeable")
+	}
+	if withFFmpeg.TranscodePlayable(domain.Video{Duration: 0}) {
+		t.Fatal("unknown duration should not be transcodeable")
+	}
+	if noFFmpeg.TranscodePlayable(domain.Video{Duration: 100}) {
+		t.Fatal("no ffmpeg should not be transcodeable")
+	}
+}
+
+// TestRemuxCacheReusedAndFingerprintInvalidates verifies the cached remux MP4 is
+// reused for an unchanged source and regenerated when the source's size or mtime
+// changes (a replaced file must never serve stale bytes).
+func TestRemuxCacheReusedAndFingerprintInvalidates(t *testing.T) {
+	base := t.TempDir()
+	s := New(nil, base, "ffmpeg", "ffprobe")
+	remuxed := 0
+	s.remuxVideo = func(_ context.Context, _ domain.Video, out string, _ int) error {
+		remuxed++
+		return os.WriteFile(out, []byte("mp4"), 0o644)
+	}
+	src := filepath.Join(base, "a.mkv")
+	if err := os.WriteFile(src, []byte("mkv"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v := domain.Video{ID: "v1", Path: src, Size: 3, MTime: 10, Codec: "h264", AudioCodec: "aac"}
+
+	if _, err := s.remuxPath(context.Background(), v, 0); err != nil {
+		t.Fatalf("first remux: %v", err)
+	}
+	if _, err := s.remuxPath(context.Background(), v, 0); err != nil {
+		t.Fatalf("second remux: %v", err)
+	}
+	if remuxed != 1 {
+		t.Fatalf("remux calls = %d, want 1 (cached)", remuxed)
+	}
+
+	v.MTime = 11 // source replaced
+	if _, err := s.remuxPath(context.Background(), v, 0); err != nil {
+		t.Fatalf("remux after change: %v", err)
+	}
+	if remuxed != 2 {
+		t.Fatalf("remux calls after change = %d, want 2", remuxed)
+	}
+
+	// A different audio track is cached separately from the default track.
+	if _, err := s.remuxPath(context.Background(), v, 1); err != nil {
+		t.Fatalf("track-1 remux: %v", err)
+	}
+	if _, err := s.remuxPath(context.Background(), v, 1); err != nil {
+		t.Fatalf("track-1 remux cached: %v", err)
+	}
+	if remuxed != 3 {
+		t.Fatalf("remux calls after track switch = %d, want 3", remuxed)
+	}
+	for _, name := range []string{"v1.mp4", "v1-a1.mp4"} {
+		if _, err := os.Stat(filepath.Join(base, "remux", name)); err != nil {
+			t.Fatalf("%s cache missing: %v", name, err)
+		}
+	}
+}
+
+// TestRemuxServesRange verifies the Remux handler serves the cached MP4 with
+// HTTP Range support and video/mp4 content type.
+func TestRemuxServesRange(t *testing.T) {
+	base := t.TempDir()
+	s := New(nil, base, "ffmpeg", "ffprobe")
+	content := []byte("0123456789")
+	s.remuxVideo = func(_ context.Context, _ domain.Video, out string, _ int) error {
+		return os.WriteFile(out, content, 0o644)
+	}
+	src := filepath.Join(base, "a.mkv")
+	if err := os.WriteFile(src, []byte("mkv"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v := domain.Video{ID: "v1", Path: src, Size: 3, MTime: 1, Codec: "h264", AudioCodec: "aac"}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/stream/v1/remux", nil)
+	req.Header.Set("Range", "bytes=2-5")
+	if err := s.Remux(rec, req, v, 0); err != nil {
+		t.Fatalf("remux: %v", err)
+	}
+	res := rec.Result()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusPartialContent {
+		t.Fatalf("range status = %d, want 206", res.StatusCode)
+	}
+	if string(raw) != "2345" {
+		t.Fatalf("range body = %q, want 2345", raw)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "video/mp4" {
+		t.Fatalf("content-type = %q, want video/mp4", ct)
+	}
+}
+
+// TestRemuxUnavailable gates the remux endpoint for files that must transcode
+// instead (codec incompatible) and when no ffmpeg is configured.
+func TestRemuxUnavailable(t *testing.T) {
+	s := New(nil, t.TempDir(), "", "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/stream/v1/remux", nil)
+	if err := s.Remux(rec, req, domain.Video{ID: "v1", Codec: "hevc", AudioCodec: "aac"}, 0); err != ErrUnavailable {
+		t.Fatalf("remux err = %v, want ErrUnavailable", err)
+	}
+}
+
+// TestHLSSegmentBounds validates the keyframe-aligned boundary math that keeps a
+// transcode frame-exact and the hls.js timeline continuous.
+func TestHLSSegmentBounds(t *testing.T) {
+	s := &Service{}
+	hs := &hlsSession{
+		keyframes: []float64{0, 4, 8, 12},
+		duration:  15,
+	}
+	segs := s.segmentBounds(hs)
+	want := []float64{4, 4, 4, 3}
+	if len(segs) != len(want) {
+		t.Fatalf("segment count = %d, want %d", len(segs), len(want))
+	}
+	for i, d := range want {
+		if segs[i] != d {
+			t.Errorf("segment %d duration = %v, want %v", i, segs[i], d)
+		}
+	}
+}
+
+// TestHLSPlaylistContent verifies the served VOD playlist covers the whole
+// timeline with an ENDLIST (so hls.js renders a draggable progress bar, not a
+// live window) and declares one entry per keyframe-aligned segment.
+func TestHLSPlaylistContent(t *testing.T) {
+	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	keyframes := []float64{0, 2, 4, 6, 8}
+	v := domain.Video{ID: "v1", Path: "x.mkv", Duration: 10, Codec: "hevc", AudioCodec: "aac"}
+	// Playlist uses the session's cached keyframes directly via ensureKeyframes,
+	// so override the manager to return a pre-filled session.
+	s.hls.sessions["tok"] = &hlsSession{
+		videoID:   v.ID,
+		dir:       filepath.Join(s.hls.dir, "tok"),
+		keyframes: keyframes,
+		duration:  v.Duration,
+		inflight:  map[int]*sync.Mutex{},
+	}
+	s.hls.keys[s.hls.key(v.ID)] = s.hls.sessions["tok"]
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/stream/v1/hls/playlist.m3u8?session=tok", nil)
+	if err := s.Playlist(rec, req, v, "tok", 0); err != nil {
+		t.Fatalf("playlist: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"#EXTM3U", "#EXT-X-ENDLIST", "#EXTINF:2.000,", "seg-0.ts", "seg-4.ts"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("playlist missing %q\n%s", want, body)
+		}
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/vnd.apple.mpegurl") {
+		t.Errorf("content-type = %q, want application/vnd.apple.mpegurl", ct)
+	}
+}
+
+func TestHLSUnavailable(t *testing.T) {
+	s := New(nil, t.TempDir(), "", "")
+	v := domain.Video{ID: "v1", Path: "x.mkv", Duration: 10}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/stream/v1/hls/playlist.m3u8?session=tok", nil)
+	if err := s.Playlist(rec, req, v, "tok", 0); err != ErrUnavailable {
+		t.Fatalf("playlist err = %v, want ErrUnavailable", err)
 	}
 }

@@ -34,6 +34,8 @@ export interface SeriesMember {
   container?: string
   segmented?: boolean
   direct_playable: boolean
+  remux_playable: boolean
+  transcode_playable: boolean
 }
 
 export interface SeriesLink {

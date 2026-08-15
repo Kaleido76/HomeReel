@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/media"
@@ -22,25 +23,31 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-// Service streams indexed videos (ADR-006): HTTP Range direct play for formats
-// the browser decodes natively. Whether a file actually plays on a given device
-// is decided at runtime by the frontend (canPlayType against the probe metadata
-// it receives); DirectPlayable here is a conservative fallback for browsers
-// where that probe is unavailable. There is no transcoding: a video that cannot
-// play directly must be converted by the user (格式工厂) first.
+// Service streams indexed videos (ADR-006, 2026-08 修订): HTTP Range direct
+// play for formats the browser decodes natively, a container-only remux to a
+// cached MP4 for browser-decodable streams in a foreign container (MKV h264+aac),
+// and an on-demand HLS transcode for everything else. Whether a file actually
+// plays directly on a given device is decided at runtime by the frontend
+// (canPlayType against the probe metadata it receives); DirectPlayable here is a
+// conservative fallback for browsers where that probe is unavailable.
 type Service struct {
 	videos      domain.VideoRepo
 	dataDir     string
 	ffmpegPath  string
 	ffprobePath string
 	subDir      string
+	remuxDir    string
+	remuxLocks  remuxLock
+	hls         *hlsManager
 	// extractSubtitle extracts the subtitle stream streamIndex of src into out
 	// (WebVTT). Injected for tests.
 	extractSubtitle func(ctx context.Context, src string, streamIndex int, out string) error
+	// remuxVideo stream-copies a video into a playable MP4. Injected for tests.
+	remuxVideo func(ctx context.Context, v domain.Video, out string, audio int) error
 }
 
-// New builds the streaming service. dataDir hosts covers/, thumbs/ and the
-// extracted-subtitle cache (subtitles/).
+// New builds the streaming service. dataDir hosts covers/, thumbs/, remux/,
+// hls/ and the extracted-subtitle cache (subtitles/).
 func New(videos domain.VideoRepo, dataDir, ffmpegPath, ffprobePath string) *Service {
 	s := &Service{
 		videos:      videos,
@@ -48,20 +55,24 @@ func New(videos domain.VideoRepo, dataDir, ffmpegPath, ffprobePath string) *Serv
 		ffmpegPath:  ffmpegPath,
 		ffprobePath: ffprobePath,
 		subDir:      filepath.Join(dataDir, "subtitles"),
+		remuxDir:    filepath.Join(dataDir, "remux"),
+		remuxLocks:  remuxLock{m: map[string]*sync.Mutex{}},
+		hls:         newHLSManager(dataDir),
 	}
 	s.extractSubtitle = func(ctx context.Context, src string, streamIndex int, out string) error {
 		return media.ExtractTextSubtitle(ctx, ffmpegPath, src, streamIndex, out)
 	}
+	s.remuxVideo = s.defaultRemuxVideo
 	return s
 }
 
 // DirectPlayable reports a conservative browser-native playability (Chromium's
 // dependable set: native containers plus widely-decodable video/audio codecs).
 // It deliberately excludes MKV and HEVC — whether those play depends on the
-// target browser (Chromium handles Matroska since 87; HEVC needs a hardware/
-// extension decode path), so the frontend decides them at runtime via
-// canPlayType against the probed codec metadata. This method is the fallback
-// when that runtime probe cannot run.
+// target browser (Chromium ships a Matroska demuxer on recent desktop builds;
+// HEVC needs a hardware/extension decode path), so the frontend decides them at
+// runtime via canPlayType against the probed codec metadata. This method is the
+// fallback when that runtime probe cannot run.
 func (s *Service) DirectPlayable(v domain.Video) bool {
 	if v.Codec == "" {
 		// Unprobed: extension-based guess so a fresh file still plays.
@@ -171,6 +182,42 @@ func (s *Service) ListSubtitles(ctx context.Context, v domain.Video) []SubtitleT
 	return out
 }
 
+// AudioTrack is one audio track of a video the player can switch to (mirrors
+// SubtitleTrack). Index is the 0-based AUDIO-stream ordinal: both the ?audio=
+// query param and ffmpeg's -map 0:a:<index> / -select_streams a:<index> select
+// audio streams by ordinal (NOT the container's absolute stream index, which is
+// offset by the video/subtitle streams).
+type AudioTrack struct {
+	Index    int    `json:"index"`
+	Codec    string `json:"codec,omitempty"`
+	Language string `json:"language,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Channels int    `json:"channels,omitempty"`
+}
+
+// ListAudioTracks enumerates the audio tracks of a video via ffprobe, ordered
+// by stream index. The first track is the container's default (what playback
+// uses today). A single track is still returned so the UI can show it (or hide
+// the menu when the length is 1).
+func (s *Service) ListAudioTracks(ctx context.Context, v domain.Video) []AudioTrack {
+	tracks, err := media.ProbeAudioStreams(ctx, s.ffprobePath, v.Path)
+	if err != nil {
+		slog.Warn("probe audio tracks", "video_id", v.ID, "err", err)
+		return nil
+	}
+	out := make([]AudioTrack, 0, len(tracks))
+	for i, t := range tracks {
+		out = append(out, AudioTrack{
+			Index:    i, // audio ordinal, matches -map 0:a:<i>
+			Codec:    t.Codec,
+			Language: t.Language,
+			Channels: t.Channels,
+			Label:    audioLabel(t.Language, t.Title, i+1),
+		})
+	}
+	return out
+}
+
 // subtitleLangLabels map ISO 639 language tags to short Chinese labels.
 var subtitleLangLabels = map[string]string{
 	"chi": "中文", "zho": "中文", "zh": "中文", "chs": "中文", "cht": "中文",
@@ -189,6 +236,18 @@ func subtitleLabel(lang, title string, fallback int) string {
 		return l
 	}
 	return fmt.Sprintf("字幕 %d", fallback)
+}
+
+// audioLabel builds an audio track's display label: the track title when set
+// (e.g. "国语"/"粤语"), else a language label, else "音轨 N".
+func audioLabel(lang, title string, fallback int) string {
+	if title != "" {
+		return title
+	}
+	if l, ok := subtitleLangLabels[strings.ToLower(lang)]; ok {
+		return l
+	}
+	return fmt.Sprintf("音轨 %d", fallback)
 }
 
 // Subtitle serves a subtitle for the player. trackIndex selects an embedded
@@ -258,9 +317,9 @@ func sidecarMime(p string) string {
 	return "text/plain; charset=utf-8"
 }
 
-// RemoveCache deletes a video's generated cover/thumb files and extracted
-// subtitles (called when the video is deleted so stale images or subtitles are
-// never served).
+// RemoveCache deletes a video's generated cover/thumb files, extracted
+// subtitles, and cached remux MP4 (called when the video is deleted so stale
+// images or media are never served).
 func (s *Service) RemoveCache(videoID string) {
 	covers := filepath.Join(s.dataDir, "covers")
 	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
@@ -268,6 +327,7 @@ func (s *Service) RemoveCache(videoID string) {
 	}
 	_ = os.Remove(filepath.Join(s.dataDir, "thumbs", videoID+".thumb.jpg"))
 	s.RemoveSubtitles(videoID)
+	s.RemoveRemux(videoID)
 }
 
 // RemoveSubtitles deletes a video's extracted-subtitle cache. It is what an
@@ -312,11 +372,12 @@ var (
 		"vp8": true, "vp9": true, "av1": true, "theora": true,
 	}
 	// nativeAudioCodecs are audio codecs Chromium decodes inside the native
-	// containers. AC3/EAC3 decode in Chromium (unlike DTS); DTS and lossless PCM
-	// are excluded so a file never plays silently.
+	// containers. AC3/EAC3 are excluded: Chromium and Firefox do not ship a
+	// Dolby decoder, so a file with AC3 audio would play silently; such files
+	// are served through the remux tier (audio re-encoded to AAC) instead.
+	// DTS and lossless PCM are excluded for the same reason.
 	nativeAudioCodecs = map[string]bool{
 		"aac": true, "mp3": true, "opus": true, "vorbis": true, "flac": true,
-		"ac3": true, "eac3": true,
 	}
 )
 

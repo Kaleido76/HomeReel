@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { deleteVideo, fetchVideo, fetchVideoSubtitles, syncVideo } from '../../api/videos'
-import { canPlay } from '../../lib/playability'
+import { playMode } from '../../lib/playability'
 import { openFormat } from '../../tabs/manager'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
 import { VideoTechCard } from '../player/VideoTechCard'
@@ -50,7 +50,10 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
   if (!detail.data) return null
   const video = detail.data.video
   const status = detail.data.source_status
-  const playable = canPlay(video, detail.data.direct_playable)
+  // Playback tier decided at runtime (ADR-006 修订): direct Range, container-only
+  // remux MP4, or on-demand HLS transcode; 'none' falls back to the format
+  // factory. The heavy player derives the same mode again from its own fetch.
+  const mode = playMode(video, detail.data)
   const openConvert = () =>
     openFormat([{ path: video.path, name: video.path.split(/[\\/]/).pop() ?? video.path, is_dir: false }])
 
@@ -81,7 +84,7 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
 
   return (
     <div className="space-y-4 p-4 sm:p-5">
-      {playable ? (
+      {mode !== 'none' ? (
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium text-neutral-500">播放</span>
           <button
@@ -95,9 +98,11 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
         <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
           <div className="min-w-0">
             <p className="text-sm font-medium text-amber-800">
-              该格式不支持直接播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
+              该文件无法在线播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
             </p>
-            <p className="mt-0.5 text-xs text-amber-700">建议用格式工厂转换为 MP4 后再观看，转换不会修改原文件。</p>
+            <p className="mt-0.5 text-xs text-amber-700">
+              此环境既不支持直连播放，动态流转换也不可用（未配置 ffmpeg 或源文件不可达）。请用格式工厂转换。
+            </p>
           </div>
           <button
             onClick={openConvert}

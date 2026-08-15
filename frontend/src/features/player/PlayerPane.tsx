@@ -6,7 +6,7 @@ import { fetchVideo } from '../../api/videos'
 import { coverUrl } from '../../api/videos'
 import { fetchSeriesDetail } from '../../api/series'
 import { formatBytes, formatDuration } from '../../lib/format'
-import { canPlay, prefetchPlayability } from '../../lib/playability'
+import { playMode, prefetchPlayability } from '../../lib/playability'
 import { openFormat } from '../../tabs/manager'
 import { VideoPlayer } from './VideoPlayer'
 
@@ -53,9 +53,10 @@ export function PlayerPane({
   }, [seriesMembers])
 
   const video = detail.data?.video
-  // Runtime playability (frontend canPlayType against the probed codecs), with
-  // the backend's conservative flag as fallback when the probe is unavailable.
-  const playable = video ? canPlay(video, detail.data?.direct_playable ?? false) : false
+  // Playback tier decided at runtime (ADR-006 修订): canPlayType first, then the
+  // backend's remux (container-only MP4 over Range) / transcode (on-demand HLS)
+  // gates; 'none' means the file must go through the format factory instead.
+  const mode = video && detail.data ? playMode(video, detail.data) : 'none'
   const openConvert = () =>
     video && openFormat([{ path: video.path, name: video.path.split(/[\\/]/).pop() ?? video.path, is_dir: false }])
 
@@ -106,17 +107,18 @@ export function PlayerPane({
         </span>
       </div>
 
-      {playable ? (
+      {mode !== 'none' ? (
         <div className="min-h-0 flex-1 overflow-hidden bg-black">
-          <VideoPlayer video={video} onEnded={autoplay && neighbours.next ? () => go(neighbours.next!) : undefined} />
+          <VideoPlayer video={video} mode={mode} onEnded={autoplay && neighbours.next ? () => go(neighbours.next!) : undefined} />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-neutral-50 p-6">
           <p className="text-sm text-neutral-700">
-            该文件格式不支持直接播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
+            该文件无法在线播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
           </p>
           <p className="max-w-md text-center text-xs text-neutral-400">
-            请用格式工厂转换为浏览器可直接播放的 MP4 后再观看。转换不会修改原文件。
+            此环境既不支持直连播放，动态流转换也不可用（未配置 ffmpeg 或源文件不可达）。请用格式工厂转换为
+            MP4 后再观看。转换不会修改原文件。
           </p>
           <button
             onClick={openConvert}

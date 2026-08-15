@@ -228,18 +228,32 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/stream/:id` | 直连播放：HTTP Range 输出源文件（原生 `Content-Type`） |
+| GET | `/api/stream/:id` | 直连播放（Direct）：HTTP Range 输出源文件（原生 `Content-Type`） |
+| GET | `/api/stream/:id/remux` | 容器重封装（Remux）：浏览器可解码但容器不兼容（如 MKV h264+aac）→ 后端流拷贝成缓存 MP4（`-c:v copy -c:a copy`，faststart），HTTP Range 输出，全片可拖。**仅限音频可流拷贝（aac/mp3/无声）**；音频不可拷贝（AC3/EAC3/DTS/PCM）走 Transcode。`?audio=N` 选音轨（默认 0），按轨独立缓存 `<id>.mp4` / `<id>-a<N>.mp4` |
+| GET | `/api/stream/:id/hls/playlist.m3u8?session=<uuid>` | 转码流（Transcode）：VOD 全量播放列表（关键帧对齐、`#EXT-X-ENDLIST`），hls.js 进度条即全片可拖；分片 URL 由播放列表内嵌并携带 `session`。`&audio=N` 选音轨（会话创建时固化，换轨须换新会话） |
+| GET | `/api/stream/:id/hls/{file}` | 按需转码分片 `seg-{n}.ts`（libx264 + AAC，`?session=` 定位会话，首次请求当场生成并缓存） |
 | GET | `/api/stream/:id/cover` | 封面图 |
 | GET | `/api/stream/:id/subtitle` | 字幕（侧边 `.srt/.vtt/.ass` 优先；`?track=<index>` 指定内封文本轨，按需提取为 vtt） |
 | GET | `/api/videos/:id/subtitles` | 字幕轨清单（侧边 + 内封文本轨，供播放器字幕菜单） |
-| GET | `/api/cache` | 缓存概览：孤儿统计（封面/缩略图/字幕）+ 字幕缓存按视频分组列表（含剧集系列标题） |
+| GET | `/api/videos/:id/audio` | 音轨清单（多音轨容器，index/codec/声道/label，供播放器音轨菜单选轨） |
+| GET | `/api/cache` | 缓存概览：孤儿统计（封面/缩略图/字幕/remux）+ 字幕缓存按视频分组列表（含剧集系列标题） |
 | DELETE | `/api/cache?kind=subtitle` | 清空全部字幕缓存（可重建，不影响源文件） |
 | DELETE | `/api/cache/orphans` | 清空孤儿缓存（库中已无对应视频的残留文件） |
 | DELETE | `/api/cache/subtitles/{videoId}` | 清空该视频全部字幕缓存 |
 | DELETE | `/api/cache/subtitles/{videoId}/{track}` | 删除该视频指定轨的字幕缓存（track=-1 指旧式 `<id>.vtt`） |
 
-> 2026-08 修订：**无 HLS 转码路径**（`/api/stream/:id/hls/*` 已删除）。可播放性由前端运行期
-> `canPlayType()` 核对（probe 元数据 → MIME/codecs），不可播放的引导格式工厂转换。
+> 2026-08 修订（ADR-006）：**三层动态流**。可播放性由前端运行期 `canPlayType()` 核对（probe 元数据 →
+> MIME/codecs），据此选择：
+> - **Direct** — 浏览器原生可解码 → Range 直连 `/api/stream/:id`；
+> - **Remux** — 编码可解但容器不兼容（MKV h264+aac 等）→ `/api/stream/:id/remux` 流拷贝成缓存 MP4 走
+>   Range（纯拷贝，秒级完成）；仅限音频可流拷贝（aac/mp3/无声）；
+> - **Transcode** — 编码不兼容（HEVC/rmvb/MPEG2 等）**或音频不可拷贝**（h264+AC3/EAC3/DTS/PCM）→
+>   `/api/stream/:id/hls/*` 按需转码 HLS（VOD 全量列表 + 关键帧对齐分片 + `-mpegts_copyts 1 -output_ts_offset`
+>   保持源时间轴）。音频不可拷贝时视频也会重编码（Matroska 流拷贝 seek 不可靠），但分片转码几秒即起播，
+>   而整条音频重编码 ~70× 实时会卡死 Remux 整片生成。
+>
+> 视频详情响应与系列成员携带后端能力标志：`direct_playable`（保守 fallback）/ `remux_playable` /
+> `transcode_playable`。三者皆不可时才引导格式工厂（保留为可选预转码工具）。
 
 ### 2.5 历史 / 搜索 / 设置
 
@@ -314,8 +328,9 @@ AI 服务侧建议：Python/Go 独立服务 + 队列（复用现有 jobs 表或�
 - **Phase 0 —— 骨架与认证（已完成）**：Go 后端（config/db/auth/api）+ React 前端脚手架 + 单口令会话认证闭环。
 - **Phase 1 —— 文件管理与索引（已完成）**：泛用文件浏览器（files）盘符/pin/剪贴板式操作；**多媒体源**
   标记 + 全量扫描入库（jobs 队列 + ffprobe 探测 + 缩略图）。分块上传已随旧 Explorer 移除（2026-08）。
-- **Phase 2 —— 播放与媒体体验（已完成）**：视频库 API + 网格页；直连播放（HTTP Range）+ 封面；历史与续播；
-  能力判定（2026-08 起纯 Range 直连，HLS 转码已移除）+ 侧边字幕；Vidstack 播放器。
+- **Phase 2 —— 播放与媒体体验（已完成）**：视频库 API + 网格页；三层动态播放（Direct Range / Remux 缓存
+  MP4 / Transcode 按需 HLS，2026-08 修订）+ 封面；历史与续播；能力判定（前端 canPlayType + 后端
+  direct/remux/transcode 标志）+ 侧边字幕；Vidstack 播放器。
 - **Phase 3 —— 媒体库体验（已完成）**：数据迁移（videos 补元数据/分组列 + shows/seasons/video_tags + FTS5）；
   单集/系列模型与扫描归组（2026-08 管理面定稿，含系列间弱关联）；FTS5 搜索；首页行、搜索、播放页元数据面板等
   前端页面。（2026-08：元数据刮削子系统已移除，仅留手动编辑）
@@ -348,7 +363,12 @@ api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner �
 | 多媒体源根不可达被误判为「文件全部删除」 | 扫描前置可达性探测：不可达 → 中止、不动库；仅根可达且遍历完成才 MarkMissing |
 | 嵌套/重叠多媒体源 | **新建源禁止嵌套**（`AddSource` 校验拒绝，400 `nested_source`）；历史遗留嵌套源由扫描路由表防御（子源拥有其子树，父源跳过子源子树，MarkMissing 不越界） |
 | 剧集命名不规范导致归组错误 | 系列由用户手动创建（路径 + FileID 对应），识别错误由用户手动归组兜底 |
-| 浏览器编码兼容（HEVC/MKV/AC3 等） | 前端运行期 canPlayType 核对（probe → MIME/codecs）；可直连则 Range，否则播放按钮禁用并引导格式工厂转换 |
+| 浏览器编码兼容（HEVC/MKV/AC3 等） | 前端运行期 canPlayType 核对（probe → MIME/codecs）：可直连 → Range；不可直连 → 动态流（视频可解**且音频可流拷贝 aac/mp3** 走 Remux MP4：容器重封装纯拷贝；视频不可解**或音频不可拷贝 AC3/EAC3/DTS/PCM** 走 HLS Transcode 按需转码，均后端生成）；三者皆不可 → 引导格式工厂转换 |
+| 播放源 ffmpeg 未配置/源文件不可达 | 详情页 `remux_playable` / `transcode_playable` 为 false → 播放按钮禁用并引导格式工厂；HLS/Remux 端点返回 409 `stream_unavailable` |
+| MKV 流拷贝按需 seek 不可靠（ffmpeg 对 Matroska cluster seek 依赖布局/版本） | Remux 层不切片：整片流拷贝成缓存 MP4（`-c:v copy -c:a copy`，仅 aac/mp3 音频）再走 Range；Transcode 层用重编码精确 seek（`-ss 关键帧`），实测内容与 PTS 均精确对齐 |
+| AC3/EAC3/DTS/PCM 音轨（h264 视频本可解，但浏览器无 Dolby 解码器且整条音频重编码太慢） | h264+AC3/EAC3/DTS/PCM **不归入 Remux 层**（整片阻塞生成 + ~70× 实时音频重编码会卡死首播），改走 **HLS Transcode**：分片按需重编码视频+音频转 AAC，几秒即起播（见 media.md §4.1/§4.2）。原「Remux 仅音频转 AAC」方案实测首播 ~80 秒转圈被否决 |
+| 转码分片 B 帧重排尾部与相邻分片 1 帧重叠 | MPEG-TS 固有现象，hls.js 按 EXTINF 累积时间轴 + timestampOffset 对齐，可容忍 |
+| HLS 转码音频多声道不可播（x265 5.1 类文件卡 0:00:00） | ffmpeg 原生 AAC 对非标准布局（5.1(side)）输出 `chanCfg=0`+PCE，hls.js 推导 0 声道 esds 被 Chromium MSE 拒绝 → 无限重取分片。修复：>2 声道源重映射 `-channel_layout 5.1`（`chanCfg=6`）+ `-b:a 192k`，声道数经 `media.ProbeAudioChannels` 会话缓存（见 media.md §4.2） |
 | SQLite 并发写冲突 | WAL + 单写者模式（写操作收敛到 store 层串行） |
 | 多终端并发操作（两终端同时改名同一视频或文件） | 会话相互独立互不挤占；文件/DB 写操作收敛到 store/文件层串行；历史进度后写者胜；sessions 定期清理过期行 |
 | 局域网弱设备（手机/TV）播放卡顿 | 缩略图 + 格式工厂转换为低码率 MP4；带宽提示 |

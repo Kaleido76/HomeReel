@@ -20,6 +20,9 @@ importers:
       '@vidstack/react':
         specifier: ^1.15.6
         version: 1.15.6(@types/react@19.2.18)(react@19.2.8)
+      hls.js:
+        specifier: ^1.6.18
+        version: 1.6.18
       lucide-react:
         specifier: ^1.28.0
         version: 1.28.0(react@19.2.8)
@@ -521,6 +524,9 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  hls.js@1.6.18:
+    resolution: {integrity: sha512-Rtovq9oJt9HWBqFJF9wZrZM7dRvdGHYNdMMv+wSDGDE2+FIybgs8RPJpR3kya1TZKBHVv2NOgLmn/M0MFjrQ3g==}
 
   isbot@5.2.1:
     resolution: {integrity: sha512-dJ+LpKyClQZ7NG+j3OensC/mAZkGpukE9YUrgPYvAZj2doVL0edfDgywTUh5CXa0o+nW9a1V9e5+CJTX8+SxRw==}
@@ -1142,6 +1148,8 @@ snapshots:
     optional: true
 
   graceful-fs@4.2.11: {}
+
+  hls.js@1.6.18: {}
 
   isbot@5.2.1: {}
 

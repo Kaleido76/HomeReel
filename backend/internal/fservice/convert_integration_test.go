@@ -145,10 +145,10 @@ func TestConvertDirCreatesSiblingCopy(t *testing.T) {
 	}
 }
 
-// TestConvertRebuildsAc3Audio guards the universal-audio rule: AC3 decodes in
-// Chrome but Windows apps reject it ("unsupported AC3"), so a stream-copied
-// AC3 track must never reach the output — it is rebuilt to AAC while video
-// stays lossless.
+// TestConvertRebuildsAc3Audio guards the universal-audio rule: AC3 lacks a
+// Dolby decoder in most browsers and Windows apps reject it ("unsupported AC3"),
+// so a stream-copied AC3 track must never reach the output — it is rebuilt to
+// AAC while video stays lossless.
 func TestConvertRebuildsAc3Audio(t *testing.T) {
 	base := t.TempDir()
 	src := filepath.Join(base, "ac3.mkv")

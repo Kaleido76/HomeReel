@@ -1,7 +1,7 @@
 # frontend.md — 前端架构与约定
 
 > 改动 `frontend/src/{tabs,features}` 前必读。技术栈：React 19 + TypeScript、Vite、Tailwind CSS 4、
-> TanStack Router / Query、Vidstack（Range 直连，无 HLS）；**前端命令一律用 `pnpm`**。
+> TanStack Router / Query、Vidstack（Direct/Remux Range，Transcode HLS + 本地 hls.js）；**前端命令一律用 `pnpm`**。
 > UI 视觉规范（配色 / 间距 / 组件风格）见根目录 `UI.md`。
 
 ## 1. 多 Router 页签（keep-alive）
@@ -113,10 +113,26 @@
 ## 3. 播放器（Vidstack）
 
 - 用 `@vidstack/react`（v1.15+，**勿装废弃的 `@vidstack/player`**）。
-- **纯 Range 直连（2026-08，无 HLS / hls.js）**：可播放性在**进入播放器之前**由 `lib/playability.ts` 的
-  `canPlay()` 决定——probe 元数据（容器/视频编码/音频编码/segmented）→ MIME + codecs 串 →
-  `HTMLMediaElement.canPlayType()`。不可播放时播放按钮禁用，详情/播放栏显示「格式工厂转换」引导，播放器
-  组件本身**永远不会拿到不可直连的文件**。
+- **三层动态流（2026-08 修订，ADR-006）**：可播放性在**进入播放器之前**由 `lib/playability.ts` 的
+  `playMode()` 决定——probe 元数据（容器/视频编码/音频编码/segmented）→ MIME + codecs 串 →
+  `HTMLMediaElement.canPlayType()`，结合后端 `direct_playable / remux_playable / transcode_playable`
+  返回 `'direct' | 'remux' | 'transcode' | 'none'`。`VideoPlayer` 按模式取 src：
+  - direct → `/api/stream/{id}`（Range MP4）
+  - remux → `/api/stream/{id}/remux`（缓存 MP4，Range）
+  - transcode → `/api/stream/{id}/hls/playlist.m3u8?session=<uuid>`（`type: 'application/x-mpegurl'`）
+  - none → 播放按钮禁用，详情/播放栏显示「格式工厂转换」引导
+- **hls.js 本地注入（不走 CDN）**：transcode 模式在 `MediaPlayer` 的 `onProviderChange` 里
+  `isHLSProvider(provider) && (provider.library = Hls)`。session 每视频 `crypto.randomUUID()` 生成，
+  播放列表内嵌携带 `?session=` 的绝对分片 URL（hls.js 相对解析会丢 query）。Direct/Remux 不需 hls.js。
+- **多音轨菜单（2026-09）**：`VideoPlayer` 经 `fetchVideoAudioTracks` 拉 `GET /api/videos/{id}/audio`，多轨
+  （且非 Direct 层）时把「音轨」`DefaultMenuSection` + `DefaultMenuRadioGroup` 注入**播放器自带「设置」菜单**
+  （`DefaultVideoLayout slots.settingsMenuItemsEnd`），与倍速/画质/字幕同一 UI。选轨：
+  - remux → `src=remuxUrl(id, N)`（`?audio=N`，命中各自缓存）；
+  - transcode → **新 session token** + `&audio=N`（会话创建时固化音轨号，换轨必须换会话）；
+  - 选轨后 `ensurePendingSeek` 在 `onCanPlay`/`onLoadedMetadata`/`onTimeUpdate` 反复 seek 到 `posRef` 记录
+    的进度，直到真正追上（HLS 新流未就绪时单次 seek 会被丢弃，故自愈重试），追上后若切换前在播放则自动
+    `remote.play()` 续播。
+  Direct 层不注入菜单（浏览器默认轨）。
 - 样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，
   `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。
 - **`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc`），否则

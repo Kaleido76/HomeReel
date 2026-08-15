@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Calendar, Layers, Loader2, Play, Plus, RefreshCw, Star, X } from 'lucide-react'
 import { addSeriesLink, fetchSeries, fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, syncSeries } from '../../api/series'
 import { formatDuration } from '../../lib/format'
-import { canPlay, prefetchPlayability } from '../../lib/playability'
+import { playMode, prefetchPlayability } from '../../lib/playability'
 
 // SeriesDetailPage renders the series detail for the middle column of the
 // wide-screen library. It receives the id as a prop (the route is matched by
@@ -154,7 +154,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                 {member.duration > 0 ? formatDuration(member.duration) : ''}
               </span>
               <div className="flex shrink-0 items-center gap-2">
-                {canPlay(member, member.direct_playable) ? (
+                {playMode(member, member) !== 'none' ? (
                   <Link
                     to="/series/$id/play/$videoId"
                     params={{ id: seriesId, videoId: member.video_id }}
@@ -165,7 +165,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                 ) : (
                   <button
                     disabled
-                    title="该格式不支持直接播放，请转换后播放"
+                    title="该文件无法在线播放，请转换后播放"
                     className="flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded bg-neutral-200 px-3 py-1.5 text-sm text-neutral-400"
                   >
                     <Play className="size-3.5" /> 不可播放

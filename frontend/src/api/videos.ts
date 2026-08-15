@@ -63,13 +63,19 @@ export interface VideoQuery {
 }
 
 // VideoDetailResponse is the shape of GET /api/videos/:id: the video plus the
-// backend-computed playability fallback and the on-demand source-file status
+// backend-computed playability flags and the on-demand source-file status
 // (ok | moved | missing, 单集详情同步提示用).
+//
+// direct_playable is the conservative Range fallback; remux_playable gates the
+// container-only MP4 remux (/api/stream/:id/remux, served over Range) and
+// transcode_playable gates the on-demand HLS re-encode (/api/stream/:id/hls).
 export interface VideoDetailResponse {
   video: Video
   tags: string[]
   series_id?: string
   direct_playable: boolean
+  remux_playable: boolean
+  transcode_playable: boolean
   source_status: 'ok' | 'moved' | 'missing'
   new_path?: string
 }
@@ -163,6 +169,24 @@ export function streamUrl(id: string): string {
   return `/api/stream/${id}`
 }
 
+// remuxUrl returns the cached remuxed-MP4 stream URL (ADR-006 修订): served over
+// HTTP Range like a native file, generated on first play for browser-decodable
+// streams in a foreign container (e.g. MKV h264+aac). audio selects which audio
+// track is mapped (default 0).
+export function remuxUrl(id: string, audio = 0): string {
+  return `/api/stream/${id}/remux${audio > 0 ? `?audio=${audio}` : ''}`
+}
+
+// hlsPlaylistUrl returns the VOD playlist URL of the on-demand HLS transcode
+// tier. Each play session carries a fresh token so concurrent viewers keep
+// separate segment caches (ADR-002 多终端并发); audio selects which audio track
+// is transcoded (default 0).
+export function hlsPlaylistUrl(id: string, session: string, audio = 0): string {
+  const params = new URLSearchParams({ session })
+  if (audio > 0) params.set('audio', String(audio))
+  return `/api/stream/${id}/hls/playlist.m3u8?${params.toString()}`
+}
+
 export function coverUrl(id: string, thumb = false): string {
   return `/api/stream/${id}/cover${thumb ? '?thumb=1' : ''}`
 }
@@ -182,4 +206,19 @@ export interface SubtitleTrack {
 
 export function fetchVideoSubtitles(id: string): Promise<{ subtitles: SubtitleTrack[] }> {
   return api<{ subtitles: SubtitleTrack[] }>(`/api/videos/${id}/subtitles`)
+}
+
+// AudioTrack is one audio track of a video the player can switch to (multi-track
+// containers like 国语/粤语 MKVs). Index is the 0-based audio-stream ordinal,
+// passed to the stream endpoints as ?audio=.
+export interface AudioTrack {
+  index: number
+  codec?: string
+  language?: string
+  label: string
+  channels?: number
+}
+
+export function fetchVideoAudioTracks(id: string): Promise<{ audio: AudioTrack[] }> {
+  return api<{ audio: AudioTrack[] }>(`/api/videos/${id}/audio`)
 }

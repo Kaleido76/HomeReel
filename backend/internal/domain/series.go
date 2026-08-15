@@ -30,21 +30,24 @@ type Series struct {
 // SeriesMember is one video inside a series, with playback progress. The probe
 // fields (codec/container/audio_codec/segmented) feed the frontend's runtime
 // canPlayType check for the play button; DirectPlayable is the backend's
-// conservative fallback.
+// conservative fallback, RemuxPlayable gates the container-only MP4 remux and
+// TranscodePlayable gates the on-demand HLS transcode (ADR-006 修订).
 type SeriesMember struct {
-	VideoID       string  `json:"video_id"`
-	Title         string  `json:"title"`
-	EpisodeNumber int     `json:"episode_number"`
-	EpisodeTitle  string  `json:"episode_title,omitempty"`
-	Duration      float64 `json:"duration"`
-	ThumbPath     string  `json:"thumb_path,omitempty"`
-	RelativePath  string  `json:"relative_path"`
-	Progress      float64 `json:"progress"`
-	Codec         string  `json:"codec,omitempty"`
-	AudioCodec    string  `json:"audio_codec,omitempty"`
-	Container     string  `json:"container,omitempty"`
-	Segmented     bool    `json:"segmented,omitempty"`
-	DirectPlayable bool   `json:"direct_playable"`
+	VideoID          string  `json:"video_id"`
+	Title            string  `json:"title"`
+	EpisodeNumber    int     `json:"episode_number"`
+	EpisodeTitle     string  `json:"episode_title,omitempty"`
+	Duration         float64 `json:"duration"`
+	ThumbPath        string  `json:"thumb_path,omitempty"`
+	RelativePath     string  `json:"relative_path"`
+	Progress         float64 `json:"progress"`
+	Codec            string  `json:"codec,omitempty"`
+	AudioCodec       string  `json:"audio_codec,omitempty"`
+	Container        string  `json:"container,omitempty"`
+	Segmented        bool    `json:"segmented,omitempty"`
+	DirectPlayable   bool    `json:"direct_playable"`
+	RemuxPlayable    bool    `json:"remux_playable"`
+	TranscodePlayable bool   `json:"transcode_playable"`
 }
 
 // SeriesLink is a weak, unnamed, ordered relation between two series.

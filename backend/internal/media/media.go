@@ -305,3 +305,131 @@ func ExtractTextSubtitle(ctx context.Context, ffmpegPath, src string, streamInde
 	}
 	return os.Rename(tmp, outVTT)
 }
+
+// keyframePacket is one ffprobe packet entry with its keyframe flag. pts_time
+// is decoded from either a number or the "N/A" string ffprobe emits for some
+// container edge cases.
+type keyframePacket struct {
+	Pts   json.RawMessage `json:"pts_time"`
+	Flags string          `json:"flags"`
+}
+
+// keyframePts parses a packet's pts_time (number or "N/A") into a float.
+func keyframePts(raw json.RawMessage) (float64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	if raw[0] == '"' {
+		var s string
+		if json.Unmarshal(raw, &s) != nil || s == "N/A" {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		return f, err == nil
+	}
+	var f float64
+	return f, json.Unmarshal(raw, &f) == nil
+}
+
+// AudioStream is one detected audio track of a media file.
+type AudioStream struct {
+	Index    int
+	Codec    string
+	Channels int
+	Language string
+	Title    string
+}
+
+// ProbeAudioStreams lists the audio tracks of src via ffprobe, in stream order.
+func ProbeAudioStreams(ctx context.Context, ffprobePath, src string) ([]AudioStream, error) {
+	cmd := exec.CommandContext(ctx, ffprobePath,
+		"-v", "quiet",
+		"-select_streams", "a",
+		"-show_entries", "stream=index,codec_name,channels:stream_tags=language,title",
+		"-of", "json",
+		src)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe audio %s: %w", src, err)
+	}
+	var raw struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+			Channels  int    `json:"channels"`
+			Tags      struct {
+				Language string `json:"language"`
+				Title    string `json:"title"`
+			} `json:"tags"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse ffprobe audio: %w", err)
+	}
+	var tracks []AudioStream
+	for _, st := range raw.Streams {
+		tracks = append(tracks, AudioStream{
+			Index:    st.Index,
+			Codec:    st.CodecName,
+			Channels: st.Channels,
+			Language: st.Tags.Language,
+			Title:    st.Tags.Title,
+		})
+	}
+	return tracks, nil
+}
+
+// ProbeAudioChannels returns the channel count of the streamIndex-th audio
+// stream of src (0 when there is no such stream or the probe fails). It feeds
+// the HLS transcode audio decision: a >2-channel source is remapped to the
+// standard 5.1 layout so the native AAC encoder emits an ADTS chanCfg != 0
+// stream (it writes chanCfg=0 + PCE for non-standard layouts like 5.1(side),
+// and hls.js turns that into a 0-channel esds that Chromium's MSE rejects).
+func ProbeAudioChannels(ctx context.Context, ffprobePath, src string, streamIndex int) int {
+	out, err := exec.CommandContext(ctx, ffprobePath,
+		"-v", "error",
+		"-select_streams", fmt.Sprintf("a:%d", streamIndex),
+		"-show_entries", "stream=channels",
+		"-of", "csv=p=0",
+		src).Output()
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// ScanKeyframes lists the video keyframe timestamps of src via a packet-level
+// ffprobe scan (flags contain 'K'). It reads only packet headers, so it is fast
+// even for large files — no frames are decoded. The result feeds the on-demand
+// HLS segmenter (streaming package), which needs each segment to start exactly
+// at a keyframe so a stream copy is frame-exact.
+func ScanKeyframes(ctx context.Context, ffprobePath, src string) ([]float64, error) {
+	out, err := exec.CommandContext(ctx, ffprobePath,
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "packet=pts_time,flags",
+		"-of", "json",
+		src).Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe keyframes %s: %w", src, err)
+	}
+	var raw struct {
+		Packets []keyframePacket `json:"packets"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse ffprobe keyframes: %w", err)
+	}
+	var kfs []float64
+	for _, p := range raw.Packets {
+		if strings.Contains(p.Flags, "K") {
+			if f, ok := keyframePts(p.Pts); ok {
+				kfs = append(kfs, f)
+			}
+		}
+	}
+	return kfs, nil
+}

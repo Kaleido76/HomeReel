@@ -215,9 +215,9 @@ type sourceProbe struct {
 
 // universalMp4Audio are the audio codecs that every target player (Chrome,
 // Edge, Safari, Windows Media Player, VLC…) decodes inside an mp4. Anything
-// else — including AC3/EAC3, which Chrome plays but Windows apps report as
-// "unsupported" — is re-encoded to AAC so the produced file never comes out
-// silent or unplayable on some device.
+// else — including AC3/EAC3, which lack a Dolby decoder in most browsers and
+// which Windows apps report as "unsupported" — is re-encoded to AAC so the
+// produced file never comes out silent or unplayable on some device.
 var universalMp4Audio = map[string]bool{
 	"aac": true, "mp3": true,
 }
@@ -441,9 +441,9 @@ func (s *Service) burnArgs(p sourceProbe, src string, params ConvertParams) []st
 
 // audioSelector returns the -c:a args for the params' audio choice. "smart"
 // copies only universally-playable codecs (aac/mp3) and rebuilds everything
-// else to AAC — AC3/EAC3/Opus decode fine in Chrome but Windows apps report
-// them as unsupported, so copying them would ship a file that plays silent on
-// half the machines.
+// else to AAC — AC3/EAC3 lack a Dolby decoder in most browsers (Chromium/
+// Firefox) and Windows apps report them as unsupported, so copying them would
+// ship a file that plays silent on half the machines.
 func (s *Service) audioSelector(p sourceProbe, params ConvertParams) []string {
 	kbps := strconv.Itoa(params.AKbps)
 	switch params.Audio {

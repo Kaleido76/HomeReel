@@ -99,7 +99,8 @@ func (s *Server) handleSeriesMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 // fillMemberPlayable annotates each member with the backend's conservative
-// playability fallback (the frontend re-checks at runtime via canPlayType).
+// playability fallback and the remux/transcode dynamic-stream gates (the
+// frontend re-checks direct playability at runtime via canPlayType).
 func (s *Server) fillMemberPlayable(members []domain.SeriesMember) {
 	for i := range members {
 		v := domain.Video{
@@ -107,8 +108,11 @@ func (s *Server) fillMemberPlayable(members []domain.SeriesMember) {
 			AudioCodec: members[i].AudioCodec,
 			Container:  members[i].Container,
 			Segmented:  members[i].Segmented,
+			Duration:   members[i].Duration,
 		}
 		members[i].DirectPlayable = s.streaming.DirectPlayable(v)
+		members[i].RemuxPlayable = s.streaming.RemuxPlayable(v)
+		members[i].TranscodePlayable = s.streaming.TranscodePlayable(v)
 	}
 }
 

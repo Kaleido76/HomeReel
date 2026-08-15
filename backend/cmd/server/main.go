@@ -122,6 +122,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// HLS dynamic-stream session sweeper (ADR-006 修订): periodically removes
+	// idle segment caches so a finished playback never leaves temp files behind.
+	go streamingSvc.Sweep(ctx)
+
 	// Background job worker (ADR-008). Job results are published on the bus so
 	// any component can react to a long task finishing. Generic file-browser
 	// jobs (fscopy/fsmove/convert) are dispatched to the fservice handler,

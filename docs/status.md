@@ -22,8 +22,12 @@
   下次扫描；move/rename 先 Ingest 新路径再 Evict 旧路径，**file_id 身份、续播与手动元数据保留**。媒体源
   **禁止嵌套**（`AddSource` 校验拒绝）。用户手动编辑的标题经 `title_source` 保护，扫描/探测不再覆盖。
 - **长时任务系统**：用户可见长时任务带展示名与确定/不确定进度；header「后台任务」按钮 + JetBrains 风格面板。
-- **播放（纯 Range 直连，无 HLS，2026-08 修订）**：前端 `canPlayType()` 运行期核对，不可直连 → 播放按钮
-  禁用 + 引导格式工厂；封面、字幕（侧边优先 + 内封文本轨按需提取 vtt）、Vidstack。详见 [media.md](media.md)。
+- **播放（三层动态流，2026-08 修订，ADR-006）**：前端 `canPlayType()` 运行期核对（`lib/playability.ts`
+  `playMode`）；Direct → Range 直连 `/api/stream/{id}`；Remux（编码兼容、容器不兼容，如 MKV h264+aac）→
+  整片流拷贝缓存 MP4 `/api/stream/{id}/remux`（Range，全片可拖）；Transcode（编码不兼容）→ 按需转码 HLS
+  `/api/stream/{id}/hls/*`（VOD 全量列表 + 关键帧对齐分片，hls.js 本地注入）；三者皆不可 → 播放按钮禁用 +
+   引导格式工厂。封面、字幕（侧边优先 + 内封文本轨按需提取 vtt）、**多音轨容器可点选音轨播放（2026-09）**、
+   Vidstack。详见 [media.md](media.md) §4/§6。
 - **格式工厂**（2026-09）：任意视频/文件夹转浏览器可播放的 Faststart MP4 副本（无损流拷贝优先、位图字幕自动
   烧录重编码、rmvb 等自动降级）；操作面板三预设 + 可微调参数；队列区分进行中/历史。详见 [media.md](media.md) §3.1。
 - **历史续播**：`history` 表（user=`local`）；前端 10s 节流保存、进入 seek（距片尾 20s 内不续播、播完归零）。
@@ -55,19 +59,38 @@
 
 > 以下各项无法通过命令行验证，需用户在浏览器/局域网设备上手动验证。
 
-### 3.1 基础播放与库（2026-08 修订后尚未验证）
+### 3.1 播放三层动态流（2026-08 修订后尚未验证）
+
+> 各常见格式的处理路径速查见 [media.md](media.md) §4.3（含容器 × 编码组合表与目标机差异）。
 1. 直连播放（mp4/h264 秒开、拖动流畅、续播、播完从头）。
-2. **MKV+H.264+AAC**（Chrome/Edge）直连播放、非 Live、可拖动——**前提是先重扫源填充 `audio_codec`**；
+2. **MKV+H.264+AAC**：Chrome/Edge 直连播放（Chromium 支持 Matroska）；Firefox/Safari 或 `canPlayType` 返回
+   空时 → **Remux 层**：点播放后出现短暂「转换中」，随后从转换出的 MP4 播放，进度条全片可拖、可拖动 seek、
+   非 Live。`data_dir/remux/` 出现 `<id>.mp4`，再次播放秒开（命中缓存）。**前提是先重扫源填充 `audio_codec`**；
    未重扫（audio_codec 为空）的 MKV 一律判「不可播放」（保守，避免无声）。
-2a. **MKV 无声保护**：重扫源后，DTS/PCM 音轨的 MKV 播放按钮禁用并提示转换；AAC/AC3/Opus 音轨的正常直连。
-3. **MKV+HEVC**：装了「HEVC 视频扩展」/硬件支持的机器直连可播；未装的机器播放按钮禁用并提示转换。
-4. **MKV+AC3** 在 Chrome/Edge 有声；若个别机器无声 → 从 `playability.ts` 的 audioTokens 移除 ac3/eac3。
-5. **AVI/WMV/DTS 音频**：播放按钮禁用，详情/播放栏「格式工厂转换」一键送达格式工厂。
-6. **fMP4（segmented）**：判不可直连，引导转换。
+2a. **MKV 音频不可拷贝**：重扫源后，AC3/EAC3/DTS/PCM 音轨的 MKV 走 **Transcode HLS**（分片转码，音频转 AAC，
+    `data_dir/hls/<session>/` 出现分片，几秒起播）；AAC/MP3 音轨的 MKV 正常 Remux/Direct（Remux 纯拷贝秒级完成）。
+3. **MKV+HEVC**：装了「HEVC 视频扩展」/硬件支持的机器直连可播；未装的机器 → **Transcode HLS**：点播放后按需
+   转码（第一个分片有等待），进度条显示全片时长可拖、无 Live 标识，拖动即转对应分片。`data_dir/hls/<session>/`
+   出现分片，会话空闲约 10 分钟被清理。
+4. **MKV+AC3/EAC3**：浏览器（Chromium/Firefox）通常无 Dolby 解码器 → `canPlayType` 返回空 → 走 **Transcode HLS**，
+   音轨转 AAC 后有声（几秒起播，`data_dir/hls/<session>/` 出现分片）；个别带 Dolby 解码的设备可直连（原 AC3 音轨）。
+5. **AVI/WMV（h264 视频）**：AVI/WMV 容器不可直连 → 音频可拷贝（AAC/MP3/无声）走 **Remux**（纯拷贝）；
+   音频不可拷贝（AC3/EAC3/DTS/PCM）或视频编码不兼容（如 MPEG4/VC1）→ **Transcode HLS**；若 transcode 不可用
+   （未配置 ffmpeg）→ 播放按钮禁用，详情/播放栏「格式工厂转换」一键送达格式工厂。
+6. **fMP4（segmented）**：不可直连，但 h264 时 `remux_playable=true` → 走 Remux（流拷贝成常规 MP4 后 Range
+   播放）；无法 Remux 时引导格式工厂。
 7. **faststart 标记**：详情页对 mp4 家族显示「可直连播放」「非快速启动」；非 faststart MP4 能播但拖动需缓冲。
-7a. **详情页技术卡片**：详情栏「技术信息」卡片展示视频/音频/容器/时长/大小 + 逐流解码能力说明（音频 DTS/PCM
-    等标「不支持前端解码」）+ 字幕轨道清单（侧边文件与内封文本轨分别列出）。
+7a. **详情页技术卡片**：详情栏「技术信息」卡片展示视频/音频/容器/时长/大小 + 逐流解码能力说明（音频 AC3/EAC3/
+    DTS/PCM 等标「不支持前端解码，走 Transcode 转 AAC」）+ 字幕轨道清单（侧边文件与内封文本轨分别列出）。
 7b. **字幕多轨菜单**：播放器字幕菜单列出全部字幕源（侧边 + 内封文本轨），可切换；详情页技术卡片同步展示同一清单。
+7b1. **多音轨选轨（2026-09）**：双音轨 MKV（如古惑仔 国语/粤语，AC3 走 HLS；或 h264+AAC 双轨走 Remux）播放时，
+     播放器「设置」菜单出现「音轨」项（与倍速/画质/字幕同一 UI），列出各轨（title/语言/声道）；点选粤语 →
+     短暂重载后**保持进度**切到粤语音轨，再次切回国语同理；换轨后 HLS 生成新会话分片、Remux 命中各自缓存
+     （`data_dir/remux/<id>-a1.mp4`）。单音轨文件不显示该菜单；Direct 层（浏览器原生可解的多音轨）暂只播默认轨。
+7c. **三端能力差异**：同一 MKV h264+aac 在 Chrome（直连）与 Firefox/Safari（Remux）播放均正常；同一 HEVC 在
+    带扩展的机器（直连）与不带扩展的机器（Transcode HLS）播放均正常。
+7d. **多终端并发（ADR-002）**：两台设备同时播放同一视频（一台 Remux 一台 Transcode，或同视频两个会话）互不
+    挤占；各自拖动/续播互不影响；HLS 会话各自独立（`?session=` 不同）。
 8. 手机/平板局域网访问播放。
 9. 同名 `.srt/.vtt` 字幕出现在字幕菜单。
 10. 标记多媒体源后全量扫描：视频以单集入库、不产生任何系列；重复扫描不重复入库；`audio_codec`/`faststart` 被填充。

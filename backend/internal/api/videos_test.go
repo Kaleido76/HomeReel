@@ -336,3 +336,24 @@ func TestConvertProbeEndpoints(t *testing.T) {
 		t.Fatalf("empty probe = %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestAudioIndexQuery(t *testing.T) {
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"", 0},
+		{"audio=", 0},
+		{"audio=0", 0},
+		{"audio=1", 1},
+		{"audio=3", 3},
+		{"audio=-1", 0},
+		{"audio=abc", 0},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest("GET", "/api/stream/v1/remux?"+c.query, nil)
+		if got := audioIndex(req); got != c.want {
+			t.Errorf("audioIndex(%q) = %d, want %d", c.query, got, c.want)
+		}
+	}
+}

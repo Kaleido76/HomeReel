@@ -2,11 +2,17 @@
 //
 // 「运行期固化」的判定机制：前端把 probe 出的容器/视频编码/音频编码映射成
 // MIME + codecs 串，再用 HTMLMediaElement.canPlayType() 核对目标机器（本机
-// 浏览器 + 系统解码能力）能否直接播放。能 → Range 直连；不能 → 引导格式工厂
-// 转换。没有 Live/HLS 转码路径（后端 HLS 模块已整体移除）。
+// 浏览器 + 系统解码能力）能否直接播放。判定结果决定走哪一层：
+//   direct    → 浏览器原生解码 → HTTP Range 直连（/api/stream/{id}）
+//   remux     → 视频可解但容器不兼容（MKV h264+aac，音频可流拷贝）→ 后端流拷贝
+//               成缓存 MP4，再走 Range 直连（/api/stream/{id}/remux）
+//   transcode → 编码不兼容（HEVC/rmvb/DTS 等）或音频不可拷贝（AC3/EAC3/DTS/PCM）
+//               → 后端按需转码成 HLS（/api/stream/{id}/hls/playlist.m3u8）
+//   none      → 以上皆不可 → 引导格式工厂转换
 //
-// 后端 /api/videos/{id} 返回的 direct_playable 是保守 fallback：当 canPlayType
-// 探测不可用（异常环境）时兜底，不作为主判据。
+// 后端返回的 direct_playable / remux_playable / transcode_playable 是能力标志：
+// direct 是保守 fallback（当 canPlayType 探测不可用时兜底），remux/transcode 是
+// 动态流层的可用性门槛。
 //
 // —— 性能优化（判定规则不变）——
 // canPlayType 的结果在页面生命周期内稳定（浏览器解码能力不会中途变化），因此
@@ -60,17 +66,17 @@ const videoTokens: Record<string, string> = {
   theora: 'theora',
 }
 
-// audioTokens maps a probed audio codec to its codecs token. DTS and lossless
-// PCM are absent because Chromium decodes neither inside a <video src> — a file
-// with such audio must be re-encoded (格式工厂 turns it into AAC).
+// audioTokens maps a probed audio codec to its codecs token. AC3/EAC3, DTS and
+// lossless PCM are absent: Chromium and Firefox decode none of these inside a
+// <video src> (no Dolby decoder), so a file with such audio would play silently.
+// These codecs are re-encoded to AAC by the HLS transcode tier (or 格式工厂)
+// instead.
 const audioTokens: Record<string, string> = {
   aac: 'mp4a.40.2',
   mp3: 'mp4a.69',
   opus: 'opus',
   vorbis: 'vorbis',
   flac: 'flac',
-  ac3: 'ac-3',
-  eac3: 'ec-3',
 }
 
 // PlayabilityReport is the decision behind canPlay, broken down per stream so
@@ -178,6 +184,34 @@ export function canPlay(media: PlayabilityInput, backendPlayable: boolean): bool
   if (report.playable) return true
   if (report.decoderSupported === null) return backendPlayable
   return false
+}
+
+// PlayMode is the streaming tier a video will actually play through (ADR-006
+// 修订): direct Range, container-only remux MP4, on-demand HLS transcode, or
+// none (format-factory fallback).
+export type PlayMode = 'direct' | 'remux' | 'transcode' | 'none'
+
+// PlayabilityBackendFlags are the backend-computed capability gates returned by
+// the video/series APIs. direct is the conservative fallback for when the
+// runtime canPlayType probe is unavailable; remux/transcode gate the dynamic
+// tiers.
+export interface PlayabilityBackendFlags {
+  direct_playable?: boolean
+  remux_playable?: boolean
+  transcode_playable?: boolean
+}
+
+// playMode decides which streaming tier to use. The runtime canPlayType report
+// is authoritative for direct playability; when it is unavailable the backend's
+// conservative direct flag falls back. Otherwise the file falls through to the
+// cheapest dynamic tier the backend offers (remux before transcode).
+export function playMode(media: PlayabilityInput, backend: PlayabilityBackendFlags): PlayMode {
+  const report = reportFor(media)
+  if (report.playable) return 'direct'
+  if (report.decoderSupported === null && backend.direct_playable) return 'direct'
+  if (backend.remux_playable) return 'remux'
+  if (backend.transcode_playable) return 'transcode'
+  return 'none'
 }
 
 // prefetchPlayability 批量预收集一批条目（页面进入 / 数据到达时调用，如系列
