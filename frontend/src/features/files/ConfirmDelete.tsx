@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { Modal } from '../../components/Modal'
 
 // ConfirmDelete is the strong confirmation for permanent deletion: the user
 // must type the exact phrase 「永久删除」 before the delete button enables.
@@ -26,8 +27,8 @@ export function ConfirmDelete({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-96 rounded-xl border border-neutral-200 bg-white p-4 shadow-xl">
+    <Modal onClose={onCancel} size="sm">
+      <div className="p-4">
         <p className="text-sm font-medium text-neutral-900">永久删除 {targets.length} 项？</p>
         <p className="mt-1 text-xs text-neutral-500">此操作不可恢复，文件将直接从磁盘删除。</p>
         <div className="mt-3 max-h-32 space-y-0.5 overflow-y-auto rounded-lg bg-neutral-50 p-2">
@@ -62,6 +63,6 @@ export function ConfirmDelete({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }

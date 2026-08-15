@@ -225,6 +225,95 @@ func TestSeriesCheckIgnoresRelativePathBasis(t *testing.T) {
 	}
 }
 
+// 系列显示名（shows.name）一旦被用户手动编辑，重新标记/同步同一文件夹不得将其
+// 还原为文件夹名（ADR-015 修订：系列名是显示名，默认=文件夹名，创建后可自由编辑，
+// 与文件夹名脱钩；root_path 才是文件对应关系的唯一事实源）。
+func TestMarkSeriesKeepsManualDisplayName(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	_ = ensureSource(t, svc, root)
+	showDir := filepath.Join(root, "Show")
+	mkVideo(t, filepath.Join(showDir, "e1.mkv"))
+	mkVideo(t, filepath.Join(showDir, "e2.mkv"))
+	if err := svc.HandleJob(ctx, markJob(showDir, "series"), noopReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	series, _ := svc.series.List(ctx, domain.SeriesQuery{})
+	if len(series) != 1 || series[0].Title != "Show" {
+		t.Fatalf("series = %+v, want one named Show", series)
+	}
+	show, err := svc.shows.Get(ctx, series[0].ShowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	show.Name = "我的收藏"
+	if err := svc.shows.UpdateMetadata(ctx, show); err != nil {
+		t.Fatalf("rename series: %v", err)
+	}
+
+	// 重新标记同一文件夹（幂等刷新）与显式同步都不能还原显示名。
+	if err := svc.HandleJob(ctx, markJob(showDir, "series"), noopReporter{}); err != nil {
+		t.Fatalf("re-mark: %v", err)
+	}
+	if err := svc.SyncSeries(ctx, series[0].ID); err != nil {
+		t.Fatalf("sync series: %v", err)
+	}
+	after, _ := svc.series.List(ctx, domain.SeriesQuery{})
+	if len(after) != 1 || after[0].Title != "我的收藏" {
+		t.Fatalf("display name must survive re-mark/sync, got %+v", after)
+	}
+}
+
+// 手动排序（拖拽重排）后，扫描/同步只追加新成员，不把顺序还原为文件名序。
+func TestScanPreservesManualMemberOrder(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	_ = ensureSource(t, svc, root)
+	showDir := filepath.Join(root, "Show")
+	// 文件名序 b < a，但手动排序要求 a 在前。
+	mkVideo(t, filepath.Join(showDir, "b.mkv"))
+	mkVideo(t, filepath.Join(showDir, "a.mkv"))
+	if err := svc.HandleJob(ctx, markJob(showDir, "series"), noopReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	series, _ := svc.series.List(ctx, domain.SeriesQuery{})
+	id := series[0].ID
+	members, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if members[0].EpisodeTitle != "a" || members[1].EpisodeTitle != "b" {
+		t.Fatalf("initial members = %+v, want filename order a,b", members)
+	}
+
+	// 手动重排为 b,a。
+	if err := svc.series.SetMemberOrder(ctx, id, []string{members[1].VideoID, members[0].VideoID}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 扫描（会维护成员）不应还原顺序。
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	// 新增 c.mkv：应追加到末尾，不破坏 b,a 顺序。
+	mkVideo(t, filepath.Join(showDir, "c.mkv"))
+	if err := svc.SyncSeries(ctx, id); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	after, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"b", "a", "c"}
+	for i, m := range after {
+		if m.EpisodeTitle != want[i] {
+			t.Fatalf("member %d = %s, want %s (order %v)", i, m.EpisodeTitle, want[i], after)
+		}
+	}
+}
+
 // CheckSeries detects drift (a deleted member / a new unindexed file) and
 // SyncSeries converges it.
 func TestSeriesCheckAndSync(t *testing.T) {

@@ -23,6 +23,7 @@ export interface Series {
 export interface SeriesMember {
   video_id: string
   title: string
+  title_source?: string
   episode_number: number
   episode_title?: string
   duration: number
@@ -85,14 +86,44 @@ export function syncSeries(id: string): Promise<{ synced: boolean }> {
   return api<{ synced: boolean }>(`/api/series/${id}/sync`, { method: 'POST' })
 }
 
+export function clearSeriesHistory(id: string): Promise<{ cleared: boolean }> {
+  return api<{ cleared: boolean }>(`/api/series/${id}/history`, { method: 'DELETE' })
+}
+
+export function reorderSeriesMembers(id: string, videoIds: string[]): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/series/${id}/order`, {
+    method: 'POST',
+    body: JSON.stringify({ video_ids: videoIds }),
+  })
+}
+
+// resortSeries restores the automatic file-name member order (系列详情「按文件名
+// 字典序重新刷新排序」)：清除 sort_manual 并按文件名重绑成员 1..N，手动改过的
+// 标题保留。
+export function resortSeries(id: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/series/${id}/resort`, { method: 'POST' })
+}
+
+// updateSeriesName renames a series. Series are backed 1:1 by a show row (each
+// root folder gets its own show, ADR-015), so the existing show metadata PATCH
+// carries the rename; it also rebuilds the members' search text.
+export function updateSeriesName(showId: string, name: string): Promise<{ show: { id: string; name: string } }> {
+  return api(`/api/shows/${showId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  })
+}
+
 export function fetchSeriesLinks(id: string): Promise<{ links: SeriesLink[] }> {
   return api<{ links: SeriesLink[] }>(`/api/series/${id}/links`)
 }
 
-export function addSeriesLink(id: string, linkedId: string): Promise<{ ok: boolean }> {
+// setSeriesLinks replaces the series' link group with the full desired set
+// (方案 B)：勾选集即期望的关联集合，提交后该系列与勾选系列同组互相可见。
+export function setSeriesLinks(id: string, seriesIds: string[]): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(`/api/series/${id}/links`, {
-    method: 'POST',
-    body: JSON.stringify({ series_id: linkedId }),
+    method: 'PUT',
+    body: JSON.stringify({ series_ids: seriesIds }),
   })
 }
 

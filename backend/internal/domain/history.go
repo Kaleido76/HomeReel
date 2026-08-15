@@ -17,4 +17,7 @@ type HistoryRepo interface {
 	Get(ctx context.Context, videoID, user string) (History, error)
 	Upsert(ctx context.Context, h History) error
 	Delete(ctx context.Context, videoID, user string) error
+	// DeleteBySeries clears the resume position of every member of a series
+	// (系列详情页「清除全部观看进度」)。
+	DeleteBySeries(ctx context.Context, seriesID, user string) error
 }

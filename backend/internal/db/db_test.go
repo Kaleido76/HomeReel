@@ -199,7 +199,7 @@ func TestMigrateClearsLibrary(t *testing.T) {
 	}
 
 	// 库内容表全部清空；media_sources 是扫描单元注册表，不属于库内容，保留。
-	for _, table := range []string{"videos", "shows", "seasons", "series_links", "video_tags", "history"} {
+	for _, table := range []string{"videos", "shows", "seasons", "link_groups", "link_group_members", "video_tags", "history"} {
 		var n int
 		if err := database.QueryRow(`SELECT count(*) FROM ` + table).Scan(&n); err != nil {
 			t.Fatalf("count %s: %v", table, err)

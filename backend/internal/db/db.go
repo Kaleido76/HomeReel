@@ -361,6 +361,26 @@ var migrations = []string{
 	END;
 	INSERT INTO videos_fts(rowid, title, search_text)
 		SELECT rowid, title, search_text FROM videos;`,
+	// 手动排序（2026-09，ADR-015 修订）：seasons.sort_manual=1 表示该系列成员
+	// 顺序由用户手动维护（拖拽重排），扫描/同步只追加新成员、绝不按文件名序重排。
+	`ALTER TABLE seasons ADD COLUMN sort_manual INTEGER NOT NULL DEFAULT 0`,
+	// 关联系列改「显式分组」（2026-09，方案 B）：series_links 无向边表移除，改为
+	// link_groups + link_group_members 分组表——关联 = 同一组内系列互相可见
+	// （A 关联 B、C 时三者同组，打开任一方都看到另外两方）。开发期直接重建，
+	// 不迁移旧数据。series_id 唯一索引保证每系列至多一组。
+	`DROP TABLE IF EXISTS series_links;
+	CREATE TABLE link_groups (
+		id         TEXT PRIMARY KEY,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE link_group_members (
+		group_id   TEXT NOT NULL REFERENCES link_groups(id) ON DELETE CASCADE,
+		series_id  TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+		sort_index INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (group_id, series_id)
+	);
+	CREATE UNIQUE INDEX idx_link_group_members_series ON link_group_members(series_id);`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

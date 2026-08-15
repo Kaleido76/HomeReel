@@ -398,8 +398,11 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 	sets := []string{}
 	args := []any{}
 	if patch.Title != nil {
-		sets = append(sets, "title = ?", "title_source = ?")
-		args = append(args, *patch.Title, domain.TitleSourceManual)
+		// episode_title 与 title 在系列成员中始终同值（BindMembers 一起写）；
+		// 手动改标题必须同步 episode_title（仅 episode），否则成员列表
+		// （episode_title || title）不会显示新名。
+		sets = append(sets, "title = ?", "episode_title = CASE WHEN kind = 'episode' THEN ? ELSE episode_title END", "title_source = ?")
+		args = append(args, *patch.Title, *patch.Title, domain.TitleSourceManual)
 	}
 	if patch.Kind != nil {
 		sets = append(sets, "kind = ?")

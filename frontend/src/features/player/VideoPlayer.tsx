@@ -117,11 +117,16 @@ export function VideoPlayer({
   useEffect(
     () => () => {
       // Save the resume position, then invalidate the detail page's history
-      // query so it re-reads the fresh progress after leaving playback.
+      // query so it re-reads the fresh progress after leaving playback. A
+      // series member also refreshes its series detail (series progress card /
+      // member rows aggregate per-member progress there).
       const save = posRef.current > 0 ? putHistory(video.id, posRef.current).catch(() => {}) : Promise.resolve()
-      void save.then(() => queryClient.invalidateQueries({ queryKey: ['history', video.id] }))
+      void save.then(() => {
+        queryClient.invalidateQueries({ queryKey: ['history', video.id] })
+        if (video.show_id) queryClient.invalidateQueries({ queryKey: ['series'] })
+      })
     },
-    [video.id, queryClient],
+    [video.id, video.show_id, queryClient],
   )
 
   // Auto-pause when the user switches away from the library tab: the player's

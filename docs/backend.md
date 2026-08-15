@@ -22,9 +22,10 @@
 ## 4. 单集 / 系列组织（2026-08 管理面定稿）
 
 **管理面定稿**：单集是唯一基本实体（必须归属媒体源）；系列是用户显式创建的管理容器，绑定根目录
-（`seasons.root_path`），成员 = 根目录**直接一级子文件**（不得嵌套），系列名 = 文件夹名（无季号），成员
-标题 = 文件名。**系列只能手动创建**；自动扫描不建不删不改名系列定义，只维护既有系列成员关系。归属判定以
-「路径 + FileID」为唯一事实源。
+（`seasons.root_path`），成员 = 根目录**直接一级子文件**（不得嵌套），**系列显示名 = `shows.name`**（创建时
+默认=文件夹名，创建后与文件夹脱钩、可编辑，扫描/同步/重新标记不覆盖；文件夹对应关系仅由 `root_path`
+承载），成员标题 = 文件名。**系列只能手动创建**；自动扫描不建不删不改名系列定义，只维护既有系列成员关系。
+归属判定以「路径 + FileID」为唯一事实源。
 
 - **扫描（媒体源级）**：先同步文件（新增 / 未变 Touch / 变更 UpdateFingerprint+probe / file_id 移动改路径 /
   `MarkMissingBySource` 删消失行），再 `maintainSeriesMembers` 收敛成员关系（根目录直接子文件 → `BindMembers`
@@ -32,6 +33,13 @@
 - **手动添加系列（文件夹级，`markSeries`）**：路径须在媒体源内（否则拒绝）；不得位于/包含既有系列（防
   嵌套）；对根目录直接一级子文件 `importCandidates` + `syncSeriesFolder`（`FindByRoot`/`CreateAtRoot` 幂等
   绑定 + `pruneVanishedMembers` 刷新消失成员 + 空系列清理）。
+- **手动排序（2026-09，ADR-015 修订）**：`POST /api/series/{id}/order`（body `{ video_ids }` 须为该系列成员
+  全集排列）重写 `episode_number` 1..N 并置 `seasons.sort_manual=1`。此后 `bindSeriesMembers`（扫描维护
+  `maintainSeriesMembers` 与 `syncSeriesFolder` 共用）对 `sort_manual` 系列**保留既有成员顺序、仅把新入库
+  文件按文件名追加到末尾**；普通系列仍按文件名序 1..N。**恢复自动模式（2026-09）**：`POST /api/series/{id}/resort`
+  （`scanner.ResetSeriesSort`）清 `sort_manual=0` 并按文件名重绑成员 1..N，纯 DB 操作（不依赖根目录可达），
+  此后扫描恢复「按文件名自动维护、新文件按文件名插入」。**按显示名排序（2026-09）**：前端按成员显示名
+  （`episode_title || title`）字典序排列后走 `order` 接口（与拖拽重排同语义，置 `sort_manual=1`）。
 - **详情页按需检查**：单集 `CheckVideo`（ok | moved | missing）+ `SyncVideo`（按 file_id 定位改名/移动）；
   系列 `CheckSeries`（根目录存在性 + 成员存在性 + 新文件）+ `SyncSeries`（对根目录执行一次与标记相同的局部
   同步）。
@@ -39,9 +47,19 @@
   busy_timeout 保证。
 - **覆盖规则**：路径 / 归属 / 文件名字段同步时一律覆盖为磁盘现状；标题 / 描述 / 标签等手动编辑字段保留。
   title 经 `videos.title_source`（`file`|`manual`）区分：手动编辑过（`manual`，`UpdateMetadata` 置位）
-  永不被扫描/探测覆盖（`processInline`/`handleProbe` 尊重）；系列成员标题始终随文件名刷新
-  （`BindMembers` 置回 `file`）。
-- `series_links` 无名称、`sort_index` 排序，手动增删（`/api/series/{id}/links`）。
+  永不被扫描/探测覆盖（`processInline`/`handleProbe` 尊重）；**系列成员标题同样受 `title_source` 保护
+  （2026-09 修订）**：`bindSeriesMembers` 对 `title_source='manual'` 的既有成员保留当前标题，仅 `file`
+  成员随文件名刷新（`BindMembers` 依 `EpisodeAssign.TitleSource` 写回，不再无条件置 `file`）——批量修改
+  显示名称（`SeriesRenameModal`）依赖此保证；`UpdateMetadata` 手动改标题时对 episode 同步
+  `episode_title`（成员列表显示 `episode_title || title`）。**系列显示名（`shows.name`）与单集
+  `title_source` 同语义**：创建时写入
+  文件夹名一次，之后仅 `PATCH /api/shows/{id}` 可改，扫描/标记/同步永不复写。
+- **系列间关联（2026-09 方案 B：显式分组）**：`link_groups` + `link_group_members` 分组表，关联 = 同一组内
+  系列互相可见（A 关联 B、C 时三者同组，打开任一方都看到另外两方），无名称、无方向。`SetLinks`（`PUT
+  /api/series/{id}/links`，body `{series_ids}`）**全量替换**组关系：该系列与勾选系列同组，取消勾选即不再
+  关联；每系列至多一组（`series_id` 唯一索引），成员脱离旧组、低于两员的组删除。`RemoveLink`（`DELETE
+  /api/series/{id}/links/{linkedId}`）移除单条关联、双向生效。`SyncShowLinks` 把同 show 所有季并为一组
+  （幂等，替代旧「相邻季自动关联」）。
 - `videos_bd` 触发器删光某 show 最后一集时删空 show；空系列由 `pruneEmptyShows` 兜底。
 - 数据结构：`seasons.root_path` 唯一（NULL 除外）；`manual_resources` / `videos.resource_id` 已移除
   （离散概念清除）。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -154,7 +155,7 @@ func TestSeriesListFilter(t *testing.T) {
 	}
 }
 
-func TestSeriesLinkCRUD(t *testing.T) {
+func TestSeriesLinkGroupMutualVisibility(t *testing.T) {
 	ts, _, database := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
@@ -168,18 +169,54 @@ func TestSeriesLinkCRUD(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatal(err)
 	}
-	// Link Better Call Saul's season to Breaking Bad season 1 manually.
-	a := out.Series[0].ID
-	b := out.Series[1].ID
-	resp, _ := doJSON(t, "POST", ts.URL+"/api/series/"+a+"/links",
-		`{"series_id":"`+b+`"}`, cookie)
+	if len(out.Series) < 3 {
+		t.Fatalf("need at least 3 series, got %d", len(out.Series))
+	}
+	a, b, c := out.Series[0].ID, out.Series[1].ID, out.Series[2].ID
+
+	// 从 A 关联 B、C（全量替换：A 与 B、C 同组）。B、C 之前无关联，直接生效。
+	resp, _ := doJSON(t, "PUT", ts.URL+"/api/series/"+a+"/links",
+		`{"series_ids":["`+b+`","`+c+`"]}`, cookie)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("add link = %d", resp.StatusCode)
+		t.Fatalf("set links = %d", resp.StatusCode)
 	}
-	resp, body = doJSON(t, "GET", ts.URL+"/api/series/"+a+"/links", "", cookie)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, b) {
-		t.Fatalf("links after add = %d (body %s)", resp.StatusCode, body)
+
+	// 组内互相可见：A 看到 B、C；B 看到 A、C；C 看到 A、B。
+	for _, tc := range []struct {
+		id    string
+		other string
+	}{
+		{a, b}, {a, c}, {b, a}, {b, c}, {c, a}, {c, b},
+	} {
+		resp, body := doJSON(t, "GET", ts.URL+"/api/series/"+tc.id+"/links", "", cookie)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, tc.other) {
+			t.Fatalf("links of %s should contain %s (body %s)", tc.id, tc.other, body)
+		}
 	}
+
+	// 取消勾选 C（B 重新管理，勾选只剩 A）→ C 离开组，A↔B 保留。
+	resp, _ = doJSON(t, "PUT", ts.URL+"/api/series/"+b+"/links",
+		`{"series_ids":["`+a+`"]}`, cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("re-set links = %d", resp.StatusCode)
+	}
+	for _, tc := range []struct {
+		id    string
+		other string
+		has   bool
+	}{
+		{a, b, true}, {a, c, false}, {b, a, true}, {b, c, false}, {c, a, false}, {c, b, false},
+	} {
+		resp, body := doJSON(t, "GET", ts.URL+"/api/series/"+tc.id+"/links", "", cookie)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("links of %s = %d", tc.id, resp.StatusCode)
+		}
+		if strings.Contains(body, tc.other) != tc.has {
+			t.Fatalf("links of %s should contain %s = %v (body %s)", tc.id, tc.other, tc.has, body)
+		}
+	}
+
+	// × 按钮移除单条关联。
 	resp, _ = doJSON(t, "DELETE", ts.URL+"/api/series/"+a+"/links/"+b, "", cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("remove link = %d", resp.StatusCode)
@@ -187,6 +224,159 @@ func TestSeriesLinkCRUD(t *testing.T) {
 	resp, body = doJSON(t, "GET", ts.URL+"/api/series/"+a+"/links", "", cookie)
 	if resp.StatusCode != http.StatusOK || strings.Contains(body, b) {
 		t.Fatalf("links after remove = %d (body %s)", resp.StatusCode, body)
+	}
+	// 双向同样生效：B 也看不到 A。
+	resp, body = doJSON(t, "GET", ts.URL+"/api/series/"+b+"/links", "", cookie)
+	if resp.StatusCode != http.StatusOK || strings.Contains(body, a) {
+		t.Fatalf("B links after remove = %d (body %s)", resp.StatusCode, body)
+	}
+}
+
+func TestSeriesClearHistory(t *testing.T) {
+	ts, _, database := newTestServerDB(t, "secret")
+	seedSeries(t, database)
+	cookie := loginCookie(t, ts, "secret")
+
+	ctx := context.Background()
+	history := store.NewHistoryRepo(database)
+	// 两个成员各写历史；独立单集（不属于任何系列）的历史不应被清。
+	for _, vid := range []string{"e1", "e2"} {
+		if err := history.Upsert(ctx, domain.History{VideoID: vid, User: "local", Progress: 40, UpdatedAt: ts2026}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := history.Upsert(ctx, domain.History{VideoID: "e3", User: "local", Progress: 50, UpdatedAt: ts2026}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out struct {
+		Series []struct {
+			ID string `json:"id"`
+		} `json:"series"`
+	}
+	_, body := doJSON(t, "GET", ts.URL+"/api/series", "", cookie)
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	// 系列按 show 名排序：Better Call Saul(e3) / Breaking Bad A(e1) / Breaking
+	// Bad B(e2)。e1 在 Breaking Bad A（bb1），清它的历史只该影响 e1。
+	seriesID := out.Series[1].ID
+	resp, body := doJSON(t, "DELETE", ts.URL+"/api/series/"+seriesID+"/history", "", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear history = %d (body %s)", resp.StatusCode, body)
+	}
+
+	if _, err := history.Get(ctx, "e1", "local"); err == nil {
+		t.Fatal("e1 history should be cleared")
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("get e1 history: %v", err)
+	}
+	for _, vid := range []string{"e2", "e3"} {
+		if _, err := history.Get(ctx, vid, "local"); err != nil {
+			t.Fatalf("member %s of another series must keep its history: %v", vid, err)
+		}
+	}
+
+	// 不存在的系列 → 404。
+	resp, _ = doJSON(t, "DELETE", ts.URL+"/api/series/nope/history", "", cookie)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown series clear = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestSeriesReorder(t *testing.T) {
+	ts, _, database := newTestServerDB(t, "secret")
+	seedSeries(t, database)
+	cookie := loginCookie(t, ts, "secret")
+
+	ctx := context.Background()
+	series := store.NewSeriesRepo(database)
+
+	var out struct {
+		Series []struct {
+			ID string `json:"id"`
+		} `json:"series"`
+	}
+	_, body := doJSON(t, "GET", ts.URL+"/api/series", "", cookie)
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	// Breaking Bad A 系列（e1 单成员），重排前后一致即可验证请求通过。
+	seriesID := out.Series[1].ID
+	resp, body := doJSON(t, "POST", ts.URL+"/api/series/"+seriesID+"/order",
+		`{"video_ids":["e1"]}`, cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reorder = %d (body %s)", resp.StatusCode, body)
+	}
+	got, err := series.Get(ctx, seriesID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SortManual {
+		t.Fatalf("series should be marked sort_manual after reorder, got %+v", got)
+	}
+
+	// 数量不匹配 / 含外来成员 / 未知系列 → 400/404。
+	if resp, _ := doJSON(t, "POST", ts.URL+"/api/series/"+seriesID+"/order",
+		`{"video_ids":[]}`, cookie); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty reorder = %d, want 400", resp.StatusCode)
+	}
+	if resp, _ := doJSON(t, "POST", ts.URL+"/api/series/"+seriesID+"/order",
+		`{"video_ids":["e1","e3"]}`, cookie); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("foreign member reorder = %d, want 400", resp.StatusCode)
+	}
+	if resp, _ := doJSON(t, "POST", ts.URL+"/api/series/nope/order",
+		`{"video_ids":["e1"]}`, cookie); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown series reorder = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestSeriesResort(t *testing.T) {
+	ts, _, database := newTestServerDB(t, "secret")
+	seedSeries(t, database)
+	cookie := loginCookie(t, ts, "secret")
+
+	ctx := context.Background()
+	series := store.NewSeriesRepo(database)
+
+	var out struct {
+		Series []struct {
+			ID string `json:"id"`
+		} `json:"series"`
+	}
+	_, body := doJSON(t, "GET", ts.URL+"/api/series", "", cookie)
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	// 先手动重排（sort_manual=1），再调用 resort 应恢复自动模式。
+	seriesID := out.Series[1].ID
+	if resp, _ := doJSON(t, "POST", ts.URL+"/api/series/"+seriesID+"/order",
+		`{"video_ids":["e1"]}`, cookie); resp.StatusCode != http.StatusOK {
+		t.Fatalf("reorder = %d", resp.StatusCode)
+	}
+	got, err := series.Get(ctx, seriesID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SortManual {
+		t.Fatalf("series should be sort_manual before resort, got %+v", got)
+	}
+
+	resp, body := doJSON(t, "POST", ts.URL+"/api/series/"+seriesID+"/resort", "", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resort = %d (body %s)", resp.StatusCode, body)
+	}
+	got, err = series.Get(ctx, seriesID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SortManual {
+		t.Fatalf("resort must clear sort_manual, got %+v", got)
+	}
+
+	// 未知系列 → 404。
+	if resp, _ := doJSON(t, "POST", ts.URL+"/api/series/nope/resort", "", cookie); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown series resort = %d, want 404", resp.StatusCode)
 	}
 }
 

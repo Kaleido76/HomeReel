@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Calendar, Layers, Loader2, Play, Plus, RefreshCw, Star, X } from 'lucide-react'
-import { addSeriesLink, fetchSeries, fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, syncSeries } from '../../api/series'
-import { formatDuration } from '../../lib/format'
-import { playMode, prefetchPlayability } from '../../lib/playability'
+import { AlertTriangle, Calendar, Check, Layers, Link2, Loader2, Pencil, Plus, RefreshCw, Star, X } from 'lucide-react'
+import { fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, setSeriesLinks, syncSeries, updateSeriesName } from '../../api/series'
+import { SeriesPickerModal } from '../../components/SeriesPickerModal'
+import { prefetchPlayability } from '../../lib/playability'
+import { openFileLocation } from '../../tabs/manager'
+import { SeriesMemberList } from './SeriesMemberList'
+import { SeriesProgressCard } from './SeriesProgressCard'
 
 // SeriesDetailPage renders the series detail for the middle column of the
 // wide-screen library. It receives the id as a prop (the route is matched by
@@ -17,8 +20,9 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const id = seriesId
   const queryClient = useQueryClient()
   const detail = useQuery({ queryKey: ['series', id], queryFn: () => fetchSeriesDetail(id) })
-  const allSeries = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
-  const [pick, setPick] = useState('')
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [pickingLink, setPickingLink] = useState(false)
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['series', id] })
 
@@ -29,20 +33,32 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
     if (detailMembers) prefetchPlayability(detailMembers)
   }, [detailMembers])
 
-  const addLink = useMutation({
-    mutationFn: (linkedId: string) => addSeriesLink(id, linkedId),
-    onSuccess: () => {
-      setPick('')
-      invalidate()
-    },
-  })
   const removeLink = useMutation({
     mutationFn: (linkedId: string) => removeSeriesLink(id, linkedId),
     onSuccess: invalidate,
   })
+  const saveLinks = useMutation({
+    // 关联系列（方案 B）：勾选集 = 期望的关联集合，全量 PUT 替换——
+    // 该系列与勾选系列同组互相可见，取消勾选即不再关联。
+    mutationFn: (pickedIds: string[]) => setSeriesLinks(id, pickedIds),
+    onSuccess: () => {
+      setPickingLink(false)
+      invalidate()
+    },
+  })
   const sync = useMutation({
     mutationFn: () => syncSeries(id),
     onSuccess: () => {
+      invalidate()
+      void queryClient.invalidateQueries({ queryKey: ['series'] })
+      void queryClient.invalidateQueries({ queryKey: ['videos'] })
+    },
+  })
+
+  const rename = useMutation({
+    mutationFn: ({ showId, name }: { showId: string; name: string }) => updateSeriesName(showId, name),
+    onSuccess: () => {
+      setEditingName(false)
       invalidate()
       void queryClient.invalidateQueries({ queryKey: ['series'] })
       void queryClient.invalidateQueries({ queryKey: ['videos'] })
@@ -67,10 +83,18 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
   const { series, members, links, check } = detail.data
   const linkedIds = new Set(links.map((l) => l.linked_id))
-  const candidates = (allSeries.data?.series ?? []).filter((s) => s.id !== id && !linkedIds.has(s.id))
+  const rootPath = series.root_path
+
+  const commitName = () => {
+    const t = nameInput.trim()
+    setEditingName(false)
+    if (!t || t === series.name) return
+    rename.mutate({ showId: series.show_id, name: t })
+  }
 
   return (
-    <div className="space-y-4 p-4 sm:p-5">
+    <>
+      <div className="space-y-4 p-4 sm:p-5">
       {check?.out_of_sync && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
           <p className="flex items-center gap-1.5 text-sm text-amber-800">
@@ -95,11 +119,11 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
       )}
 
       <div className="relative overflow-hidden rounded-xl border border-neutral-200">
-        <div className="relative flex gap-5 bg-white p-5">
+        <div className="relative flex flex-col gap-4 bg-white p-5 sm:flex-row sm:gap-5">
           <img
             src={seriesPosterUrl(series.id)}
             alt={series.name}
-            className="h-52 w-36 shrink-0 rounded-lg border border-neutral-200 object-cover"
+            className="mx-auto h-52 w-36 shrink-0 rounded-lg border border-neutral-200 object-cover sm:mx-0"
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -108,7 +132,44 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                 <Layers className="size-3.5" /> {series.member_count} 个成员
               </span>
             </div>
-            <h1 className="mt-2 text-2xl font-semibold text-neutral-900">{series.name}</h1>
+            <div className="mt-2 flex min-w-0 items-center gap-2">
+              {editingName ? (
+                <div className="flex w-full min-w-0 items-center gap-2">
+                  <input
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitName()
+                      if (e.key === 'Escape') setEditingName(false)
+                    }}
+                    autoFocus
+                    className="w-full min-w-0 rounded-md border border-neutral-300 bg-white px-2 py-1 text-2xl font-semibold text-neutral-900 outline-none focus:border-blue-600"
+                  />
+                  <button onClick={commitName} title="保存" className="shrink-0 rounded p-1 text-blue-600 hover:bg-blue-50">
+                    <Check className="size-4" />
+                  </button>
+                  <button onClick={() => setEditingName(false)} title="取消" className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100">
+                    <X className="size-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <h1 className="min-w-0 truncate text-2xl font-semibold text-neutral-900" title={series.name}>
+                    {series.name}
+                  </h1>
+                  <button
+                    onClick={() => {
+                      setNameInput(series.name)
+                      setEditingName(true)
+                    }}
+                    title="编辑系列名称"
+                    className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-500">
               {series.rating ? (
                 <span className="flex items-center gap-1">
@@ -123,65 +184,23 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
               {series.genre ? <span>{series.genre}</span> : null}
             </div>
             {series.overview ? <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-neutral-600">{series.overview}</p> : null}
+            {rootPath ? (
+              <button
+                onClick={() => openFileLocation(rootPath)}
+                title={`在文件页定位系列根目录：${rootPath}`}
+                className="mt-3 inline-block max-w-full truncate font-mono text-xs text-neutral-400 transition-colors hover:text-blue-600 hover:underline"
+              >
+                {rootPath}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
 
+      <SeriesProgressCard seriesId={id} members={members} />
+
       <div className="rounded-xl border border-neutral-200 bg-white p-4">
-        <h3 className="mb-3 text-sm font-medium text-neutral-700">
-          本系列剧集
-          <span className="ml-2 text-xs font-normal text-neutral-400">{members.length} 集</span>
-        </h3>
-        <div className="divide-y divide-neutral-100">
-          {members.map((member) => (
-            <div key={member.video_id} className="flex items-center gap-3 py-2.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-500">
-                {member.episode_number}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
-                <p className="mt-0.5 truncate font-mono text-xs text-neutral-400">{member.relative_path}</p>
-                {member.duration > 0 && member.progress > 0 && member.progress < member.duration - 20 && (
-                  <div className="mt-1.5 h-1 w-full max-w-xs overflow-hidden rounded-sm bg-neutral-100">
-                    <div
-                      className="h-full rounded-sm bg-blue-600"
-                      style={{ width: `${Math.min(100, (member.progress / member.duration) * 100)}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-              <span className="shrink-0 text-xs text-neutral-400">
-                {member.duration > 0 ? formatDuration(member.duration) : ''}
-              </span>
-              <div className="flex shrink-0 items-center gap-2">
-                {playMode(member, member) !== 'none' ? (
-                  <Link
-                    to="/series/$id/play/$videoId"
-                    params={{ id: seriesId, videoId: member.video_id }}
-                    className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
-                  >
-                    <Play className="size-3.5" /> {member.progress > 0 ? '续播' : '播放'}
-                  </Link>
-                ) : (
-                  <button
-                    disabled
-                    title="该文件无法在线播放，请转换后播放"
-                    className="flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded bg-neutral-200 px-3 py-1.5 text-sm text-neutral-400"
-                  >
-                    <Play className="size-3.5" /> 不可播放
-                  </button>
-                )}
-                <Link
-                  to="/series/$id/video/$videoId"
-                  params={{ id: seriesId, videoId: member.video_id }}
-                  className="flex shrink-0 items-center gap-1.5 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
-                >
-                  详情
-                </Link>
-              </div>
-            </div>
-          ))}
-        </div>
+        <SeriesMemberList seriesId={id} members={members} />
       </div>
 
       <div className="rounded-xl border border-neutral-200 bg-white p-4">
@@ -207,30 +226,26 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
             </div>
           ))}
         </div>
-        {candidates.length > 0 && (
-          <div className="mt-3 flex items-center gap-2">
-            <select
-              value={pick}
-              onChange={(e) => setPick(e.target.value)}
-              className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm text-neutral-700 outline-none focus:border-blue-600"
-            >
-              <option value="">添加关联…</option>
-              {candidates.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => addLink.mutate(pick)}
-              disabled={!pick || addLink.isPending}
-              className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
-            >
-              <Plus className="size-4" /> 关联
-            </button>
-          </div>
+        <button
+          onClick={() => setPickingLink(true)}
+          disabled={saveLinks.isPending}
+          className="mt-3 flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+        >
+          <Plus className="size-4" /> 管理关联
+        </button>
+        {pickingLink && (
+          <SeriesPickerModal
+            multiple
+            title="管理关联系列"
+            titleIcon={<Link2 className="size-4 text-neutral-500" />}
+            excludeIds={[id]}
+            initialSelectedIds={[...linkedIds]}
+            onConfirm={(selected) => saveLinks.mutate(selected.map((s) => s.id))}
+            onClose={() => setPickingLink(false)}
+          />
         )}
       </div>
     </div>
+    </>
   )
 }

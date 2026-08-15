@@ -580,6 +580,32 @@ func (s *Service) SyncSeries(ctx context.Context, seriesID string) error {
 	return err
 }
 
+// ResetSeriesSort restores the automatic file-name ordering (「按文件名字典序重新
+// 刷新排序」, ADR-015 修订)：清 seasons.sort_manual 并按文件名序重绑成员 1..N。
+// 手动编辑过的成员标题（title_source='manual'）保留；纯 DB 操作，不依赖根目录
+// 当前可达（重排不触碰磁盘）。
+func (s *Service) ResetSeriesSort(ctx context.Context, seriesID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	se, err := s.series.Get(ctx, seriesID)
+	if err != nil {
+		return err
+	}
+	members, err := s.series.GetMembers(ctx, seriesID)
+	if err != nil {
+		return err
+	}
+	if err := s.series.SetSortManual(ctx, seriesID, false); err != nil {
+		return err
+	}
+	files := make([]seriesFile, 0, len(members))
+	for _, m := range members {
+		files = append(files, seriesFile{id: m.VideoID, rel: filepath.Base(m.RelativePath)})
+	}
+	se.SortManual = false
+	return s.bindSeriesMembers(ctx, se, files)
+}
+
 type candidate struct {
 	path   string
 	rel    string

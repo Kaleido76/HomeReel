@@ -124,3 +124,104 @@ func TestMarkSeriesOrdersMembersByFileName(t *testing.T) {
 		t.Errorf("members not ordered by file name: %+v", real)
 	}
 }
+
+// 手动编辑过的单集标题（title_source='manual'）在扫描/同步后保留，不被文件名覆盖
+// （批量修改显示名称依赖此保证，ADR-015/017 同语义）。
+func TestScanPreservesManualMemberTitle(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	_ = ensureSource(t, svc, root)
+	showDir := filepath.Join(root, "Show")
+	mustVideo(t, svc, ctx, root, "Show/e1.mkv")
+	mustVideo(t, svc, ctx, root, "Show/e2.mkv")
+
+	if err := svc.HandleJob(ctx, markJob(showDir, "series"), noopReporter{}); err != nil {
+		t.Fatalf("mark series: %v", err)
+	}
+	series, _ := svc.series.List(ctx, domain.SeriesQuery{})
+	id := series[0].ID
+	members, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 模拟前端批量改名：手动编辑第一个成员的标题（title_source → manual）。
+	if err := svc.videos.UpdateMetadata(ctx, members[0].VideoID, domain.VideoPatch{
+		Title: ptr("第一集"),
+	}); err != nil {
+		t.Fatalf("manual title: %v", err)
+	}
+
+	// 扫描与同步都不能把手动标题还原为文件名。
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if err := svc.SyncSeries(ctx, id); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	after, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[0].VideoID == members[0].VideoID && after[0].Title != "第一集" {
+		t.Fatalf("manual title lost after scan/sync: %+v", after[0])
+	}
+}
+
+// 「按文件名字典序重新刷新排序」清除手动排序（sort_manual=0）并按文件名序重绑；
+// 手动编辑过的标题保留，但顺序恢复为文件名序。
+func TestResetSeriesSortRestoresFileNameOrder(t *testing.T) {
+	svc, _, _ := newTestScanner(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	_ = ensureSource(t, svc, root)
+	showDir := filepath.Join(root, "Show")
+	// 文件名序 b < a，但手动排序要求 a 在前。
+	mustVideo(t, svc, ctx, root, "Show/b.mkv")
+	mustVideo(t, svc, ctx, root, "Show/a.mkv")
+	if err := svc.HandleJob(ctx, markJob(showDir, "series"), noopReporter{}); err != nil {
+		t.Fatalf("mark series: %v", err)
+	}
+	series, _ := svc.series.List(ctx, domain.SeriesQuery{})
+	id := series[0].ID
+	members, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 手动重排为 b,a 并手动改 b 的标题。
+	if err := svc.series.SetMemberOrder(ctx, id, []string{members[1].VideoID, members[0].VideoID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.videos.UpdateMetadata(ctx, members[1].VideoID, domain.VideoPatch{
+		Title: ptr("手动名"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 恢复自动模式：顺序变回文件名序 a,b，手动标题仍保留。
+	if err := svc.ResetSeriesSort(ctx, id); err != nil {
+		t.Fatalf("reset sort: %v", err)
+	}
+	after, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 2 || after[0].Title != "a" || after[1].Title != "手动名" {
+		t.Fatalf("after reset = %+v, want a then manually-named b", after)
+	}
+	// 再次扫描也不再按手动顺序维护。
+	if _, err := svc.ScanSource(ctx, ensureSource(t, svc, root)); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	afterScan, err := svc.series.GetMembers(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterScan) != 2 || afterScan[0].Title != "a" || afterScan[1].Title != "手动名" {
+		t.Fatalf("after scan = %+v, want a then manually-named b (auto mode)", afterScan)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
@@ -134,23 +133,12 @@ func (s *Service) syncSeriesFolder(ctx context.Context, dir string, cands []cand
 	for i, id := range ids {
 		byID[id] = cands[i].rel
 	}
-	members := make([]member, 0, len(ids))
+	files := make([]seriesFile, 0, len(ids))
 	for _, id := range ids {
-		members = append(members, member{id: id, rel: byID[id]})
+		files = append(files, seriesFile{id: id, rel: byID[id]})
 	}
-	sort.Slice(members, func(i, j int) bool { return members[i].rel < members[j].rel })
-	assigns := make([]domain.EpisodeAssign, 0, len(members))
-	for i, m := range members {
-		assigns = append(assigns, domain.EpisodeAssign{
-			VideoID:       m.id,
-			EpisodeNumber: i + 1,
-			Title:         titleFromPath(m.rel),
-		})
-	}
-	if len(assigns) > 0 {
-		if err := s.series.BindMembers(ctx, series.ID, assigns); err != nil {
-			return "", err
-		}
+	if err := s.bindSeriesMembers(ctx, series, files); err != nil {
+		return "", err
 	}
 	if err := s.pruneVanishedMembers(ctx, series.ShowID); err != nil {
 		return "", err

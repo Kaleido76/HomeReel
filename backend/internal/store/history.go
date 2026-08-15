@@ -46,3 +46,17 @@ func (r *historyRepo) Delete(ctx context.Context, videoID, user string) error {
 		videoID, user)
 	return err
 }
+
+// DeleteBySeries clears the resume position of every member of a series. A
+// series' members are the episodes bound to its show+season (root folder), so
+// this deletes exactly the rows the series progress card aggregated.
+func (r *historyRepo) DeleteBySeries(ctx context.Context, seriesID, user string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM history
+		WHERE user = ? AND video_id IN (
+			SELECT v.id FROM videos v
+			JOIN seasons se ON se.id = ?
+			WHERE v.show_id = se.show_id AND v.season_number = se.number AND v.kind = 'episode'
+		)`, user, seriesID)
+	return err
+}

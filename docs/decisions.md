@@ -81,7 +81,7 @@ CREATE INDEX idx_videos_kind    ON videos(kind);
 -- 剧集（Show，ADR-015，JellyFin 式剧集分组）
 CREATE TABLE shows (
   id              TEXT PRIMARY KEY,             -- ULID
-  name            TEXT NOT NULL,
+  name            TEXT NOT NULL,                -- 系列显示名（创建时默认=文件夹名，可手动编辑，扫描不覆盖）
   overview        TEXT,
   year            INTEGER,
   rating          REAL,
@@ -94,28 +94,37 @@ CREATE TABLE shows (
 );
 CREATE INDEX idx_shows_name ON shows(name);
 
--- 系列（2026-08 管理面定稿，ADR-015）：用户显式创建的管理容器，绑定一个根目录
--- （seasons.root_path）；成员 = 根目录**直接一级子文件**，文件名序 1..N，无季号结构。
+-- 系列（2026-08 管理面定稿 + 2026-09 显示名/手动排序修订，ADR-015）：用户显式创建的管理容器，绑定一个根目录
+-- （seasons.root_path）；成员 = 根目录**直接一级子文件**，默认文件名序 1..N；可手动拖拽重排（sort_manual=1，
+-- 扫描/同步只追加新成员、不重排）。无季号结构。
 CREATE TABLE seasons (
   id          TEXT PRIMARY KEY,                 -- ULID（即系列 id）
   show_id     TEXT NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
   number      INTEGER NOT NULL,                 -- 恒为 1（系列无季号/部号）
-  root_path   TEXT UNIQUE,                      -- 系列根目录（成员=其直接一级子文件；NULL 除外唯一）
-  name        TEXT,                             -- 系列名 = 文件夹名（无「第 N 季」后缀）
+  root_path   TEXT UNIQUE,                      -- 系列根目录（成员=其直接一级子文件；NULL 除外唯一），文件对应唯一事实源
+  name        TEXT,                             -- 历史列（创建时=文件夹名；展示用 shows.name，本列不再使用）
   overview    TEXT,
   poster_path TEXT,
   kind        TEXT NOT NULL DEFAULT 'tv',       -- tv=剧集季 | movie=电影部（历史列，无电影/tv 结构类型）
+  sort_manual INTEGER NOT NULL DEFAULT 0,       -- 1=成员顺序由用户手动维护（拖拽重排，ADR-015 修订）
   UNIQUE (show_id, number)
 );
 
--- 系列间弱关联（无名称，sort_index 排序，同 show 相邻季自动关联 + 手动增删）
-CREATE TABLE series_links (
-  series_id        TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
-  linked_series_id TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
-  sort_index       INTEGER NOT NULL DEFAULT 0,
-  created_at       TEXT NOT NULL,
-  PRIMARY KEY (series_id, linked_series_id)
+-- 系列间关联（2026-09 方案 B：显式分组）。关联 = 同一组内系列互相可见
+-- （A 关联 B、C 时三者同组，打开任一方都看到另外两方）；无名称、无方向。
+-- 组由「管理关联」全量替换维护（每系列至多一组），同 show 所有季自动并入一组。
+CREATE TABLE link_groups (
+  id         TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL
 );
+CREATE TABLE link_group_members (
+  group_id   TEXT NOT NULL REFERENCES link_groups(id) ON DELETE CASCADE,
+  series_id  TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  sort_index INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (group_id, series_id)
+);
+CREATE UNIQUE INDEX idx_link_group_members_series ON link_group_members(series_id);
 
 -- 标签（多值）
 CREATE TABLE video_tags (
@@ -215,14 +224,18 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | POST | `/api/videos/:id/refresh` | 重新 ffprobe 并更新元数据 |
 | GET | `/api/series` | 系列列表（一季/一部一个系列，含 kind / 成员数 / 关联系数 / 总时长 `total_duration`），支持 `q`（剧名/简介）/ `genre / year / tag（可重复，成员标签 AND）` |
 | GET | `/api/series/:id` | 系列详情（含 members / links） |
+| DELETE | `/api/series/:id/history` | 清除该系列全部成员观看进度（只删历史，不动视频/文件） |
+| POST | `/api/series/:id/order` | 手动排序成员 `{ video_ids: [...] }`（须为该系列成员全集的排列，重排 episode_number 并置 sort_manual） |
+| POST | `/api/series/:id/resort` | 恢复自动模式（2026-09）：清 sort_manual 按文件名序重绑成员 1..N，纯 DB 操作；手动改过的标题保留 |
 | GET | `/api/series/:id/members` | 系列成员（位次排序、允许缺失，含进度） |
-| GET | `/api/series/:id/links` | 系列弱关联列表 |
-| POST | `/api/series/:id/links` | 添加关联 `{ linkedId, sortIndex }` |
-| DELETE | `/api/series/:id/links/:linkedId` | 移除关联 |
+| GET | `/api/series/:id/links` | 系列关联列表（方案 B 分组模型：返回与该系列同组的其他系列，互相可见） |
+| PUT | `/api/series/:id/links` | 全量替换关联 `{ series_ids: [...] }`（勾选集即期望关联集合；该系列与勾选系列同组互相可见，取消勾选即不再关联） |
+| DELETE | `/api/series/:id/links/:linkedId` | 移除单条关联（双向生效） |
 | GET | `/api/series/:id/poster` | 系列海报（fallback 成员封面） |
 | GET | `/api/tags` | 全部标签及出现次数（用于筛选器） |
 
-> `/api/shows*` 为历史遗留（Phase 3 旧接口），前端已不再使用，仅保留兼容。
+> `/api/shows*` 多为历史遗留（Phase 3 旧接口），仅保留兼容；**唯一仍被前端使用的**是
+> `PATCH /api/shows/:id` 的 `name` 字段——系列显示名（ADR-015 修订，系列与 show 1:1）。
 
 ### 2.4 播放 / 流媒体
 
@@ -333,8 +346,8 @@ AI 服务侧建议：Python/Go 独立服务 + 队列（复用现有 jobs 表或�
   MP4 / Transcode 按需 HLS，2026-08 修订）+ 封面；历史与续播；能力判定（前端 canPlayType + 后端
   direct/remux/transcode 标志）+ 侧边字幕；Vidstack 播放器。
 - **Phase 3 —— 媒体库体验（已完成）**：数据迁移（videos 补元数据/分组列 + shows/seasons/video_tags + FTS5）；
-  单集/系列模型与扫描归组（2026-08 管理面定稿，含系列间弱关联）；FTS5 搜索；首页行、搜索、播放页元数据面板等
-  前端页面。（2026-08：元数据刮削子系统已移除，仅留手动编辑）
+  单集/系列模型与扫描归组（2026-08 管理面定稿，含系列间关联；2026-09 关联改显式分组方案 B）；FTS5 搜索；
+  首页行、搜索、播放页元数据面板等前端页面。（2026-08：元数据刮削子系统已移除，仅留手动编辑）
 - **Phase 4 —— AI 扩展（预留，默认不实现）**：仅在接口/数据上预留（见 §4），按需以独立 Go 服务或子模块接入，
   不耦合主服务。
 

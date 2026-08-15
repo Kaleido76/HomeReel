@@ -22,9 +22,12 @@ type Series struct {
 	PosterPath     string  `json:"poster_path,omitempty"`
 	BackdropPath   string  `json:"backdrop_path,omitempty"`
 	MetadataSource string  `json:"metadata_source"`
-	MemberCount    int     `json:"member_count"`
-	LinkCount      int     `json:"link_count"`
-	TotalDuration  float64 `json:"total_duration"` // 成员时长合计（秒），供封面时长徽标
+	// SortManual=1 表示成员顺序由用户手动维护（拖拽重排，ADR-015 修订）：扫描/
+	// 同步只追加新成员到末尾，绝不按文件名序重排既有成员。
+	SortManual    bool    `json:"sort_manual"`
+	MemberCount   int     `json:"member_count"`
+	LinkCount     int     `json:"link_count"`
+	TotalDuration float64 `json:"total_duration"` // 成员时长合计（秒），供封面时长徽标
 }
 
 // SeriesMember is one video inside a series, with playback progress. The probe
@@ -35,6 +38,7 @@ type Series struct {
 type SeriesMember struct {
 	VideoID          string  `json:"video_id"`
 	Title            string  `json:"title"`
+	TitleSource      string  `json:"title_source,omitempty"`
 	EpisodeNumber    int     `json:"episode_number"`
 	EpisodeTitle     string  `json:"episode_title,omitempty"`
 	Duration         float64 `json:"duration"`
@@ -50,7 +54,10 @@ type SeriesMember struct {
 	TranscodePlayable bool   `json:"transcode_playable"`
 }
 
-// SeriesLink is a weak, unnamed, ordered relation between two series.
+// SeriesLink is a weak, unnamed relation to another series. In the group model
+// (2026-09, 方案 B) a series' links are exactly the other members of its link
+// group: all series in one group see each other mutually (A linking B,C makes
+// B see A and C too).
 type SeriesLink struct {
 	SeriesID    string `json:"series_id"`
 	LinkedID    string `json:"linked_id"`
@@ -68,7 +75,7 @@ type SeriesQuery struct {
 }
 
 // SeriesRepo persists series (a show + a season bound to a root path) and their
-// weak links.
+// link groups.
 type SeriesRepo interface {
 	List(ctx context.Context, q SeriesQuery) ([]Series, error)
 	// Get returns the series identified by its season id.
@@ -85,13 +92,23 @@ type SeriesRepo interface {
 	// each member is set kind='episode' with its position and file-derived
 	// title, and is detached from any other series it currently belongs to.
 	BindMembers(ctx context.Context, seriesID string, members []EpisodeAssign) error
+	// SetMemberOrder persists a manual member order (1..N in the given video
+	// id order) and flags seasons.sort_manual so scans keep it.
+	SetMemberOrder(ctx context.Context, seriesID string, videoIDs []string) error
+	// SetSortManual flags/unflags seasons.sort_manual. Clearing it lets scans
+	// restore automatic file-name ordering (「按文件名字典序重新刷新排序」).
+	SetSortManual(ctx context.Context, seriesID string, manual bool) error
 	GetMembers(ctx context.Context, id string) ([]SeriesMember, error)
 	GetLinks(ctx context.Context, id string) ([]SeriesLink, error)
-	// AddLink creates a weak relation (directed; lookups are symmetric).
-	AddLink(ctx context.Context, seriesID, linkedID string, sortIndex int) error
-	// RemoveLink deletes a weak relation in either direction.
+	// SetLinks replaces the series' link group membership: the series and every
+	// linked series end up in ONE group (mutual visibility, 方案 B). Any series
+	// already in another group merges that group in; unchecked series leave the
+	// group. The whole membership is replaced — the caller sends the full desired set.
+	SetLinks(ctx context.Context, seriesID string, linkedIDs []string) error
+	// RemoveLink removes one series from the series' link group (a link chip's
+	// × button); if the group drops to one member it is removed entirely.
 	RemoveLink(ctx context.Context, seriesID, linkedID string) error
-	// SyncShowLinks creates ordered weak links between consecutive seasons of
-	// a show (idempotent), so the parts of a series display together.
+	// SyncShowLinks merges all seasons of a show into one link group (idempotent),
+	// so the parts of a series display together.
 	SyncShowLinks(ctx context.Context, showID string) error
 }

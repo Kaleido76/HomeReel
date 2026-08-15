@@ -96,6 +96,10 @@ type EpisodeAssign struct {
 	VideoID       string
 	EpisodeNumber int
 	Title         string // episode_title fallback (file base name)
+	// TitleSource keeps a manually edited title through re-binds: BindMembers
+	// writes it as-is so manual titles survive scans (ADR-015/017). Empty means
+	// "file" (title derived from the file name).
+	TitleSource string
 }
 
 // VideoRepo persists video records.

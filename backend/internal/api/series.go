@@ -87,6 +87,80 @@ func (s *Server) handleSeriesSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"synced": true})
 }
 
+// handleSeriesClearHistory clears the resume position of every member (系列详情
+// 「清除全部观看进度」)。只删历史，不影响视频与文件。
+func (s *Server) handleSeriesClearHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.seriesOrError(w, r, id); !ok {
+		return
+	}
+	if err := s.history.DeleteBySeries(r.Context(), id, "local"); err != nil {
+		slog.Error("clear series history", "series_id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": true})
+}
+
+// handleSeriesReorder persists a manual member order (拖拽重排, ADR-015 修订):
+// body { video_ids } must be a permutation of the series' current members; the
+// order becomes episode_number 1..N and seasons.sort_manual=1 so later scans/
+// syncs keep it.
+func (s *Server) handleSeriesReorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.seriesOrError(w, r, id); !ok {
+		return
+	}
+	var body struct {
+		VideoIDs []string `json:"video_ids"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	members, err := s.series.GetMembers(r.Context(), id)
+	if err != nil {
+		slog.Error("get series members for reorder", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	if len(body.VideoIDs) != len(members) {
+		writeError(w, http.StatusBadRequest, "invalid_input", "成员数量不匹配")
+		return
+	}
+	seen := make(map[string]bool, len(members))
+	for _, m := range members {
+		seen[m.VideoID] = true
+	}
+	for _, vid := range body.VideoIDs {
+		if !seen[vid] {
+			writeError(w, http.StatusBadRequest, "invalid_input", "包含不属于本系列的成员")
+			return
+		}
+	}
+	if err := s.series.SetMemberOrder(r.Context(), id, body.VideoIDs); err != nil {
+		slog.Error("set member order", "series_id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleSeriesResort restores the automatic file-name member order (系列详情
+// 「按文件名字典序重新刷新排序」)：清除 sort_manual 并按文件名重绑成员 1..N，
+// 手动编辑过的标题保留。无需同步磁盘。
+func (s *Server) handleSeriesResort(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.seriesOrError(w, r, id); !ok {
+		return
+	}
+	if err := s.scanner.ResetSeriesSort(r.Context(), id); err != nil {
+		slog.Error("reset series sort", "series_id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleSeriesMembers(w http.ResponseWriter, r *http.Request) {
 	members, err := s.series.GetMembers(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -126,26 +200,33 @@ func (s *Server) handleSeriesLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"links": links})
 }
 
-func (s *Server) handleSeriesAddLink(w http.ResponseWriter, r *http.Request) {
+// handleSeriesSetLinks replaces a series' link group with the given full
+// desired set (方案 B)：series + every id end up in one group, mutually visible.
+func (s *Server) handleSeriesSetLinks(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, ok := s.seriesOrError(w, r, id); !ok {
 		return
 	}
 	var body struct {
-		SeriesID string `json:"series_id"`
+		SeriesIDs []string `json:"series_ids"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.SeriesID == "" || body.SeriesID == id {
-		writeError(w, http.StatusBadRequest, "invalid_input", "无效的关联系列")
-		return
+	seen := map[string]bool{id: true}
+	ids := []string{}
+	for _, sid := range body.SeriesIDs {
+		if sid == "" || seen[sid] {
+			continue
+		}
+		seen[sid] = true
+		if _, ok := s.seriesOrError(w, r, sid); !ok {
+			return
+		}
+		ids = append(ids, sid)
 	}
-	if _, ok := s.seriesOrError(w, r, body.SeriesID); !ok {
-		return
-	}
-	if err := s.series.AddLink(r.Context(), id, body.SeriesID, 0); err != nil {
-		slog.Error("add series link", "series", id, "linked", body.SeriesID, "err", err)
+	if err := s.series.SetLinks(r.Context(), id, ids); err != nil {
+		slog.Error("set series links", "series", id, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
