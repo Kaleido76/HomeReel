@@ -251,7 +251,9 @@
   内封文本轨，带语言/标题标签）；`GET /api/stream/{id}/subtitle?track=<index>` 按需用 ffmpeg 提取指定轨为
   WebVTT（`media.ExtractTextSubtitle`），缓存到 `data_dir/subtitles/<id>-<index>.vtt`。前端按清单渲染多个
   `<track>`，**播放器内置字幕菜单可切换多轨**（无需重封）。
-- **位图字幕（PGS/VobSub）无法转文本**，不进入清单，只能经格式工厂「烧录进画面」。
+- **位图字幕（PGS/VobSub）无法转文本**：`ListSubtitles` 仍会列出（`playable=false`，带 codec），详情页技术
+  卡片标注「仅可格式工厂烧录」；播放器 `<track>` 只渲染 `playable` 的轨（`VideoPlayer` 过滤
+  `t.playable !== false`）。只能经格式工厂「烧录进画面」。
 
 ## 6. 音轨（多音轨容器选轨，2026-09）
 

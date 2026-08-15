@@ -56,3 +56,18 @@ func (s *Server) handleHistoryPut(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"saved": true})
 }
+
+// handleHistoryDelete clears a video's resume position (单集详情页「清除播放
+// 历史」)。只删历史，不影响视频与文件。
+func (s *Server) handleHistoryDelete(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.videoOrError(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	if err := s.history.Delete(r.Context(), v.ID, "local"); err != nil {
+		slog.Error("clear history", "video_id", v.ID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": true})
+}

@@ -251,9 +251,9 @@ func TestVideoListAdvancedFilter(t *testing.T) {
 	_ = repo.Create(ctx, base("v2", "Beta"))
 	_ = repo.Create(ctx, base("v3", "Gamma"))
 
-	set := func(id, desc, genre string, year int, tags []string) {
+	set := func(id, genre string, year int, tags []string) {
 		if err := repo.UpdateMetadata(ctx, id, domain.VideoPatch{
-			Description: &desc, Genre: &genre, Year: &year,
+			Genre: &genre, Year: &year,
 		}); err != nil {
 			t.Fatalf("metadata %s: %v", id, err)
 		}
@@ -261,19 +261,9 @@ func TestVideoListAdvancedFilter(t *testing.T) {
 			t.Fatalf("tags %s: %v", id, err)
 		}
 	}
-	set("v1", "太空冒险", "科幻", 2001, []string{"科幻", "太空"})
-	set("v2", "都市爱情", "科幻", 2010, []string{"爱情"})
-	set("v3", "家庭喜剧", "喜剧", 2010, []string{"喜剧"})
-
-	t.Run("desc", func(t *testing.T) {
-		page, err := repo.List(ctx, domain.VideoQuery{Desc: "冒险", Page: 1, PageSize: 10})
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		if page.Total != 1 || page.Videos[0].ID != "v1" {
-			t.Fatalf("desc = %d %+v", page.Total, page.Videos)
-		}
-	})
+	set("v1", "科幻", 2001, []string{"科幻", "太空"})
+	set("v2", "科幻", 2010, []string{"爱情"})
+	set("v3", "喜剧", 2010, []string{"喜剧"})
 
 	t.Run("genre", func(t *testing.T) {
 		page, err := repo.List(ctx, domain.VideoQuery{Genre: "科幻", Page: 1, PageSize: 10})

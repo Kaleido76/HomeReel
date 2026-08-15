@@ -33,9 +33,9 @@ type queryer interface {
 }
 
 const videoCols = `id, source_id, file_id, relative_path, path, size, mtime, title,
-	kind, description, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
+	kind, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
 	cover_path, thumb_path, backdrop_path, show_id, season_number, episode_number, episode_title,
-	year, rating, genre, overview, studio, cast_text, metadata_source, title_source,
+	year, rating, genre, studio, cast_text, metadata_source, title_source,
 	created_at, updated_at, last_scanned_at, faststart`
 
 // qualify prefixes every column with a table alias so videoCols can be used in
@@ -58,8 +58,8 @@ func scanVideo(row scanner) (domain.Video, error) {
 		audioCodec    sql.NullString
 		container     sql.NullString
 		segmented     sql.NullInt64
-		faststart    sql.NullInt64
-		width        sql.NullInt64
+		faststart     sql.NullInt64
+		width         sql.NullInt64
 		height        sql.NullInt64
 		fps           sql.NullFloat64
 		fileSize      sql.NullInt64
@@ -73,15 +73,14 @@ func scanVideo(row scanner) (domain.Video, error) {
 		year          sql.NullInt64
 		rating        sql.NullFloat64
 		genre         sql.NullString
-		overview      sql.NullString
 		studio        sql.NullString
 		castText      sql.NullString
 	)
 	if err := row.Scan(&v.ID, &sourceID, &v.FileID, &v.RelativePath, &v.Path,
-		&v.Size, &v.MTime, &v.Title, &v.Kind, &v.Description, &duration, &codec,
+		&v.Size, &v.MTime, &v.Title, &v.Kind, &duration, &codec,
 		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
-		&year, &rating, &genre, &overview, &studio, &castText, &v.MetadataSource,
+		&year, &rating, &genre, &studio, &castText, &v.MetadataSource,
 		&v.TitleSource, &v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt, &faststart); err != nil {
 		return domain.Video{}, err
 	}
@@ -148,9 +147,6 @@ func scanVideo(row scanner) (domain.Video, error) {
 	if genre.Valid {
 		v.Genre = genre.String
 	}
-	if overview.Valid {
-		v.Overview = overview.String
-	}
 	if studio.Valid {
 		v.Studio = studio.String
 	}
@@ -201,11 +197,6 @@ func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.Video
 		like := "%" + q.Q + "%"
 		where = append(where, `(title LIKE ? OR relative_path LIKE ?)`)
 		args = append(args, like, like)
-	}
-	if q.Desc != "" {
-		like := "%" + q.Desc + "%"
-		where = append(where, `description LIKE ?`)
-		args = append(args, like)
 	}
 	if q.Genre != "" {
 		like := "%" + q.Genre + "%"
@@ -282,11 +273,11 @@ func (r *videoRepo) Create(ctx context.Context, v domain.Video) error {
 	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO videos (id, source_id, file_id, relative_path, path, size, mtime,
-			title, kind, description, duration, codec, audio_codec, container, segmented, width, height,
+			title, kind, duration, codec, audio_codec, container, segmented, width, height,
 			faststart, title_source, created_at, updated_at, last_scanned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.ID, nullString(v.SourceID), v.FileID, v.RelativePath, v.Path, v.Size, v.MTime,
-		v.Title, v.Kind, v.Description, nullFloat(v.Duration), nullString(v.Codec),
+		v.Title, v.Kind, nullFloat(v.Duration), nullString(v.Codec),
 		nullString(v.AudioCodec), nullString(v.Container), segmentedInt(v.Segmented), v.Width, v.Height,
 		faststartInt(v.FastStart), v.TitleSource, v.CreatedAt, v.UpdatedAt, v.LastScannedAt)
 	if err != nil {
@@ -410,10 +401,6 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 		sets = append(sets, "title = ?", "title_source = ?")
 		args = append(args, *patch.Title, domain.TitleSourceManual)
 	}
-	if patch.Description != nil {
-		sets = append(sets, "description = ?")
-		args = append(args, *patch.Description)
-	}
 	if patch.Kind != nil {
 		sets = append(sets, "kind = ?")
 		args = append(args, *patch.Kind)
@@ -429,10 +416,6 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 	if patch.Genre != nil {
 		sets = append(sets, "genre = ?")
 		args = append(args, *patch.Genre)
-	}
-	if patch.Overview != nil {
-		sets = append(sets, "overview = ?")
-		args = append(args, *patch.Overview)
 	}
 	if patch.Studio != nil {
 		sets = append(sets, "studio = ?")
@@ -647,10 +630,10 @@ func (r *videoRepo) MarkMissingBySource(ctx context.Context, sourceID, since str
 	return ids, nil
 }
 
-// rebuildSearchText rewrites the denormalised search_text column (title +
-// description + tags + show name) so FTS5 stays searchable (ADR-009). The
-// videos_au trigger keeps videos_fts in sync. It runs against a queryer so the
-// rebuild can join a grouping transaction.
+// rebuildSearchText rewrites the denormalised search_text column (title + tags
+// + show name) so FTS5 stays searchable (ADR-009). The videos_au trigger keeps
+// videos_fts in sync. It runs against a queryer so the rebuild can join a
+// grouping transaction.
 func rebuildSearchText(ctx context.Context, q queryer, id string) error {
 	v, err := getVideo(ctx, q, id)
 	if err != nil {
@@ -660,7 +643,7 @@ func rebuildSearchText(ctx context.Context, q queryer, id string) error {
 	if err != nil {
 		return err
 	}
-	parts := []string{v.Title, v.Description}
+	parts := []string{v.Title}
 	parts = append(parts, tags...)
 	if v.ShowID != "" {
 		var showName string

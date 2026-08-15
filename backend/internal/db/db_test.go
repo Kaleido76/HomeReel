@@ -30,8 +30,8 @@ func TestMigrateFresh(t *testing.T) {
 		}
 	}
 
-	cols := []string{"kind", "description", "show_id", "season_number", "episode_number",
-		"episode_title", "year", "rating", "genre", "overview", "studio", "cast_text",
+	cols := []string{"kind", "show_id", "season_number", "episode_number",
+		"episode_title", "year", "rating", "genre", "studio", "cast_text",
 		"metadata_source", "search_text", "backdrop_path", "audio_codec", "fps", "file_size",
 		"source_id", "faststart", "title_source"}
 	for _, col := range cols {
@@ -41,6 +41,12 @@ func TestMigrateFresh(t *testing.T) {
 	}
 	if columnExists(t, database, "videos", "resource_id") {
 		t.Errorf("videos.resource_id should have been dropped (management model change)")
+	}
+	if columnExists(t, database, "videos", "description") {
+		t.Errorf("videos.description should have been dropped (单集简介移除)")
+	}
+	if columnExists(t, database, "videos", "overview") {
+		t.Errorf("videos.overview should have been dropped (单集简介移除)")
 	}
 	if columnExists(t, database, "videos", "storage_id") {
 		t.Errorf("videos.storage_id should have been replaced by source_id")

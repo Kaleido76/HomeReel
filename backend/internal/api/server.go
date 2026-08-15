@@ -87,6 +87,7 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("POST /api/videos/{id}/sync", s.requireAuth(http.HandlerFunc(s.handleVideoSync)))
 	mux.Handle("GET /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryGet)))
 	mux.Handle("PUT /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryPut)))
+	mux.Handle("DELETE /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryDelete)))
 	mux.Handle("GET /api/shows", s.requireAuth(http.HandlerFunc(s.handleShowsList)))
 	mux.Handle("GET /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowDetail)))
 	mux.Handle("PATCH /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowPatch)))

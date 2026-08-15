@@ -38,3 +38,11 @@ func (r *historyRepo) Upsert(ctx context.Context, h domain.History) error {
 		h.VideoID, h.User, h.Progress, h.UpdatedAt)
 	return err
 }
+
+// Delete removes a video's resume position (清空播放历史).
+func (r *historyRepo) Delete(ctx context.Context, videoID, user string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM history WHERE video_id = ? AND user = ?`,
+		videoID, user)
+	return err
+}

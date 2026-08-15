@@ -39,6 +39,16 @@ export function pathSegments(p: string): Crumb[] {
   return [{ label: p, path: p }]
 }
 
+// basename returns the last path segment of a native path (file name, or folder
+// name when p is a directory). The split handles both backslash and slash
+// separators; a trailing separator yields "" exactly like the former
+// `p.split(/[\\/]/).pop()` the call sites used. split never returns an empty
+// array, so no fallback is needed.
+export function basename(p: string): string {
+  const parts = p.split(/[\\/]/)
+  return parts[parts.length - 1]
+}
+
 // parentPath returns the parent directory of an absolute path, or null when the
 // path is already a root (drive root on Windows, "/" on unix).
 export function parentPath(p: string): string | null {

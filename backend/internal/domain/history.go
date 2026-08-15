@@ -16,4 +16,5 @@ type History struct {
 type HistoryRepo interface {
 	Get(ctx context.Context, videoID, user string) (History, error)
 	Upsert(ctx context.Context, h History) error
+	Delete(ctx context.Context, videoID, user string) error
 }

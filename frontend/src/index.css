@@ -27,6 +27,14 @@ body {
   overflow-y: scroll;
 }
 
+/* 按钮 hover 手指光标：Tailwind v4 预置样式不再给 button 加 cursor:pointer
+   （v3 曾内置），这里在全站 base 层恢复；禁用态保持默认光标。 */
+@layer base {
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 /* 薄滚动条：多列浏览/抽屉面板等内部滚动区更清爽 */
 * {
   scrollbar-width: thin;

@@ -1,6 +1,7 @@
 import { routers } from './routers'
 import { tabFromPath, type TabId } from './config'
 import { setPending, type ConvertTarget } from '../features/tools/format/queue'
+import { basename } from '../features/files/path'
 
 // Module-level tab store shared by every tab router. `activeTab` changes are
 // broadcast to React via useSyncExternalStore; routers stay mounted so switching
@@ -64,6 +65,19 @@ export function openFormat(items: ConvertTarget[]) {
   setPending(items)
   setActive('tools')
   void routers.tools.navigate({ to: '/tools', search: { tool: 'format' } })
+}
+
+// openFormatVideo sends a single video file to the 格式工厂 (a file must be
+// handled as an item, not a folder). Shared by the detail pane and the player.
+export function openFormatVideo(path: string) {
+  openFormat([{ path, name: basename(path), is_dir: false }])
+}
+
+// openFileLocation switches to the 文件 tab at a specific directory. Used by
+// the detail page's file-path line to jump to where the source file lives.
+export function openFileLocation(dirPath: string) {
+  setActive('files')
+  void routers.files.navigate({ to: '/files', search: { path: dirPath } })
 }
 
 // initTabSync wires the browser history to the per-tab memory histories:

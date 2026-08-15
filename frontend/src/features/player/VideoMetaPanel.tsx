@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Check, Pencil, Star, X } from 'lucide-react'
 import type { Video } from '../../api/videos'
 import { updateVideo } from '../../api/videos'
+import { openFileLocation } from '../../tabs/manager'
+import { parentPath } from '../files/path'
 
 export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTags: string[] }) {
   const queryClient = useQueryClient()
@@ -46,13 +48,18 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
   }
 
   const title = video.episode_title || video.title
-  const meta = [
-    video.year ? `${video.year}` : '',
-    video.rating ? `★ ${video.rating.toFixed(1)}` : '',
-    video.genre || '',
+  const dirPath = video.path ? parentPath(video.path) : null
+  // 元信息行文本部分：genre / 发行：studio / 主演：cast 显式拼接，不依赖数组下标
+  // （当 year/rating 缺失时 filter 会前移下标，slice(2) 截错段）；year/rating 带
+  // 图标单独渲染。
+  const metaText = [
+    video.genre,
     video.studio ? `发行：${video.studio}` : '',
     video.cast_text ? `主演：${video.cast_text}` : '',
-  ].filter(Boolean)
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const hasMeta = Boolean(video.year || video.rating || metaText)
 
   return (
     <div className="space-y-3">
@@ -97,7 +104,7 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
         </div>
       </div>
 
-      {meta.length > 0 && (
+      {hasMeta && (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
           {video.year && (
             <span className="flex items-center gap-1">
@@ -109,14 +116,8 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
               <Star className="size-4 fill-neutral-300 text-neutral-400" /> {video.rating.toFixed(1)}
             </span>
           ) : null}
-          {video.genre || video.studio || video.cast_text ? <span>{meta.slice(2).join(' · ')}</span> : null}
+          {metaText && <span>{metaText}</span>}
         </p>
-      )}
-
-      {video.overview ? (
-        <p className="text-sm leading-relaxed text-neutral-600">{video.overview}</p>
-      ) : (
-        <p className="text-sm text-neutral-400">暂无简介。</p>
       )}
 
       <div className="flex flex-wrap items-center gap-1.5">
@@ -146,9 +147,19 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
         />
       </div>
 
-      <p className="truncate font-mono text-xs text-neutral-400" title={video.relative_path}>
-        {video.relative_path}
-      </p>
+      {dirPath ? (
+        <button
+          onClick={() => openFileLocation(dirPath)}
+          title={`在文件页定位所在目录：${video.path}`}
+          className="inline-block max-w-full truncate font-mono text-xs text-neutral-400 transition-colors hover:text-blue-600 hover:underline"
+        >
+          {video.relative_path}
+        </button>
+      ) : (
+        <p className="truncate font-mono text-xs text-neutral-400" title={video.relative_path}>
+          {video.relative_path}
+        </p>
+      )}
     </div>
   )
 }

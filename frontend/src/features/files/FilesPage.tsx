@@ -27,7 +27,7 @@ import { ToolDrawerShell } from './ToolDrawerShell'
 import { ClipboardDrawer } from './ClipboardDrawer'
 import { RenameDrawer } from './RenameDrawer'
 import { isMediaName } from './fileType'
-import { parentPath } from './path'
+import { basename, parentPath } from './path'
 import { jobsKey } from '../jobs/useJobs'
 import { openFormat } from '../../tabs/manager'
 import type { ConvertTarget } from '../tools/format/queue'
@@ -135,7 +135,7 @@ export function FilesPage() {
       const e = entries.find((x) => x.path === p)
       return e
         ? { path: e.path, name: e.name, is_dir: e.is_dir }
-        : { path: p, name: p.split(/[\\/]/).pop() ?? p, is_dir: false }
+        : { path: p, name: basename(p), is_dir: false }
     })
   }
 
@@ -321,7 +321,7 @@ export function FilesPage() {
       const e = entries.find((x) => x.path === p)
       return {
         path: p,
-        name: e?.name ?? (p.split(/[\\/]/).pop() ?? p),
+        name: e?.name ?? basename(p),
         is_dir: e?.is_dir ?? false,
       }
     }
@@ -329,7 +329,7 @@ export function FilesPage() {
       selectedCount > 0
         ? Array.from(selected).map(toTarget)
         : path && entries.some((e) => !e.is_dir && e.is_convertible)
-          ? [{ path, name: path.split(/[\\/]/).pop() ?? path, is_dir: true }]
+          ? [{ path, name: basename(path), is_dir: true }]
           : []
     if (items.length > 0) openFormat(items)
   }

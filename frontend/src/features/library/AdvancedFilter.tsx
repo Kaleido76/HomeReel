@@ -10,17 +10,16 @@ import { emptyFilters, sortOptions, type GridState } from './types'
 // collapses.
 type Draft = {
   tags: string[]
-  desc: string
   genre: string
   year: string
   sort: GridState['sort']
 }
 
-function toDraft(f: Pick<GridState, 'tags' | 'desc' | 'genre' | 'year' | 'sort'>): Draft {
-  return { tags: f.tags, desc: f.desc, genre: f.genre, year: f.year, sort: f.sort }
+function toDraft(f: Pick<GridState, 'tags' | 'genre' | 'year' | 'sort'>): Draft {
+  return { tags: f.tags, genre: f.genre, year: f.year, sort: f.sort }
 }
 
-export type AppliedAdvancedFilters = Pick<GridState, 'tags' | 'desc' | 'genre' | 'year' | 'sort'>
+export type AppliedAdvancedFilters = Pick<GridState, 'tags' | 'genre' | 'year' | 'sort'>
 
 export function AdvancedFilter({
   filters,
@@ -39,7 +38,7 @@ export function AdvancedFilter({
   })
 
   const activeCount =
-    filters.tags.length + (filters.desc ? 1 : 0) + (filters.genre ? 1 : 0) + (filters.year ? 1 : 0)
+    filters.tags.length + (filters.genre ? 1 : 0) + (filters.year ? 1 : 0)
 
   function toggle() {
     if (open) {
@@ -126,14 +125,6 @@ export function AdvancedFilter({
                   )}
                 </div>
               )}
-            </Field>
-            <Field label="简介">
-              <input
-                value={draft.desc}
-                onChange={(e) => setDraft({ ...draft, desc: e.target.value })}
-                placeholder="匹配视频描述"
-                className="w-full rounded border border-neutral-300 px-2 py-1.5 text-sm outline-none placeholder:text-neutral-400 focus:border-blue-600"
-              />
             </Field>
             <Field label="类型">
               <input

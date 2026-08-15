@@ -214,6 +214,103 @@ export function playMode(media: PlayabilityInput, backend: PlayabilityBackendFla
   return 'none'
 }
 
+// —— 逐层处理说明（详情页技术卡片用）——
+//
+// 三层动态流（ADR-006 修订）下，「能否播放」不再是非黑即白：除 none 外，每个
+// 流都会被某层处理。下列帮助函数把一个流在前端播放时的具体处理翻译成可读说明
+// 与语气（ok=原生/无损，warn=有损重编码或潜在无声，bad=无法处理），供详情页
+// 逐流展示，也方便播放异常时拿着元信息排查。
+
+export interface Handling {
+  text: string
+  tone: 'ok' | 'warn' | 'bad'
+  // lossless 描述该流是否无损处理：true=流拷贝（无损）、false=重编码（有损）；
+  // 缺省表示该层不做质量转换（原生直连 / 无法播放），不显示质量徽标。
+  lossless?: boolean
+}
+
+// ModeMeta 是每种播放方式的一句话说明（标题 + 副文案 + 语气）。
+export interface ModeMeta extends Handling {
+  label: string
+}
+
+export function modeMeta(mode: PlayMode): ModeMeta {
+  switch (mode) {
+    case 'direct':
+      return {
+        label: '直接播放',
+        text: '本机浏览器可直接播放，无需转换，进度条全片可拖动',
+        tone: 'ok',
+      }
+    case 'remux':
+      return {
+        label: '重封装播放',
+        text: '容器不兼容但编码本机可解，视频流无损重封装为 MP4 后播放；首次播放生成缓存，之后秒开',
+        tone: 'ok',
+      }
+    case 'transcode':
+      return {
+        label: '转码播放',
+        text: '编码或音频不兼容，按需转码后播放；起播快，大段拖动可能需等待转码',
+        tone: 'warn',
+      }
+    case 'none':
+      return {
+        label: '无法在线播放',
+        text: '未配置 ffmpeg 或源文件不可达，需先用格式工厂转换为 MP4',
+        tone: 'bad',
+      }
+  }
+}
+
+// containerHandling 描述容器这一层会如何处理（自然语言，供详情页逐流展示）。
+export function containerHandling(mode: PlayMode): Handling {
+  switch (mode) {
+    case 'direct':
+      return { text: '本机浏览器原生支持，直连播放', tone: 'ok' }
+    case 'remux':
+      return { text: '本机浏览器不支持此容器，后端重封装为 MP4 后播放', tone: 'ok' }
+    case 'transcode':
+      return { text: '不保留原容器，按需转码为 HLS 分片播放', tone: 'warn' }
+    case 'none':
+      return { text: '无法在线播放，需格式工厂转换', tone: 'bad' }
+  }
+}
+
+// videoHandling 描述视频流会如何处理。remux 层只对 h264 家族流拷贝（无损）。
+export function videoHandling(mode: PlayMode, codec?: string): Handling {
+  const name = codec?.toUpperCase() || '未知编码'
+  switch (mode) {
+    case 'direct':
+      return { text: `本机浏览器可解码 ${name}，原生播放`, tone: 'ok' }
+    case 'remux':
+      return { text: `本机可解码 ${name}，流拷贝重封装`, tone: 'ok', lossless: true }
+    case 'transcode':
+      return { text: '重编码为 H.264', tone: 'warn', lossless: false }
+    case 'none':
+      return { text: `无法解码（${name}）`, tone: 'bad' }
+  }
+}
+
+// audioHandling 描述音频流会如何处理。remux 层仅 aac/mp3 可流拷贝；其余编码
+// 拷贝后浏览器可能无声（Chromium/Firefox 无 Dolby 解码器），故单独警告。
+export function audioHandling(mode: PlayMode, codec?: string): Handling {
+  const name = codec?.toLowerCase()
+  switch (mode) {
+    case 'direct':
+      return { text: '本机浏览器可解码，原生播放', tone: 'ok' }
+    case 'remux':
+      if (name === 'aac' || name === 'mp3') {
+        return { text: '流拷贝', tone: 'ok', lossless: true }
+      }
+      return { text: '可能无声（无 Dolby 解码器）', tone: 'warn', lossless: true }
+    case 'transcode':
+      return { text: '重编码为 AAC', tone: 'warn', lossless: false }
+    case 'none':
+      return { text: '无法解码', tone: 'bad' }
+  }
+}
+
 // prefetchPlayability 批量预收集一批条目（页面进入 / 数据到达时调用，如系列
 // 详情页的全部成员），同步填充缓存，使后续渲染直接命中、不再逐个探测。
 export function prefetchPlayability(items: PlayabilityInput[]): void {

@@ -7,7 +7,7 @@ import { coverUrl } from '../../api/videos'
 import { fetchSeriesDetail } from '../../api/series'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { playMode, prefetchPlayability } from '../../lib/playability'
-import { openFormat } from '../../tabs/manager'
+import { openFormatVideo } from '../../tabs/manager'
 import { VideoPlayer } from './VideoPlayer'
 
 // PlayerPane is the right-hand column of the wide-screen library. Layout, top
@@ -53,12 +53,10 @@ export function PlayerPane({
   }, [seriesMembers])
 
   const video = detail.data?.video
-  // Playback tier decided at runtime (ADR-006 修订): canPlayType first, then the
-  // backend's remux (container-only MP4 over Range) / transcode (on-demand HLS)
-  // gates; 'none' means the file must go through the format factory instead.
+  // Playback tier decided at runtime (ADR-006 修订); the decision chain lives in
+  // lib/playability.ts and is shared with the detail pane.
   const mode = video && detail.data ? playMode(video, detail.data) : 'none'
-  const openConvert = () =>
-    video && openFormat([{ path: video.path, name: video.path.split(/[\\/]/).pop() ?? video.path, is_dir: false }])
+  const openConvert = () => video && openFormatVideo(video.path)
 
   // neighbours and the up-next list in the series' member order (by episode number)
   const { neighbours, upNext } = useMemo(() => {

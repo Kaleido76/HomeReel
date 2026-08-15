@@ -332,6 +332,35 @@ var migrations = []string{
 	// 扫描/探测时随文件名刷新）与「用户手动编辑标题」（manual，永不被覆盖）。
 	// 系列成员标题始终随文件名刷新（BindMembers 置回 file）。
 	`ALTER TABLE videos ADD COLUMN title_source TEXT NOT NULL DEFAULT 'file'`,
+	// 删除单集「简介」字段及其附属功能（2026-09）：videos.description（搜索/
+	// 筛选用）与 videos.overview（详情页显示）两个列整体移除；FTS 外部内容表
+	// 与触发器随列一起重建（去掉 description 列）。
+	`DROP TRIGGER IF EXISTS videos_ai;
+	DROP TRIGGER IF EXISTS videos_ad;
+	DROP TRIGGER IF EXISTS videos_au;
+	DROP TABLE IF EXISTS videos_fts;
+	ALTER TABLE videos DROP COLUMN description;
+	ALTER TABLE videos DROP COLUMN overview;
+	CREATE VIRTUAL TABLE videos_fts USING fts5(
+		content='videos', content_rowid='rowid',
+		title, search_text
+	);
+	CREATE TRIGGER videos_ai AFTER INSERT ON videos BEGIN
+		INSERT INTO videos_fts(rowid, title, search_text)
+		VALUES (new.rowid, new.title, coalesce(new.search_text, ''));
+	END;
+	CREATE TRIGGER videos_ad AFTER DELETE ON videos BEGIN
+		INSERT INTO videos_fts(videos_fts, rowid, title, search_text)
+		VALUES ('delete', old.rowid, old.title, old.search_text);
+	END;
+	CREATE TRIGGER videos_au AFTER UPDATE ON videos BEGIN
+		INSERT INTO videos_fts(videos_fts, rowid, title, search_text)
+		VALUES ('delete', old.rowid, old.title, old.search_text);
+		INSERT INTO videos_fts(rowid, title, search_text)
+		VALUES (new.rowid, new.title, coalesce(new.search_text, ''));
+	END;
+	INSERT INTO videos_fts(rowid, title, search_text)
+		SELECT rowid, title, search_text FROM videos;`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

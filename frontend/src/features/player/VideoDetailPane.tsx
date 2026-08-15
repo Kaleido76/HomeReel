@@ -1,11 +1,18 @@
-import { useState } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { deleteVideo, fetchVideo, fetchVideoSubtitles, syncVideo } from '../../api/videos'
+import {
+  deleteVideo,
+  fetchVideo,
+  fetchVideoAudioTracks,
+  fetchVideoSubtitles,
+  syncVideo,
+} from '../../api/videos'
 import { playMode } from '../../lib/playability'
-import { openFormat } from '../../tabs/manager'
+import { openFormatVideo } from '../../tabs/manager'
+import { PlaybackHistoryCard } from '../player/PlaybackHistoryCard'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
 import { VideoTechCard } from '../player/VideoTechCard'
 
@@ -18,11 +25,26 @@ import { VideoTechCard } from '../player/VideoTechCard'
 // inside a series plays within the series (/series/:id/play/:videoId), a
 // standalone detail plays via /library/video/:id/play.
 //
+// seriesScoped marks a detail already opened inside a series column (the caller
+// renders the top 「返回系列」 bar). When a video belongs to a series but is
+// reached standalone (home/search cards or a /library/video/:id deep link), the
+// pane auto-redirects to the series-scoped URL (/series/:id/video/:videoId) so
+// there is never a standalone detail that needs a manual "所属系列" jump — the
+// way back is always the series context's top bar.
+//
 // The detail page also checks the source file on demand (单集详情检查): a file
 // that was renamed/moved (found by file_id) shows a sync warning; a file that
 // is gone shows a Not-Found warning with the option to remove the record (the
 // removal only deletes metadata, never the file).
-export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHref: string }) {
+export function VideoDetailPane({
+  videoId,
+  playHref,
+  seriesScoped = false,
+}: {
+  videoId: string
+  playHref: string
+  seriesScoped?: boolean
+}) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [error, setError] = useState('')
@@ -30,8 +52,21 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
   // Shares the ['subtitles', id] cache with VideoPlayer, so opening the player
   // after this pane does not re-fetch the track list.
   const subtitles = useQuery({ queryKey: ['subtitles', videoId], queryFn: () => fetchVideoSubtitles(videoId) })
+  // Shares the ['audio', id] cache with VideoPlayer (multi-track containers).
+  const audioTracks = useQuery({ queryKey: ['audio', videoId], queryFn: () => fetchVideoAudioTracks(videoId) })
 
-  if (detail.isLoading) {
+  // 单集详情永远带 series 上下文：视频属于某系列但当前以独立详情打开时，自动
+  // 补齐 series 段（replace，不留历史记录），返回系列的入口统一为系列详情列的
+  // 顶部「返回系列」条。
+  const seriesId = detail.data?.series_id
+  const needsSeriesRedirect = !seriesScoped && !!seriesId
+  useEffect(() => {
+    if (needsSeriesRedirect) {
+      void navigate({ href: `/series/${seriesId}/video/${videoId}`, replace: true })
+    }
+  }, [needsSeriesRedirect, seriesId, videoId, navigate])
+
+  if (detail.isLoading || needsSeriesRedirect) {
     return (
       <div className="flex h-64 items-center justify-center text-neutral-400">
         <Loader2 className="size-6 animate-spin" />
@@ -54,8 +89,6 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
   // remux MP4, or on-demand HLS transcode; 'none' falls back to the format
   // factory. The heavy player derives the same mode again from its own fetch.
   const mode = playMode(video, detail.data)
-  const openConvert = () =>
-    openFormat([{ path: video.path, name: video.path.split(/[\\/]/).pop() ?? video.path, is_dir: false }])
 
   async function doSync() {
     setError('')
@@ -84,17 +117,19 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
 
   return (
     <div className="space-y-4 p-4 sm:p-5">
-      {mode !== 'none' ? (
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm font-medium text-neutral-500">播放</span>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold text-neutral-900">详情</h1>
+        {mode !== 'none' && (
           <button
             onClick={() => navigate({ href: playHref })}
             className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
           >
             <Play className="size-4" /> 播放
           </button>
-        </div>
-      ) : (
+        )}
+      </div>
+
+      {mode === 'none' && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
           <div className="min-w-0">
             <p className="text-sm font-medium text-amber-800">
@@ -105,8 +140,8 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
             </p>
           </div>
           <button
-            onClick={openConvert}
-            className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+            onClick={() => openFormatVideo(video.path)}
+            className="flex shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
           >
             <Play className="size-4" /> 格式工厂转换
           </button>
@@ -121,7 +156,7 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
           </p>
           <button
             onClick={() => void doSync()}
-            className="mt-2 flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+            className="mt-2 flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
           >
             <RefreshCw className="size-3.5" /> 同步
           </button>
@@ -133,7 +168,7 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
           <p className="text-sm text-red-700">源文件不存在（可能已被移动或删除）。</p>
           <button
             onClick={() => void remove()}
-            className="mt-2 flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+            className="mt-2 flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
           >
             <Trash2 className="size-3.5" /> 移除这个单集
           </button>
@@ -144,13 +179,14 @@ export function VideoDetailPane({ videoId, playHref }: { videoId: string; playHr
         <VideoMetaPanel video={video} initialTags={detail.data.tags ?? []} />
       </div>
 
-      <VideoTechCard video={video} subtitleTracks={subtitles.data?.subtitles ?? []} />
+      <PlaybackHistoryCard videoId={videoId} duration={video.duration} />
 
-      {detail.data.series_id ? (
-        <Link to="/series/$id" params={{ id: detail.data.series_id }} className="text-sm text-blue-600 hover:underline">
-          所属系列 →
-        </Link>
-      ) : null}
+      <VideoTechCard
+        video={video}
+        subtitleTracks={subtitles.data?.subtitles ?? []}
+        audioTracks={audioTracks.data?.audio ?? []}
+        mode={mode}
+      />
 
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>

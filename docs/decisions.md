@@ -43,7 +43,6 @@ CREATE TABLE videos (
   mtime            INTEGER,                     -- 修改时间（毫秒），与 size 一起作为变更指纹
   kind             TEXT NOT NULL DEFAULT 'movie', -- movie（单集）| episode（系列成员）
   title            TEXT NOT NULL,               -- 电影标题 / 剧集默认为 Show 名
-  description      TEXT NOT NULL DEFAULT '',
   duration         REAL,                        -- 秒
   codec            TEXT,                        -- 视频编码（如 h264 / hevc）
   audio_codec      TEXT,
@@ -62,11 +61,10 @@ CREATE TABLE videos (
   year             INTEGER,
   rating           REAL,                        -- 评分 0~10（刮削或用户）
   genre            TEXT,                        -- 逗号分隔类型
-  overview         TEXT,                        -- 简介
   studio           TEXT,
   cast_text        TEXT,                        -- 演职员（逗号分隔）
   metadata_source  TEXT DEFAULT 'manual',       -- manual（刮削源已移除）
-  search_text      TEXT,                        -- 反规范化文本（title+description+tags+show），供 FTS5
+  search_text      TEXT,                        -- 反规范化文本（title+tags+show），供 FTS5
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
   last_scanned_at  TEXT,                        -- 最近一次被扫描确认的时间
@@ -158,10 +156,10 @@ CREATE TABLE jobs (
 -- FTS5（external content，指向 videos，ADR-009）
 CREATE VIRTUAL TABLE videos_fts USING fts5(
   content='videos', content_rowid='rowid',
-  title, description, search_text
+  title, search_text
 );
--- ai/ad/au 触发器同步；search_text = title + description + tags + show 名（store 层维护），
--- 剧集单集并入 Show 名称，便于按剧名命中。
+-- ai/ad/au 触发器同步；search_text = title + tags + show 名（store 层维护），
+-- 剧集单集并入 Show 名称，便于按剧名命中。单集简介（description/overview）已于 2026-09 移除。
 ```
 
 > 迁移说明：`db/` 包内置顺序迁移（简单版本表 + `CREATE TABLE IF NOT EXISTS` 序列），不引入重型迁移框架。
@@ -210,9 +208,9 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/videos` | 列表，支持 `q / desc / genre / year / tag（可重复，多标签 AND）/ kind / showId / ungrouped / sort / order / page / pageSize`；`ungrouped=1` 查单集 |
+| GET | `/api/videos` | 列表，支持 `q / genre / year / tag（可重复，多标签 AND）/ kind / showId / ungrouped / sort / order / page / pageSize`；`ungrouped=1` 查单集 |
 | GET | `/api/videos/:id` | 详情（含标签、历史、所属系列 `series_id`） |
-| PATCH | `/api/videos/:id` | 更新 `title / description / tags / year / rating / genre / overview / studio / cast_text` |
+| PATCH | `/api/videos/:id` | 更新 `title / tags / year / rating / genre / studio / cast_text`（2026-09 起不含简介 description/overview） |
 | DELETE | `/api/videos/:id` | 删除元数据（可选 `?deleteFile=true` 同时删源文件） |
 | POST | `/api/videos/:id/refresh` | 重新 ffprobe 并更新元数据 |
 | GET | `/api/series` | 系列列表（一季/一部一个系列，含 kind / 成员数 / 关联系数 / 总时长 `total_duration`），支持 `q`（剧名/简介）/ `genre / year / tag（可重复，成员标签 AND）` |
@@ -263,6 +261,7 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 |---|---|---|
 | GET | `/api/videos/:id/history` | 读取续播位置 |
 | PUT | `/api/videos/:id/history` | `{ progress }` 保存（节流由前端控制） |
+| DELETE | `/api/videos/:id/history` | 清空续播位置（单集详情页「清除历史」） |
 | GET | `/api/home` | 首页行：继续观看 / 最近添加（单次拉取） |
 | GET | `/api/search?q=` | 统一搜索（文件名 / 标签 / 描述 / 剧名，FTS5） |
 | GET/PUT | `/api/settings` | 读 / 写可运行时配置 |

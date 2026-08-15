@@ -12,12 +12,11 @@ export type GridState = {
   sort: (typeof sortOptions)[number]['value']
   page: number
   tags: string[]
-  desc: string
   genre: string
   year: string
 }
 
-export const emptyFilters = { tags: [], desc: '', genre: '', year: '' }
+export const emptyFilters = { tags: [], genre: '', year: '' }
 
 export const viewTabs: { value: GridState['view']; label: string }[] = [
   { value: 'all', label: '全部' },

@@ -90,9 +90,9 @@ func TestVideosListAdvancedFilter(t *testing.T) {
 	seedVideo(t, database, sourceID, "v2", "b.mp4", "b.mp4", "Beta", 200)
 	ctx := context.Background()
 	repo := store.NewVideoRepo(database)
-	desc, genre, year := "太空冒险", "科幻", 2001
+	genre, year := "科幻", 2001
 	if err := repo.UpdateMetadata(ctx, "v1", domain.VideoPatch{
-		Description: &desc, Genre: &genre, Year: &year,
+		Genre: &genre, Year: &year,
 	}); err != nil {
 		t.Fatalf("metadata: %v", err)
 	}
@@ -100,11 +100,7 @@ func TestVideosListAdvancedFilter(t *testing.T) {
 		t.Fatalf("tags: %v", err)
 	}
 
-	resp, body := doJSON(t, "GET", ts.URL+"/api/videos?desc="+url.QueryEscape("冒险"), "", cookie)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) || strings.Contains(body, `"Beta"`) {
-		t.Fatalf("desc filter = %d %s", resp.StatusCode, body)
-	}
-	resp, body = doJSON(t, "GET", ts.URL+"/api/videos?genre="+url.QueryEscape("科幻"), "", cookie)
+	resp, body := doJSON(t, "GET", ts.URL+"/api/videos?genre="+url.QueryEscape("科幻"), "", cookie)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) {
 		t.Fatalf("genre filter = %d %s", resp.StatusCode, body)
 	}
@@ -168,6 +164,16 @@ func TestHistoryUpsertAndRead(t *testing.T) {
 	resp, _ = doJSON(t, "PUT", ts.URL+"/api/videos/v1/history", `{"progress":-1}`, cookie)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("negative progress = %d, want 400", resp.StatusCode)
+	}
+
+	// 清除历史（单集详情页「清除历史」按钮）：DELETE 后读回 null。
+	resp, body = doJSON(t, "DELETE", ts.URL+"/api/videos/v1/history", "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"cleared":true`) {
+		t.Fatalf("delete history = %d (body %s)", resp.StatusCode, body)
+	}
+	resp, body = doJSON(t, "GET", ts.URL+"/api/videos/v1/history", "", cookie)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"history":null`) {
+		t.Fatalf("history after delete = %d (body %s)", resp.StatusCode, body)
 	}
 }
 

@@ -211,21 +211,20 @@ func TestSearchAndVideoPatch(t *testing.T) {
 
 	// PATCH metadata + tags.
 	resp, body := doJSON(t, "PATCH", ts.URL+"/api/videos/m1",
-		`{"title":"星际穿越","description":"desc","tags":["太空","神作"]}`, cookie)
+		`{"title":"星际穿越","tags":["太空","神作"]}`, cookie)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("patch = %d (body %s)", resp.StatusCode, body)
 	}
 	var patched struct {
 		Video struct {
 			Title          string `json:"title"`
-			Description    string `json:"description"`
 			MetadataSource string `json:"metadata_source"`
 		} `json:"video"`
 	}
 	if err := json.Unmarshal([]byte(body), &patched); err != nil {
 		t.Fatal(err)
 	}
-	if patched.Video.Title != "星际穿越" || patched.Video.Description != "desc" {
+	if patched.Video.Title != "星际穿越" {
 		t.Errorf("patched = %+v", patched.Video)
 	}
 

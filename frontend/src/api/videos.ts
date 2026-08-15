@@ -10,7 +10,6 @@ export interface Video {
   mtime: number
   title: string
   kind: 'movie' | 'episode'
-  description: string
   duration: number
   codec: string
   audio_codec?: string
@@ -31,7 +30,6 @@ export interface Video {
   year?: number
   rating?: number
   genre?: string
-  overview?: string
   studio?: string
   cast_text?: string
   metadata_source: string
@@ -49,7 +47,6 @@ export interface VideoListResult {
 
 export interface VideoQuery {
   q?: string
-  desc?: string
   genre?: string
   year?: number
   kind?: 'movie' | 'episode'
@@ -89,12 +86,10 @@ export interface HistoryEntry {
 
 export interface VideoPatch {
   title?: string
-  description?: string
   kind?: 'movie' | 'episode'
   year?: number
   rating?: number
   genre?: string
-  overview?: string
   studio?: string
   cast_text?: string
   tags?: string[]
@@ -108,7 +103,6 @@ export interface TagCount {
 export function fetchVideos(query: VideoQuery = {}): Promise<VideoListResult> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
-  if (query.desc) params.set('desc', query.desc)
   if (query.genre) params.set('genre', query.genre)
   if (query.year) params.set('year', String(query.year))
   if (query.kind) params.set('kind', query.kind)
@@ -157,6 +151,10 @@ export function putHistory(id: string, progress: number): Promise<{ saved: boole
   })
 }
 
+export function clearHistory(id: string): Promise<{ cleared: boolean }> {
+  return api<{ cleared: boolean }>(`/api/videos/${id}/history`, { method: 'DELETE' })
+}
+
 export function fetchTags(): Promise<{ tags: TagCount[] }> {
   return api<{ tags: TagCount[] }>('/api/tags')
 }
@@ -195,13 +193,17 @@ export function subtitleUrl(id: string, track?: number): string {
   return `/api/stream/${id}/subtitle${track !== undefined ? `?track=${track}` : ''}`
 }
 
-// SubtitleTrack is one subtitle source the player can pick from (a sidecar file
-// next to the video, or an embedded text subtitle stream of the container).
+// SubtitleTrack is one subtitle source of a video (a sidecar file next to the
+// video, an embedded text stream of the container, or a bitmap track).
+// playable tracks can feed the player's <track> menu; a bitmap track (PGS/
+// VobSub, playable=false) cannot be converted to text and only works burned
+// into the picture by the format factory.
 export interface SubtitleTrack {
   kind: 'sidecar' | 'embedded'
   index?: number
   codec?: string
   label: string
+  playable?: boolean
 }
 
 export function fetchVideoSubtitles(id: string): Promise<{ subtitles: SubtitleTrack[] }> {

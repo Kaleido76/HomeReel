@@ -142,23 +142,30 @@ func (s *Service) Cover(w http.ResponseWriter, r *http.Request, v domain.Video, 
 	return nil
 }
 
-// SubtitleTrack is one subtitle source the player can pick from: a sidecar file
-// next to the video or an embedded text subtitle track (stream index).
+// SubtitleTrack is one subtitle source of a video: a sidecar file next to the
+// video, an embedded text subtitle track (stream index), or an embedded bitmap
+// track (PGS/VobSub). Playable tracks can be handed to the browser <track>
+// element (sidecar directly, embedded text extracted to WebVTT); bitmap tracks
+// cannot be converted to text and only work burned into the picture by the
+// format factory — they are listed so the detail page can explain why they are
+// absent from the player's subtitle menu.
 type SubtitleTrack struct {
-	Kind  string `json:"kind"` // sidecar | embedded
-	Index int    `json:"index,omitempty"`
-	Codec string `json:"codec,omitempty"`
-	Label string `json:"label,omitempty"`
+	Kind     string `json:"kind"` // sidecar | embedded
+	Index    int    `json:"index,omitempty"`
+	Codec    string `json:"codec,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Playable bool   `json:"playable"`
 }
 
-// ListSubtitles enumerates the playable subtitle sources of a video, ordered
-// with the sidecar first. Embedded bitmap tracks (PGS/VobSub) are skipped.
+// ListSubtitles enumerates every subtitle source of a video, ordered with the
+// sidecar first and embedded tracks in stream order.
 func (s *Service) ListSubtitles(ctx context.Context, v domain.Video) []SubtitleTrack {
 	var out []SubtitleTrack
 	if p := sidecarPath(v); p != "" {
 		out = append(out, SubtitleTrack{
-			Kind:  "sidecar",
-			Label: strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)),
+			Kind:     "sidecar",
+			Playable: true,
+			Label:    strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)),
 		})
 	}
 	subs, err := media.ProbeSubtitles(ctx, s.ffprobePath, v.Path)
@@ -168,15 +175,13 @@ func (s *Service) ListSubtitles(ctx context.Context, v domain.Video) []SubtitleT
 	}
 	n := 0
 	for _, st := range subs {
-		if !media.TextSubtitleCodecs[st.Codec] {
-			continue
-		}
 		n++
 		out = append(out, SubtitleTrack{
-			Kind:  "embedded",
-			Index: st.Index,
-			Codec: st.Codec,
-			Label: subtitleLabel(st.Language, st.Title, n),
+			Kind:     "embedded",
+			Index:    st.Index,
+			Codec:    st.Codec,
+			Playable: media.TextSubtitleCodecs[st.Codec],
+			Label:    subtitleLabel(st.Language, st.Title, n),
 		})
 	}
 	return out

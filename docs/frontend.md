@@ -13,7 +13,8 @@
 - **URL 唯一来源是活动页签**：`TabManager.activate` 切换页签用 `replaceState`（不产生历史），活动页签内
   导航由 `TabSync` 镜像 `pushState`；`popstate` 反解析 URL→页签并 `navigate({href, replace})` 对齐该页签
   memory history。
-- 跨页签跳转走 `openVideo/openSeries/openLibrary`（切到 library 页签再 navigate）。
+- 跨页签跳转走 `openVideo/openSeries/openLibrary`（切到 library 页签再 navigate）与
+  `openFormat/openFormatVideo/openFileLocation`（分别切到 工具/文件 页签再 navigate）。
 - **新增子路由必须归属到某个页签的 router**（`tabs/routers.ts`），并在 `tabFromPath` 补路径映射，
   禁止添加全局平级路由；改动此类路由结构时勿破坏 keep-alive。
 - 深链/刷新按 URL 恢复对应页签视图；库的视图状态（`view/q/sort/page` + 高级筛选 `tags/desc/genre/year`）与
@@ -80,10 +81,13 @@
 - **URL 即栈**：`/library`=`[浏览]`、`/library/video/:id`=`[浏览][单集详情]`、
   `/library/video/:id/play`=`[浏览][单集详情][播放]`、`/series/:id`=`[浏览][系列详情]`、
   `/series/:id/video/:videoId`=`[浏览][系列详情][单集详情]`、`/series/:id/play/:videoId`=`[浏览][系列详情][播放]`。
+  **单集详情永远带 series 上下文（2026-09）**：视频属于某系列但以独立详情打开时（首页/搜索卡片跳入、
+  深链 `/library/video/:id`），`VideoDetailPane` 自动 `replace` 重定向到 `/series/:id/video/:videoId` 补齐
+  series 段；返回系列的入口统一为系列详情列顶部「返回系列」条，**单集详情不再有「所属系列」跳转链接**。
 - **过滤器是浏览栏的一部分**（`全部/单集/系列` tab + 搜索框 + 高级筛选按钮，位于浏览栏顶部，随浏览栏一起被挤出屏幕；
   窄屏仅浏览视图显示）。
 - **高级筛选面板**（`AdvancedFilter.tsx`，替换了原排序下拉）：JobsIndicator 同款开关——首次点击展开、再次点击
-  **应用并收起**；内含 标签（多选 chips，来自 `/api/tags`）/ 简介 / 类型 / 年份 过滤器 + 排序下拉；面板保留
+   **应用并收起**；内含 标签（多选 chips，来自 `/api/tags`）/ 类型 / 年份 过滤器 + 排序下拉；面板保留
   本地草稿，应用前不生效；有激活筛选时按钮显示蓝色徽标计数，面板内「重置」仅清空草稿。
   `tags` 在 URL 中逗号连接存储，`parseGridSearch` 还原为数组。
 - 系列详情成员行有**播放/续播 + 详情**两按钮：播放直达播放栏（左侧保留系列详情，不再插入单集详情）；
@@ -95,10 +99,31 @@
   `VideoDetailPane`/`PlayerPane`，**不依赖视频的 `series_id` 属性**）：单集详情栏在系列内 → 播放跳
   `/series/:id/play/:videoId`，在浏览栏上 → `/library/video/:id/play`；播放栏退出 → 父栏路径，上下集/
   接下来播放 → 系列上下文走 `/series/:id/play/:v`、否则 `/library/video/:v/play`。
-- **单集详情技术卡片**（`VideoTechCard`，2026-08）：详情栏内专门卡片集中展示 probe 技术信息——视频/音频
-  编码、分辨率/帧率、容器、时长/大小、faststart 标记；并给出**逐流解码能力说明**（容器/视频/音频分别指出
-  哪一部分「不支持前端解码」，基于 `playability.reportFor`，与 `canPlay` 同一判定/缓存）。字幕轨道清单
-  （侧边文件 + 内封文本轨）随卡片展示，与播放器共用 `['subtitles', id]` 查询缓存。
+- **单集详情页头 + 播放历史**（`VideoDetailPane`，2026-09）：详情页顶部为**标题式页头**「详情」
+  （`text-xl font-semibold`，无图标，右侧为播放按钮，无法在线播放时改由下方格式工厂引导）；主体卡片顺序为
+  **元信息（含单集名）→ 播放历史 → 技术信息**，源状态警告（moved/missing/无法在线）为顶部的条件告警条。
+  「**播放历史**」卡片（`PlaybackHistoryCard`，自带 `['history',id]` 查询与清除 mutation）**始终显示**——
+  有记录时展示上次播放进度条（上次播放到 X / 总时长 · 日期，蓝色进度条），
+  无记录时显示「尚未播放过。」；「**清除历史**」按钮（`DELETE /api/videos/{id}/history`，清空续播位置）
+  在无记录时禁用。清除成功后 `setQueryData` 即时把卡片切为「尚未播放过。」，无需刷新。
+  `VideoPlayer` 退出播放时保存进度后 invalidate `['history', id]` 查询，详情页返回后进度即时刷新。
+  元信息卡最末的**文件路径**（`font-mono` 相对路径）可点击——hover 变蓝加下划线，经 `manager.openFileLocation`
+  切到「文件」页签并定位到该文件的**所在目录**（`parentPath(video.path)`）。
+- **单集详情技术卡片**（`VideoTechCard`，2026-08 / 2026-09 扩展）：详情栏内专门卡片集中展示 probe 技术信息并
+  解释本片在前端如何播放——顶部**播放方式徽标**（直接播放 / 重封装播放 / 转码播放 / 无法在线播放，基于
+  `playability.playMode` 与后端三能力标志）；**技术信息**（容器 + MIME、视频编码/分辨率/帧率、音频摘要、
+  时长/大小、segmented、faststart）；**逐流播放处理**（容器/视频/音频在所选播放层下分别如何处理，全部为
+  自然语言键值对 + 语义色，如「本机浏览器不支持此容器，后端重封装为 MP4 后播放」「重编码为 H.264」，基于
+  `playability.reportFor` 与 `mode`，与 `canPlay` 同一判定/缓存）——**「有损/无损」以彩色徽标呈现**
+  （`Handling.lossless` 布尔：无损=emerald 徽标、有损=amber 徽标，不做质量转换的层不显示），不再以括号字符串
+  表达；「不支持前端解码」不再是死路，各层会接手，故不再展示旧式「XX 不支持前端解码」警告与原始探测串。
+  **排版（2026-09）**：卡片为 `@container`，正文统一 `text-sm`，仅用颜色/字重区分层级（小节标题最深、
+  键最浅、值居中）；键值对在容器窄于 `@sm`（24rem）时**纵向堆叠**（键在上靠左、值在下靠右），避免移动端
+  单行显示不全被省略。字幕说明用大白话：外部字幕文件直接显示 / 内封字幕播放时自动提取显示 / 内封位图字幕
+  仅可经格式工厂烧录。
+  **音频轨道清单**（`['audio', id]` 查询缓存，与播放器共用）：每轨 codec/声道/语言 + 在所选层下如何处理 +
+  有损/无损徽标，默认轨标注。**字幕轨道清单**（`['subtitles', id]` 缓存共享）：侧边文件直接提供、内封文本轨
+  提取 WebVTT、位图字幕（PGS/VobSub，`playable=false`）标注「仅可格式工厂烧录」。
 - 播放栏=`PlayerPane`：**顶部退出播放条** + 播放器 + 简略元信息 + 系列内上下集/自动连播 +
   **「接下来播放」列表**（当前集后的至多 3 个成员，小缩略图低调展示）。
 - **窄屏（<lg）**退化为单栏全页（浏览→详情→播放，`NarrowBack` 返回条），复用同一批组件。
@@ -144,6 +169,8 @@
 ## 4. 响应式 UI 与布局
 
 - 横跨手机/平板/笔记本/电视(2K/4K)。`index.css` 增加 `3xl(1920px)` 断点。
+- **按钮 hover 手指光标（2026-09）**：Tailwind v4 预置样式不再给 `button` 加 `cursor:pointer`（v3 曾内置），
+  `index.css` 在 `@layer base` 恢复 `button:not(:disabled){cursor:pointer}`（禁用态保持默认光标）。
 - 容器宽度自适应：页签宿主 `max-w-[1600px]`、文件页 `max-w-[1920px]`，大屏高密度。
 - `TabHost` 对 library 页签**全宽无 max-w/无 padding**（vw 单位布局，留白会破坏面板感）；文件页仍
   `max-w-[1920px]`。

@@ -24,7 +24,6 @@ function parseGridSearch(search: Record<string, unknown>): GridState {
     sort: typeof search.sort === 'string' && isSort(search.sort) ? search.sort : 'date',
     page: Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1,
     tags,
-    desc: typeof search.desc === 'string' ? search.desc : '',
     genre: typeof search.genre === 'string' ? search.genre : '',
     year: typeof search.year === 'string' ? search.year : '',
   }
@@ -182,7 +181,11 @@ export function LibraryLayout() {
           {top.type === 'video-detail' ? (
             <>
               <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
-              <VideoDetailPane videoId={top.id} playHref={videoPlayHref(top.parent, top.id)} />
+              <VideoDetailPane
+                videoId={top.id}
+                playHref={videoPlayHref(top.parent, top.id)}
+                seriesScoped={top.parent.startsWith('/series/')}
+              />
             </>
           ) : top.type === 'series-detail' ? (
             <>
@@ -280,7 +283,7 @@ function columnContent(col: Column, goPath: (href: string) => void): ReactNode {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <VideoDetailPane videoId={col.id} playHref={videoPlayHref(col.parent, col.id)} />
+          <VideoDetailPane videoId={col.id} playHref={videoPlayHref(col.parent, col.id)} seriesScoped />
         </div>
       </div>
     )

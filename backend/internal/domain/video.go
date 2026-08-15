@@ -15,7 +15,6 @@ type Video struct {
 	MTime          int64   `json:"mtime"` // unix milliseconds
 	Title          string  `json:"title"`
 	Kind           string  `json:"kind"` // movie | episode
-	Description    string  `json:"description"`
 	Duration       float64 `json:"duration"`
 	Codec          string  `json:"codec"`
 	AudioCodec     string  `json:"audio_codec,omitempty"`
@@ -36,7 +35,6 @@ type Video struct {
 	Year           int     `json:"year,omitempty"`
 	Rating         float64 `json:"rating,omitempty"`
 	Genre          string  `json:"genre,omitempty"`
-	Overview       string  `json:"overview,omitempty"`
 	Studio         string  `json:"studio,omitempty"`
 	CastText       string  `json:"cast_text,omitempty"`
 	MetadataSource string  `json:"metadata_source"`
@@ -52,12 +50,10 @@ type Video struct {
 // follow the on-disk layout and are maintained by scans and manual series sync.
 type VideoPatch struct {
 	Title          *string
-	Description    *string
 	Kind           *string
 	Year           *int
 	Rating         *float64
 	Genre          *string
-	Overview       *string
 	Studio         *string
 	CastText       *string
 	BackdropPath   *string
@@ -67,7 +63,6 @@ type VideoPatch struct {
 // VideoQuery filters and paginates the video library.
 type VideoQuery struct {
 	Q         string   // matches title or relative path
-	Desc      string   // matches description
 	Genre     string   // matches genre (substring)
 	Year      int      // matches year exactly
 	Kind      string   // movie | episode

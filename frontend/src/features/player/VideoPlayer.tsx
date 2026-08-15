@@ -10,7 +10,7 @@ import {
   type MediaProviderAdapter,
   type VideoSrc,
 } from '@vidstack/react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   DefaultMenuRadioGroup,
   DefaultMenuSection,
@@ -60,6 +60,7 @@ export function VideoPlayer({
 }) {
   const playerRef = useRef<MediaPlayerInstance>(null)
   const remote = useMediaRemote(playerRef)
+  const queryClient = useQueryClient()
   const [resumeAt, setResumeAt] = useState(0)
   const posRef = useRef(0)
   const lastSaveRef = useRef(0)
@@ -86,7 +87,10 @@ export function VideoPlayer({
   // (sidecar file + embedded text tracks) and each becomes a <Track>, so the
   // player's built-in menu offers switching between them.
   const subtitles = useQuery({ queryKey: ['subtitles', video.id], queryFn: () => fetchVideoSubtitles(video.id) })
-  const subtitleTracks = subtitles.data?.subtitles
+  // Only tracks the browser can actually render become <Track> elements: the
+  // sidecar and embedded text tracks (extracted to WebVTT). Bitmap tracks
+  // (PGS/VobSub, playable=false) cannot be converted to text and would 404.
+  const subtitleTracks = subtitles.data?.subtitles?.filter((t) => t.playable !== false)
 
   // Audio track menu (multi-track containers): backend-enumerated tracks are
   // offered only on the dynamic tiers (remux/transcode) that can actually map a
@@ -112,11 +116,12 @@ export function VideoPlayer({
 
   useEffect(
     () => () => {
-      if (posRef.current > 0) {
-        void putHistory(video.id, posRef.current).catch(() => {})
-      }
+      // Save the resume position, then invalidate the detail page's history
+      // query so it re-reads the fresh progress after leaving playback.
+      const save = posRef.current > 0 ? putHistory(video.id, posRef.current).catch(() => {}) : Promise.resolve()
+      void save.then(() => queryClient.invalidateQueries({ queryKey: ['history', video.id] }))
     },
-    [video.id],
+    [video.id, queryClient],
   )
 
   // Auto-pause when the user switches away from the library tab: the player's

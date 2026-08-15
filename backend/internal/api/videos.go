@@ -33,7 +33,6 @@ func (s *Server) handleVideosList(w http.ResponseWriter, r *http.Request) {
 	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
 	res, err := s.videos.List(r.Context(), domain.VideoQuery{
 		Q:         r.URL.Query().Get("q"),
-		Desc:      r.URL.Query().Get("desc"),
 		Genre:     r.URL.Query().Get("genre"),
 		Year:      year,
 		Kind:      r.URL.Query().Get("kind"),
@@ -86,14 +85,14 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("check video source", "video_id", v.ID, "err", checkErr)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"video":             v,
-		"tags":              tags,
-		"series_id":         seriesID,
-		"direct_playable":   s.streaming.DirectPlayable(*v),
-		"remux_playable":    s.streaming.RemuxPlayable(*v),
+		"video":              v,
+		"tags":               tags,
+		"series_id":          seriesID,
+		"direct_playable":    s.streaming.DirectPlayable(*v),
+		"remux_playable":     s.streaming.RemuxPlayable(*v),
 		"transcode_playable": s.streaming.TranscodePlayable(*v),
-		"source_status":     sourceStatus,
-		"new_path":          status.Path,
+		"source_status":      sourceStatus,
+		"new_path":           status.Path,
 	})
 }
 

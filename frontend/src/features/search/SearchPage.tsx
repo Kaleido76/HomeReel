@@ -40,7 +40,7 @@ export function SearchPage() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="搜索标题、剧名、标签、简介…"
+          placeholder="搜索标题、剧名、标签…"
           autoFocus
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
         />
