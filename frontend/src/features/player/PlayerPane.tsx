@@ -8,6 +8,7 @@ import { fetchSeriesDetail } from '../../api/series'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { playMode, prefetchPlayability } from '../../lib/playability'
 import { openFormatVideo } from '../../tabs/manager'
+import { Tooltip } from '../../components/Tooltip'
 import { VideoPlayer } from './VideoPlayer'
 
 // PlayerPane is the right-hand column of the wide-screen library. Layout, top
@@ -148,22 +149,24 @@ export function PlayerPane({
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-neutral-100 bg-white px-4 py-2.5">
-        <button
-          onClick={() => neighbours.prev && go(neighbours.prev)}
-          disabled={!neighbours.prev}
-          title="上一集"
-          className="flex items-center gap-1 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
-        >
-          <ChevronLeft className="size-4" /> 上一集
-        </button>
-        <button
-          onClick={() => neighbours.next && go(neighbours.next)}
-          disabled={!neighbours.next}
-          title="下一集"
-          className="flex items-center gap-1 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
-        >
-          下一集 <ChevronRight className="size-4" />
-        </button>
+        <Tooltip content="上一集">
+          <button
+            onClick={() => neighbours.prev && go(neighbours.prev)}
+            disabled={!neighbours.prev}
+            className="flex items-center gap-1 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+          >
+            <ChevronLeft className="size-4" /> 上一集
+          </button>
+        </Tooltip>
+        <Tooltip content="下一集">
+          <button
+            onClick={() => neighbours.next && go(neighbours.next)}
+            disabled={!neighbours.next}
+            className="flex items-center gap-1 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+          >
+            下一集 <ChevronRight className="size-4" />
+          </button>
+        </Tooltip>
         <span className="ml-auto flex items-center gap-1.5 text-sm text-neutral-600">
           <Repeat className="size-4" />
           <label className="flex cursor-pointer items-center gap-1.5">

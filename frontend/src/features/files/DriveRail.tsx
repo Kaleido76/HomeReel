@@ -4,6 +4,7 @@ import { HardDrive, Loader2, Pin, RefreshCw, Usb, Video } from 'lucide-react'
 import type { Disk } from '../../api/files'
 import type { MediaSource } from '../../api/files'
 import { underDrive } from './path'
+import { Tooltip } from '../../components/Tooltip'
 import { useRailSplit } from './railSplit'
 
 const TOP_SPLIT_KEY = 'files.railSplit'
@@ -127,14 +128,15 @@ export function DriveRail({
                       {s.scanning && <Loader2 className="size-3 shrink-0 animate-spin text-blue-500" />}
                       {!s.available && <span className="shrink-0 rounded bg-neutral-200 px-1 text-[10px] text-neutral-500">离线</span>}
                     </button>
-                    <button
-                      onClick={() => onRescanSource(s.path)}
-                      disabled={s.scanning}
-                      title="重新扫描"
-                      className="shrink-0 rounded p-1 text-neutral-400 opacity-0 transition-opacity hover:bg-neutral-100 hover:text-neutral-700 group-hover:opacity-100 disabled:opacity-30"
-                    >
-                      <RefreshCw className="size-3.5" />
-                    </button>
+                    <Tooltip content="重新扫描">
+                      <button
+                        onClick={() => onRescanSource(s.path)}
+                        disabled={s.scanning}
+                        className="shrink-0 rounded p-1 text-neutral-400 opacity-0 transition-opacity hover:bg-neutral-100 hover:text-neutral-700 group-hover:opacity-100 disabled:opacity-30"
+                      >
+                        <RefreshCw className="size-3.5" />
+                      </button>
+                    </Tooltip>
                   </div>
                 )
               })

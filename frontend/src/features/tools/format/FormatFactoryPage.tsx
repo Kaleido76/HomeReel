@@ -5,6 +5,7 @@ import type { Job } from '../../../api/jobs'
 import { isActiveJob } from '../../../api/jobs'
 import { convertPaths, probePaths, type ConvertProbe } from '../../../api/convert'
 import { formatEta } from '../../../lib/format'
+import { Tooltip } from '../../../components/Tooltip'
 import { useJobs, jobsKey } from '../../jobs/useJobs'
 import { clearPending, intendedOutput, usePending } from './queue'
 import {
@@ -276,20 +277,20 @@ function OperationsPanel({
                 const active = !!preset && preset.id === p.id
                 const Icon = p.icon
                 return (
-                  <button
-                    key={p.id}
-                    onClick={() => onPatch(p.params)}
-                    aria-pressed={active}
-                    title={p.description}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                      active
-                        ? 'border-blue-600 bg-blue-50 text-blue-700'
-                        : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900'
-                    }`}
-                  >
-                    <Icon className="size-4" />
-                    {p.label}
-                  </button>
+                  <Tooltip key={p.id} content={p.description}>
+                    <button
+                      onClick={() => onPatch(p.params)}
+                      aria-pressed={active}
+                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                        active
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900'
+                      }`}
+                    >
+                      <Icon className="size-4" />
+                      {p.label}
+                    </button>
+                  </Tooltip>
                 )
               })}
             </div>

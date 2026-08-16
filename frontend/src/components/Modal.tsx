@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { Tooltip } from './Tooltip'
 
 // Modal is the system-wide overlay shell for a style-consistent dialog: a dimmed
 // full-screen backdrop, a centered white rounded panel, an optional title bar
@@ -34,13 +35,14 @@ export function Modal({
             {titleIcon}
             <span className="text-xs font-medium text-neutral-700">{title}</span>
             <span className="ml-auto" />
-            <button
-              onClick={onClose}
-              title={closeTitle ?? closeLabel}
-              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-600"
-            >
-              <X className="size-3.5" /> {closeLabel}
-            </button>
+            <Tooltip content={closeTitle ?? closeLabel}>
+              <button
+                onClick={onClose}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-600"
+              >
+                <X className="size-3.5" /> {closeLabel}
+              </button>
+            </Tooltip>
           </div>
         )}
         {children}

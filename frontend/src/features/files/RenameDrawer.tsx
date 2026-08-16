@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowRight, CaseSensitive, Folder, Regex, ReplaceAll, X } from 'lucide-react'
 import { fileStyle } from './fileType'
+import { Tooltip } from '../../components/Tooltip'
 import type { ClipboardItem } from './Toolbar'
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -61,13 +62,14 @@ export function RenameDrawer({
         <ReplaceAll className="size-4 text-neutral-500" />
         <span className="text-xs font-medium text-neutral-700">批量重命名 · {items.length} 项</span>
         <span className="ml-auto" />
-        <button
-          onClick={onClose}
-          title="关闭并撤销（不执行重命名）"
-          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-600"
-        >
-          <X className="size-3.5" /> 撤销
-        </button>
+        <Tooltip content="关闭并撤销">
+          <button
+            onClick={onClose}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-600"
+          >
+            <X className="size-3.5" /> 撤销
+          </button>
+        </Tooltip>
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-neutral-100 px-3 py-2">
@@ -90,7 +92,7 @@ export function RenameDrawer({
         <ToggleBtn
           active={regex}
           onClick={() => setRegex((v) => !v)}
-          title="将查找内容视为正则表达式"
+          title="按正则表达式查找"
           icon={<Regex className="size-3.5" />}
           label="正则"
         />
@@ -101,14 +103,15 @@ export function RenameDrawer({
           spellCheck={false}
           className="w-44 rounded-md border border-neutral-300 px-2 py-1 text-xs outline-none focus:border-blue-600"
         />
-        <button
-          onClick={() => void submit()}
-          disabled={!canSubmit}
-          title={!valid ? '正则表达式无效' : changes.length === 0 ? '没有匹配项' : `重命名 ${changes.length} 项`}
-          className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <ReplaceAll className="size-3.5" /> 开始替换
-        </button>
+        <Tooltip content={!valid ? '正则表达式无效' : changes.length === 0 ? '没有匹配项' : `重命名 ${changes.length} 项`}>
+          <button
+            onClick={() => void submit()}
+            disabled={!canSubmit}
+            className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ReplaceAll className="size-3.5" /> 开始替换
+          </button>
+        </Tooltip>
       </div>
       {!valid && <p className="shrink-0 px-3 pb-1 text-[11px] text-red-500">正则表达式无效</p>}
 
@@ -161,19 +164,20 @@ function ToggleBtn({
   label: string
 }) {
   return (
-    <button
-      onClick={onClick}
-      type="button"
-      title={title}
-      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
-        active
-          ? 'border-blue-600 bg-blue-50 text-blue-700'
-          : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
-      }`}
-    >
-      {icon}
-      <span className="hidden sm:inline">{label}</span>
-    </button>
+    <Tooltip content={title}>
+      <button
+        onClick={onClick}
+        type="button"
+        className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
+          active
+            ? 'border-blue-600 bg-blue-50 text-blue-700'
+            : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
+        }`}
+      >
+        {icon}
+        <span className="hidden sm:inline">{label}</span>
+      </button>
+    </Tooltip>
   )
 }
 

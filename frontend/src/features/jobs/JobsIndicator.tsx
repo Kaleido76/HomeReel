@@ -3,6 +3,7 @@ import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react'
 import type { Job } from '../../api/jobs'
 import { isActiveJob, isNotableJob } from '../../api/jobs'
 import { formatEta } from '../../lib/format'
+import { Tooltip } from '../../components/Tooltip'
 import { useJobs } from './useJobs'
 
 // JobsIndicator is the JetBrains-style task status button in the header. The
@@ -20,20 +21,21 @@ export function JobsIndicator() {
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        title={hasActive ? `${active.length} 个后台任务进行中` : '后台任务'}
-        className="relative flex shrink-0 items-center rounded-md px-2.5 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-      >
-        <RefreshCw className={`size-4 ${hasActive ? 'animate-spin text-blue-600' : ''}`} />
-        {hasActive && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-medium leading-none text-white">
-            {active.length}
-          </span>
-        )}
-      </button>
+      <Tooltip content={hasActive ? `${active.length} 个后台任务进行中` : '后台任务'}>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          className="relative flex shrink-0 items-center rounded-md px-2.5 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+        >
+          <RefreshCw className={`size-4 ${hasActive ? 'animate-spin text-blue-600' : ''}`} />
+          {hasActive && (
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-medium leading-none text-white">
+              {active.length}
+            </span>
+          )}
+        </button>
+      </Tooltip>
 
       {open && (
         <div

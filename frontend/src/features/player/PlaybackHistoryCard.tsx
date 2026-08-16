@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Eraser, History } from 'lucide-react'
 import { clearHistory, fetchHistory } from '../../api/videos'
 import { formatDuration } from '../../lib/format'
+import { Tooltip } from '../../components/Tooltip'
 
 // PlaybackHistoryCard is the 播放历史 card of the single-episode detail page:
 // the resume progress (上次播放到 X / 总时长 · 日期) plus a clear-history action.
@@ -25,14 +26,15 @@ export function PlaybackHistoryCard({ videoId, duration }: { videoId: string; du
           <History className="size-4 text-neutral-400" />
           播放历史
         </div>
-        <button
-          onClick={() => clearPlayback.mutate()}
-          disabled={clearPlayback.isPending || !h}
-          title={h ? '清空本片的播放进度记录' : '暂无播放记录'}
-          className="flex items-center gap-1.5 rounded border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-40"
-        >
-          <Eraser className="size-3.5" /> 清除历史
-        </button>
+        <Tooltip content={h ? '清空本片进度' : '暂无播放记录'}>
+          <button
+            onClick={() => clearPlayback.mutate()}
+            disabled={clearPlayback.isPending || !h}
+            className="flex items-center gap-1.5 rounded border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-40"
+          >
+            <Eraser className="size-3.5" /> 清除历史
+          </button>
+        </Tooltip>
       </div>
       {!h ? (
         <p className="mt-2 text-sm text-neutral-500">尚未播放过。</p>

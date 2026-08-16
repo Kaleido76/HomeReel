@@ -1,5 +1,6 @@
 import { Copy, Folder, Scissors, X } from 'lucide-react'
 import { fileStyle } from './fileType'
+import { Tooltip } from '../../components/Tooltip'
 import type { ClipboardItem, ClipMode } from './Toolbar'
 
 // ClipboardDrawer is the tool-drawer content that replaces the toolbar's
@@ -26,14 +27,15 @@ export function ClipboardDrawer({
           {mode === 'cut' ? '待移动' : '待复制'} · {items.length} 项
         </span>
         <span className="ml-auto" />
-        <button
-          onClick={onClear}
-          disabled={items.length === 0}
-          title="清空抽屉"
-          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-600 disabled:opacity-40"
-        >
-          <X className="size-3.5" /> 全部清除
-        </button>
+        <Tooltip content="清空抽屉">
+          <button
+            onClick={onClear}
+            disabled={items.length === 0}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-600 disabled:opacity-40"
+          >
+            <X className="size-3.5" /> 全部清除
+          </button>
+        </Tooltip>
       </div>
       {/* min-h keeps a comfortable drawer for 1-3 selections (≈5 rows), while
           many selections scroll inside max-h. */}
@@ -50,13 +52,14 @@ export function ClipboardDrawer({
               <span className="min-w-0 flex-1 truncate text-xs text-neutral-700" title={it.path}>
                 {it.name}
               </span>
-              <button
-                onClick={() => onRemove(it.path)}
-                title="从抽屉移除"
-                className="shrink-0 rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-red-600"
-              >
-                <X className="size-3.5" />
-              </button>
+              <Tooltip content="从抽屉移除">
+                <button
+                  onClick={() => onRemove(it.path)}
+                  className="shrink-0 rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-red-600"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </Tooltip>
             </div>
           )
         })}

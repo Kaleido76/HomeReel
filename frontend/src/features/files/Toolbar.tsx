@@ -1,6 +1,6 @@
 import { ArrowDownUp, ArrowUp, ChevronRight, ClipboardCopy, ClipboardPaste, Computer, Factory, Film, Layers, ListChecks, Pencil, Pin, ReplaceAll, Scissors, Trash2, Video } from 'lucide-react'
 import { pathSegments } from './path'
-import { Tooltip } from './Tooltip'
+import { Tooltip } from '../../components/Tooltip'
 
 export type SortKey = 'name' | 'size' | 'mtime'
 
@@ -95,13 +95,14 @@ export function Toolbar({
     <div className="shrink-0 border-b border-neutral-200 bg-white">
       {/* Breadcrumb row: full-width, every ancestor is clickable */}
       <div className="flex items-center gap-0.5 overflow-x-auto border-b border-neutral-100 px-3 py-1.5">
-        <button
-          onClick={() => onNavigate('')}
-          title="这台电脑"
-          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
-        >
-          <Computer className="size-4" />
-        </button>
+        <Tooltip content="这台电脑">
+          <button
+            onClick={() => onNavigate('')}
+            className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            <Computer className="size-4" />
+          </button>
+        </Tooltip>
         {crumbs.map((c, i) => (
           <span key={c.path} className="flex shrink-0 items-center gap-0.5">
             {i > 0 && <ChevronRight className="size-3.5 text-neutral-300" />}
@@ -123,7 +124,7 @@ export function Toolbar({
 
       {/* Action row */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        <Tooltip tip="上级目录">
+        <Tooltip content="上级目录">
           <button
             onClick={onGoUp}
             disabled={!canGoUp}
@@ -132,7 +133,7 @@ export function Toolbar({
             <ArrowUp className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip={pinned ? '取消固定' : '固定此目录'}>
+        <Tooltip content={pinned ? '取消固定' : '固定此目录'}>
           <button
             onClick={onPin}
             disabled={!path}
@@ -145,7 +146,7 @@ export function Toolbar({
             <Pin className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip={isSource ? '取消多媒体源标记（其下已入库的单集与系列将从库中移除）' : '将当前目录标记为多媒体源并触发扫描'}>
+        <Tooltip content={isSource ? '取消多媒体源标记' : '标记为多媒体源'}>
           <button
             onClick={onToggleSource}
             disabled={!path}
@@ -161,32 +162,32 @@ export function Toolbar({
 
         <span className="mx-1 h-5 w-px shrink-0 bg-neutral-200" />
 
-        <Tooltip tip="剪切">
+        <Tooltip content="剪切">
           <button onClick={onCut} disabled={!canMutate} className={btnCls}>
             <Scissors className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip="复制">
+        <Tooltip content="复制">
           <button onClick={onCopy} disabled={!canMutate} className={btnCls}>
             <ClipboardCopy className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip="粘贴到当前目录">
+        <Tooltip content="粘贴到当前目录">
           <button onClick={onPaste} disabled={!canPaste} className={btnCls}>
             <ClipboardPaste className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip="重命名">
+        <Tooltip content="重命名">
           <button onClick={onRename} disabled={selectedCount !== 1} className={btnCls}>
             <Pencil className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip="批量重命名（需至少选择 2 项）">
+        <Tooltip content="批量重命名">
           <button onClick={onBatchRename} disabled={selectedCount < 2} className={btnCls}>
             <ReplaceAll className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip="永久删除">
+        <Tooltip content="永久删除">
           <button
             onClick={onDelete}
             disabled={!canMutate}
@@ -196,12 +197,12 @@ export function Toolbar({
           </button>
         </Tooltip>
 
-        <Tooltip tip="全选当前目录所有条目">
+        <Tooltip content="全选">
           <button onClick={onSelectAll} disabled={entryCount === 0} className={btnCls}>
             <ListChecks className="size-4" />
           </button>
         </Tooltip>
-        <Tooltip tip="反选（反转当前勾选）">
+        <Tooltip content="反选">
           <button onClick={onInvertSelection} disabled={entryCount === 0} className={btnCls}>
             <ArrowDownUp className="size-4" />
           </button>
@@ -209,13 +210,13 @@ export function Toolbar({
 
         <span className="mx-1 h-5 w-px shrink-0 bg-neutral-200" />
 
-        <Tooltip tip="标记为系列：所选文件夹整体打包为系列（须位于媒体源内）；未选文件夹时把当前目录打包为系列">
+        <Tooltip content="标记为系列">
           <button onClick={onMarkSeries} disabled={!canMarkSeries} className={btnCls}>
             <Layers className="size-4" />
           </button>
         </Tooltip>
 
-        <Tooltip tip="转到格式工厂：把所选文件/文件夹无损转换为 Faststart MP4 副本">
+        <Tooltip content="转到格式工厂">
           <button
             onClick={onFormat}
             disabled={!canFormat}
@@ -226,7 +227,7 @@ export function Toolbar({
           </button>
         </Tooltip>
 
-        <Tooltip tip="多媒体视图：仅显示视频/音乐文件">
+        <Tooltip content="多媒体视图">
           <button
             onClick={onToggleMedia}
             disabled={!path}

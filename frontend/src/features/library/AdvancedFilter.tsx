@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { fetchTags } from '../../api/videos'
+import { Tooltip } from '../../components/Tooltip'
 import { emptyFilters, sortOptions, type GridState } from './types'
 
 // Draft is the editable copy of the advanced filters while the panel is open.
@@ -63,25 +64,26 @@ export function AdvancedFilter({
 
   return (
     <div className="relative">
-      <button
-        onClick={toggle}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        title="高级筛选"
-        className={`relative flex shrink-0 items-center gap-1.5 rounded border px-2.5 py-1.5 text-sm transition-colors ${
-          activeCount > 0
-            ? 'border-blue-500 bg-blue-50 text-blue-700'
-            : 'border-neutral-300 bg-white text-neutral-700 hover:border-blue-400 hover:text-blue-600'
-        }`}
-      >
-        <SlidersHorizontal className="size-4" />
-        高级筛选
-        {activeCount > 0 && (
-          <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-medium leading-none text-white">
-            {activeCount}
-          </span>
-        )}
-      </button>
+      <Tooltip content="高级筛选">
+        <button
+          onClick={toggle}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          className={`relative flex shrink-0 items-center gap-1.5 rounded border px-2.5 py-1.5 text-sm transition-colors ${
+            activeCount > 0
+              ? 'border-blue-500 bg-blue-50 text-blue-700'
+              : 'border-neutral-300 bg-white text-neutral-700 hover:border-blue-400 hover:text-blue-600'
+          }`}
+        >
+          <SlidersHorizontal className="size-4" />
+          高级筛选
+          {activeCount > 0 && (
+            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-medium leading-none text-white">
+              {activeCount}
+            </span>
+          )}
+        </button>
+      </Tooltip>
 
       {open && (
         <div

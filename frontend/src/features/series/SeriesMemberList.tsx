@@ -5,6 +5,7 @@ import { ArrowDownAZ, ArrowUpNarrowWide, GripVertical, Info, Pencil, Play, X } f
 import { reorderSeriesMembers, resortSeries, type SeriesMember } from '../../api/series'
 import { formatDuration } from '../../lib/format'
 import { playMode } from '../../lib/playability'
+import { Tooltip } from '../../components/Tooltip'
 import { SeriesRenameModal } from './SeriesRenameModal'
 
 // Drag threshold before a press becomes a drag (a plain click must not reorder).
@@ -165,55 +166,60 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
           <span className="ml-2 text-xs font-normal text-neutral-400">{members.length} 集</span>
         </h3>
         <div className="flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 p-1">
-          <button
-            onClick={() => {
-              pending.current = null
-              dragRef.current = null
-              startRectRef.current = null
-              targetRef.current = null
-              setSortMode((v) => !v)
-            }}
-            aria-pressed={sortMode}
-            title="编辑模式：开启后可拖拽排序、按文件名排序、批量修改显示名"
-            className={`flex items-center justify-center rounded px-1 py-0.5 transition-colors ${
-              sortMode ? 'text-blue-600 hover:bg-blue-50' : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700'
-            }`}
-          >
-            <GripVertical className="size-4" />
-          </button>
+          <Tooltip content="编辑模式">
+            <button
+              onClick={() => {
+                pending.current = null
+                dragRef.current = null
+                startRectRef.current = null
+                targetRef.current = null
+                setSortMode((v) => !v)
+              }}
+              aria-pressed={sortMode}
+              className={`flex items-center justify-center rounded px-1 py-0.5 transition-colors ${
+                sortMode ? 'text-blue-600 hover:bg-blue-50' : 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700'
+              }`}
+            >
+              <GripVertical className="size-4" />
+            </button>
+          </Tooltip>
           {sortMode && (
             <>
               <span className="mx-0.5 h-4 w-px bg-neutral-200" />
-              <button
-                onClick={() => sortByName.mutate()}
-                disabled={sortByName.isPending}
-                title="按当前显示名称排序（手动改过的标题生效）"
-                className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
-              >
-                <ArrowUpNarrowWide className="size-4" />
-              </button>
-              <button
-                onClick={() => resort.mutate()}
-                disabled={resort.isPending}
-                title="恢复为文件名字典序（手动改过的标题保留）"
-                className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
-              >
-                <ArrowDownAZ className="size-4" />
-              </button>
-              <button
-                onClick={() => setRenaming(true)}
-                title="批量修改显示名称"
-                className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
-              >
-                <Pencil className="size-4" />
-              </button>
-              <button
-                onClick={() => setSortMode(false)}
-                title="退出编辑模式"
-                className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
-              >
-                <X className="size-4" />
-              </button>
+              <Tooltip content="按显示名排序">
+                <button
+                  onClick={() => sortByName.mutate()}
+                  disabled={sortByName.isPending}
+                  className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
+                >
+                  <ArrowUpNarrowWide className="size-4" />
+                </button>
+              </Tooltip>
+              <Tooltip content="按文件名排序">
+                <button
+                  onClick={() => resort.mutate()}
+                  disabled={resort.isPending}
+                  className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
+                >
+                  <ArrowDownAZ className="size-4" />
+                </button>
+              </Tooltip>
+              <Tooltip content="批量修改显示名称">
+                <button
+                  onClick={() => setRenaming(true)}
+                  className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+                >
+                  <Pencil className="size-4" />
+                </button>
+              </Tooltip>
+              <Tooltip content="退出编辑模式">
+                <button
+                  onClick={() => setSortMode(false)}
+                  className="flex items-center justify-center rounded px-1 py-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                >
+                  <X className="size-4" />
+                </button>
+              </Tooltip>
             </>
           )}
         </div>
@@ -272,13 +278,14 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
                     <Play className="size-3.5" /> <span className="hidden sm:inline">{member.progress > 0 ? '续播' : '播放'}</span>
                   </Link>
                 ) : (
-                  <button
-                    disabled
-                    title="该文件无法在线播放，请转换后播放"
-                    className="flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-400"
-                  >
-                    <Play className="size-3.5" /> <span className="hidden sm:inline">不可播放</span>
-                  </button>
+                  <Tooltip content="无法在线播放">
+                    <button
+                      disabled
+                      className="flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-400"
+                    >
+                      <Play className="size-3.5" /> <span className="hidden sm:inline">不可播放</span>
+                    </button>
+                  </Tooltip>
                 )}
                 <Link
                   to="/series/$id/video/$videoId"

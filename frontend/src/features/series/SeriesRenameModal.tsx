@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, CaseSensitive, Regex, ReplaceAll } from 'lucide-react'
 import { Modal } from '../../components/Modal'
+import { Tooltip } from '../../components/Tooltip'
 import { updateVideo } from '../../api/videos'
 import type { SeriesMember } from '../../api/series'
 
@@ -104,7 +105,7 @@ export function SeriesRenameModal({
         <ToggleBtn
           active={regex}
           onClick={() => setRegex((v) => !v)}
-          title="将查找内容视为正则表达式"
+          title="按正则表达式查找"
           icon={<Regex className="size-3.5" />}
           label="正则"
         />
@@ -115,14 +116,15 @@ export function SeriesRenameModal({
           spellCheck={false}
           className="w-44 rounded-md border border-neutral-300 px-2 py-1 text-xs outline-none focus:border-blue-600"
         />
-        <button
-          onClick={() => void submit()}
-          disabled={!canSubmit}
-          title={!valid ? '正则表达式无效' : changes.length === 0 ? '没有匹配项' : `修改 ${changes.length} 项显示名`}
-          className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <ReplaceAll className="size-3.5" /> 开始替换
-        </button>
+        <Tooltip content={!valid ? '正则表达式无效' : changes.length === 0 ? '没有匹配项' : `修改 ${changes.length} 项显示名`}>
+          <button
+            onClick={() => void submit()}
+            disabled={!canSubmit}
+            className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ReplaceAll className="size-3.5" /> 开始替换
+          </button>
+        </Tooltip>
       </div>
       {!valid && <p className="shrink-0 px-3 pb-1 text-[11px] text-red-500">正则表达式无效</p>}
 
@@ -180,18 +182,19 @@ function ToggleBtn({
   label: string
 }) {
   return (
-    <button
-      onClick={onClick}
-      type="button"
-      title={title}
-      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
-        active
-          ? 'border-blue-600 bg-blue-50 text-blue-700'
-          : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
-      }`}
-    >
-      {icon}
-      <span className="hidden sm:inline">{label}</span>
-    </button>
+    <Tooltip content={title}>
+      <button
+        onClick={onClick}
+        type="button"
+        className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
+          active
+            ? 'border-blue-600 bg-blue-50 text-blue-700'
+            : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
+        }`}
+      >
+        {icon}
+        <span className="hidden sm:inline">{label}</span>
+      </button>
+    </Tooltip>
   )
 }

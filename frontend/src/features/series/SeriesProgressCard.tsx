@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Eraser, History } from 'lucide-react'
 import { clearSeriesHistory, type SeriesMember } from '../../api/series'
+import { Tooltip } from '../../components/Tooltip'
 
 // 已观看判定阈值：观看超过 90% 即视为看完——很多影片/剧集片尾有数分钟报幕，
 // 要求接近 100% 会永远判为「未看完」。
@@ -34,14 +35,15 @@ export function SeriesProgressCard({ seriesId, members }: { seriesId: string; me
           <History className="size-4 text-neutral-400" />
           观看进度
         </div>
-        <button
-          onClick={() => clearAll.mutate()}
-          disabled={clearAll.isPending || !hasHistory}
-          title={hasHistory ? '清空本系列全部单集的观看进度' : '暂无播放记录'}
-          className="flex items-center gap-1.5 rounded border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-40"
-        >
-          <Eraser className="size-3.5" /> 清除全部进度
-        </button>
+        <Tooltip content={hasHistory ? '清空本系列进度' : '暂无播放记录'}>
+          <button
+            onClick={() => clearAll.mutate()}
+            disabled={clearAll.isPending || !hasHistory}
+            className="flex items-center gap-1.5 rounded border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-40"
+          >
+            <Eraser className="size-3.5" /> 清除全部进度
+          </button>
+        </Tooltip>
       </div>
       {members.length === 0 ? (
         <p className="mt-2 text-sm text-neutral-500">该系列暂无成员。</p>

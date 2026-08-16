@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Calendar, Check, Layers, Link2, Loader2, Pencil, Plus, RefreshCw, Star, X } from 'lucide-react'
 import { fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, setSeriesLinks, syncSeries, updateSeriesName } from '../../api/series'
 import { SeriesPickerModal } from '../../components/SeriesPickerModal'
+import { Tooltip } from '../../components/Tooltip'
 import { prefetchPlayability } from '../../lib/playability'
 import { openFileLocation } from '../../tabs/manager'
 import { SeriesMemberList } from './SeriesMemberList'
@@ -145,28 +146,33 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                     autoFocus
                     className="w-full min-w-0 rounded-md border border-neutral-300 bg-white px-2 py-1 text-2xl font-semibold text-neutral-900 outline-none focus:border-blue-600"
                   />
-                  <button onClick={commitName} title="保存" className="shrink-0 rounded p-1 text-blue-600 hover:bg-blue-50">
-                    <Check className="size-4" />
-                  </button>
-                  <button onClick={() => setEditingName(false)} title="取消" className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100">
-                    <X className="size-4" />
-                  </button>
+                  <Tooltip content="保存">
+                    <button onClick={commitName} className="shrink-0 rounded p-1 text-blue-600 hover:bg-blue-50">
+                      <Check className="size-4" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="取消">
+                    <button onClick={() => setEditingName(false)} className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100">
+                      <X className="size-4" />
+                    </button>
+                  </Tooltip>
                 </div>
               ) : (
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <h1 className="min-w-0 truncate text-2xl font-semibold text-neutral-900" title={series.name}>
                     {series.name}
                   </h1>
-                  <button
-                    onClick={() => {
-                      setNameInput(series.name)
-                      setEditingName(true)
-                    }}
-                    title="编辑系列名称"
-                    className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
-                  >
-                    <Pencil className="size-4" />
-                  </button>
+                  <Tooltip content="编辑系列名称">
+                    <button
+                      onClick={() => {
+                        setNameInput(series.name)
+                        setEditingName(true)
+                      }}
+                      className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
+                    >
+                      <Pencil className="size-4" />
+                    </button>
+                  </Tooltip>
                 </div>
               )}
             </div>
@@ -215,14 +221,15 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
               <Link to="/series/$id" params={{ id: l.linked_id }} className="text-sm font-medium text-neutral-700 hover:text-blue-600">
                 {l.linked_name}
               </Link>
-              <button
-                onClick={() => removeLink.mutate(l.linked_id)}
-                disabled={removeLink.isPending}
-                className="rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-                title="移除关联"
-              >
-                <X className="size-3.5" />
-              </button>
+              <Tooltip content="移除关联">
+                <button
+                  onClick={() => removeLink.mutate(l.linked_id)}
+                  disabled={removeLink.isPending}
+                  className="rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </Tooltip>
             </div>
           ))}
         </div>

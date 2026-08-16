@@ -4,6 +4,7 @@ import { Calendar, Check, Pencil, Star, X } from 'lucide-react'
 import type { Video } from '../../api/videos'
 import { updateVideo } from '../../api/videos'
 import { openFileLocation } from '../../tabs/manager'
+import { Tooltip } from '../../components/Tooltip'
 import { parentPath } from '../files/path'
 
 export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTags: string[] }) {
@@ -77,28 +78,33 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
                 autoFocus
                 className="w-full min-w-0 rounded-md border border-neutral-300 bg-white px-2 py-1 text-lg font-medium text-neutral-900 outline-none focus:border-blue-600"
               />
-              <button onClick={commitTitle} title="保存" className="shrink-0 rounded p-1 text-blue-600 hover:bg-blue-50">
-                <Check className="size-4" />
-              </button>
-              <button onClick={() => setEditingTitle(false)} title="取消" className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100">
-                <X className="size-4" />
-              </button>
+              <Tooltip content="保存">
+                <button onClick={commitTitle} className="shrink-0 rounded p-1 text-blue-600 hover:bg-blue-50">
+                  <Check className="size-4" />
+                </button>
+              </Tooltip>
+              <Tooltip content="取消">
+                <button onClick={() => setEditingTitle(false)} className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100">
+                  <X className="size-4" />
+                </button>
+              </Tooltip>
             </div>
           ) : (
             <div className="flex items-center gap-2">
               <h1 className="truncate text-lg font-semibold text-neutral-900" title={title}>
                 {title}
               </h1>
-              <button
-                onClick={() => {
-                  setTitleInput(video.title)
-                  setEditingTitle(true)
-                }}
-                title="编辑标题"
-                className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
-              >
-                <Pencil className="size-3.5" />
-              </button>
+              <Tooltip content="编辑标题">
+                <button
+                  onClick={() => {
+                    setTitleInput(video.title)
+                    setEditingTitle(true)
+                  }}
+                  className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              </Tooltip>
             </div>
           )}
         </div>
@@ -127,9 +133,11 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
             className="flex items-center gap-1 rounded bg-neutral-100 px-2.5 py-1 text-xs text-neutral-700"
           >
             {t}
-            <button onClick={() => removeTag(t)} className="text-neutral-400 hover:text-neutral-700" title="删除标签">
-              <X className="size-3" />
-            </button>
+            <Tooltip content="删除标签">
+              <button onClick={() => removeTag(t)} className="text-neutral-400 hover:text-neutral-700">
+                <X className="size-3" />
+              </button>
+            </Tooltip>
           </span>
         ))}
         <input

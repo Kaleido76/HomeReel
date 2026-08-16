@@ -5,6 +5,7 @@ import { ApiError } from '../../api/client'
 import type { FileEntry } from '../../api/files'
 import { fileStyle } from './fileType'
 import { formatBytes, formatTime } from './path'
+import { Tooltip } from '../../components/Tooltip'
 import type { SortKey, SortState } from './Toolbar'
 import { useCheckboxDrag, useColumnWidths } from './listHooks'
 
@@ -167,27 +168,28 @@ export function FileListView({
                   isSelected ? 'bg-blue-50/60' : ''
                 }`}
               >
-                <div
-                  onMouseDown={(ev) => onCheckboxMouseDown(e.path, ev)}
-                  onClick={(ev) => {
-                    ev.stopPropagation()
-                    if (suppressIfDragged()) return
-                    onToggle(e.path)
-                  }}
-                  title="选择"
-                  className="flex w-10 shrink-0 items-center justify-center px-1 py-2.5"
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => {
+                <Tooltip content="选择">
+                  <div
+                    onMouseDown={(ev) => onCheckboxMouseDown(e.path, ev)}
+                    onClick={(ev) => {
+                      ev.stopPropagation()
                       if (suppressIfDragged()) return
                       onToggle(e.path)
                     }}
-                    onClick={(ev) => ev.stopPropagation()}
-                    className="accent-blue-600"
-                  />
-                </div>
+                    className="flex w-10 shrink-0 items-center justify-center px-1 py-2.5"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {
+                        if (suppressIfDragged()) return
+                        onToggle(e.path)
+                      }}
+                      onClick={(ev) => ev.stopPropagation()}
+                      className="accent-blue-600"
+                    />
+                  </div>
+                </Tooltip>
                 <div style={{ width: colWidths.name }} className="flex shrink-0 items-center gap-2 px-4 py-2.5">
                   {isRenaming ? (
                     <RenameForm
@@ -289,12 +291,16 @@ function RenameForm({
         placeholder="输入新名称"
         className="min-w-0 flex-1 rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-blue-600"
       />
-      <button type="submit" disabled={!value.trim()} title="确认" className="shrink-0 rounded-md p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
-        <Check className="size-4" />
-      </button>
-      <button type="button" onClick={onCancel} title="取消" className="shrink-0 rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100">
-        <X className="size-4" />
-      </button>
+      <Tooltip content="确认">
+        <button type="submit" disabled={!value.trim()} className="shrink-0 rounded-md p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+          <Check className="size-4" />
+        </button>
+      </Tooltip>
+      <Tooltip content="取消">
+        <button type="button" onClick={onCancel} className="shrink-0 rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100">
+          <X className="size-4" />
+        </button>
+      </Tooltip>
     </form>
   )
 }
