@@ -30,15 +30,12 @@ export function LibraryList({
   const showSeries = state.view !== 'standalone'
 
   const videos = useQuery({
-    queryKey: ['videos', 'library', q, state.tags, state.genre, state.year, state.sort, state.page],
+    queryKey: ['videos', 'library', q, state.tags, state.page],
     queryFn: () =>
       fetchVideos({
         q: q || undefined,
-        genre: state.genre || undefined,
-        year: state.year ? Number(state.year) : undefined,
         tags: state.tags,
         ungrouped: true,
-        sort: state.sort,
         order: 'desc',
         page: state.page,
         pageSize: PAGE_SIZE,
@@ -48,11 +45,9 @@ export function LibraryList({
   })
 
   const series = useQuery({
-    queryKey: ['series', q, state.tags, state.genre, state.year],
+    queryKey: ['series', q, state.tags],
     queryFn: () =>
       fetchSeries({
-        genre: state.genre || undefined,
-        year: state.year ? Number(state.year) : undefined,
         tags: state.tags,
       }),
     enabled: showSeries,
@@ -62,7 +57,7 @@ export function LibraryList({
     if (!series.data) return []
     const query = q.trim().toLowerCase()
     const items = query
-      ? series.data.series.filter((s) => s.name.toLowerCase().includes(query) || s.title.toLowerCase().includes(query))
+      ? series.data.series.filter((s) => s.name.toLowerCase().includes(query))
       : series.data.series
     return items
   }, [series.data, q])
@@ -76,7 +71,7 @@ export function LibraryList({
   const showPageControls = showVideos && pageCount > 1
 
   function emptyHint(): string {
-    if (q || state.tags.length > 0 || state.genre || state.year) return '没有匹配的视频或系列'
+    if (q || state.tags.length > 0) return '没有匹配的视频或系列'
     if (state.view === 'series') return '暂无系列。系列只能手动创建：在「文件」页签对媒体源内的文件夹点「标记为系列」，其直接一级视频文件即成为系列成员。'
     if (state.view === 'standalone') return '暂无单集视频。扫描会先以单集入库；归入系列的视频显示在「系列」中。'
     return '暂无视频。请先在「文件」页签中把存放媒体的目录标记为多媒体源并等待扫描完成。'
@@ -104,13 +99,13 @@ export function LibraryList({
                 <li key={s.id}>
                   <button
                     onClick={() => onSelect({ type: 'series', id: s.id })}
-                    className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200 hover:z-10 ${
+                    className={`group relative flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-all duration-200 hover:z-10 lg:gap-3 lg:px-3 lg:py-2.5 ${
                       active
                         ? 'border-blue-500 bg-blue-50 shadow-sm ring-1 ring-blue-500/30'
                         : 'border-neutral-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-blue-400/60 hover:bg-blue-50/40 hover:shadow-md'
                     }`}
                   >
-                    <div className="relative h-20 w-36 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+                    <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 lg:h-20 lg:w-36">
                       {s.member_count > 0 ? (
                         <img src={seriesPosterUrl(s.id)} alt={s.name} loading="lazy" className="h-full w-full object-cover" />
                       ) : (
@@ -125,7 +120,7 @@ export function LibraryList({
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="line-clamp-1 text-sm font-medium text-neutral-800" title={s.name}>
+                      <p className="truncate text-sm font-medium text-neutral-800" title={s.name}>
                         {s.name}
                       </p>
                       <p className="mt-1 truncate text-xs text-neutral-400">
@@ -150,13 +145,13 @@ export function LibraryList({
                 <li key={v.id}>
                   <button
                     onClick={() => onSelect({ type: 'video', id: v.id })}
-                    className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200 hover:z-10 ${
+                    className={`group relative flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-all duration-200 hover:z-10 lg:gap-3 lg:px-3 lg:py-2.5 ${
                       active
                         ? 'border-blue-500 bg-blue-50 shadow-sm ring-1 ring-blue-500/30'
                         : 'border-neutral-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-blue-400/60 hover:bg-blue-50/40 hover:shadow-md'
                     }`}
                   >
-                    <div className="relative h-20 w-36 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+                    <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 lg:h-20 lg:w-36">
                       {v.thumb_path ? (
                         <img src={coverUrl(v.id, true)} alt={v.title} loading="lazy" className="h-full w-full object-cover" />
                       ) : (
@@ -171,7 +166,7 @@ export function LibraryList({
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="line-clamp-1 text-sm font-medium text-neutral-800" title={v.title}>
+                      <p className="truncate text-sm font-medium text-neutral-800" title={v.title}>
                         {v.title}
                       </p>
                       <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-neutral-400">

@@ -251,39 +251,14 @@ func TestVideoListAdvancedFilter(t *testing.T) {
 	_ = repo.Create(ctx, base("v2", "Beta"))
 	_ = repo.Create(ctx, base("v3", "Gamma"))
 
-	set := func(id, genre string, year int, tags []string) {
-		if err := repo.UpdateMetadata(ctx, id, domain.VideoPatch{
-			Genre: &genre, Year: &year,
-		}); err != nil {
-			t.Fatalf("metadata %s: %v", id, err)
-		}
+	set := func(id string, tags []string) {
 		if err := repo.SetTags(ctx, id, tags); err != nil {
 			t.Fatalf("tags %s: %v", id, err)
 		}
 	}
-	set("v1", "科幻", 2001, []string{"科幻", "太空"})
-	set("v2", "科幻", 2010, []string{"爱情"})
-	set("v3", "喜剧", 2010, []string{"喜剧"})
-
-	t.Run("genre", func(t *testing.T) {
-		page, err := repo.List(ctx, domain.VideoQuery{Genre: "科幻", Page: 1, PageSize: 10})
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		if page.Total != 2 {
-			t.Fatalf("genre = %d", page.Total)
-		}
-	})
-
-	t.Run("year", func(t *testing.T) {
-		page, err := repo.List(ctx, domain.VideoQuery{Year: 2010, Page: 1, PageSize: 10})
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		if page.Total != 2 {
-			t.Fatalf("year = %d", page.Total)
-		}
-	})
+	set("v1", []string{"科幻", "太空"})
+	set("v2", []string{"爱情"})
+	set("v3", []string{"喜剧"})
 
 	t.Run("multi tag AND", func(t *testing.T) {
 		page, err := repo.List(ctx, domain.VideoQuery{Tags: []string{"科幻", "太空"}, Page: 1, PageSize: 10})
@@ -299,16 +274,6 @@ func TestVideoListAdvancedFilter(t *testing.T) {
 		}
 		if page.Total != 0 {
 			t.Fatalf("conflicting tags should match none, got %d", page.Total)
-		}
-	})
-
-	t.Run("combined", func(t *testing.T) {
-		page, err := repo.List(ctx, domain.VideoQuery{Genre: "科幻", Year: 2010, Page: 1, PageSize: 10})
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		if page.Total != 1 || page.Videos[0].ID != "v2" {
-			t.Fatalf("combined = %d %+v", page.Total, page.Videos)
 		}
 	})
 }

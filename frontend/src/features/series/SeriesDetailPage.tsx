@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Calendar, Check, Layers, Link2, Loader2, Pencil, Plus, RefreshCw, Star, X } from 'lucide-react'
+import { AlertTriangle, Check, Layers, Link2, Loader2, Pencil, Plus, RefreshCw, Star, X } from 'lucide-react'
 import { fetchSeriesDetail, fetchSeriesPrefs, clearSeriesPrefs, removeSeriesLink, seriesPosterUrl, setSeriesLinks, syncSeries, updateSeriesName } from '../../api/series'
 import { SeriesPickerModal } from '../../components/SeriesPickerModal'
 import { Tooltip } from '../../components/Tooltip'
@@ -197,12 +197,6 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                   <Star className="size-4 fill-neutral-300 text-neutral-400" /> {series.rating.toFixed(1)}
                 </span>
               ) : null}
-              {series.year ? (
-                <span className="flex items-center gap-1">
-                  <Calendar className="size-4" /> {series.year}
-                </span>
-              ) : null}
-              {series.genre ? <span>{series.genre}</span> : null}
             </div>
             {series.overview ? <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-neutral-600">{series.overview}</p> : null}
             {rootPath ? (

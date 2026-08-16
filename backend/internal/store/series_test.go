@@ -28,13 +28,13 @@ func TestSeriesListFilter(t *testing.T) {
 
 	// Each series is a show+season bound to its own root path; two roots with
 	// the same name stay two independent series.
-	mk := func(id, name, root, tag, overview string, genre string, year int) domain.Series {
+	mk := func(id, name, root, tag, overview string) domain.Series {
 		s, err := series.CreateAtRoot(ctx, name, root)
 		if err != nil {
 			t.Fatalf("create series: %v", err)
 		}
 		if err := shows.UpdateMetadata(ctx, domain.Show{
-			ID: s.ShowID, Name: name, Overview: overview, Genre: genre, Year: year,
+			ID: s.ShowID, Name: name, Overview: overview,
 			MetadataSource: "manual", CreatedAt: "t", UpdatedAt: "t",
 		}); err != nil {
 			t.Fatalf("update show metadata: %v", err)
@@ -56,9 +56,9 @@ func TestSeriesListFilter(t *testing.T) {
 		}
 		return s
 	}
-	s1 := mk("e1", "星际穿越", `C:\x\inter1`, "科幻", "太空之旅", "科幻", 2020)
-	s2 := mk("e2", "星际穿越", `C:\x\inter2`, "科幻", "太空之旅", "科幻", 2020)
-	mk("e3", "爱情公寓", `C:\x\apt`, "喜剧", "都市日常", "喜剧", 2015)
+	s1 := mk("e1", "星际穿越", `C:\x\inter1`, "科幻", "太空之旅")
+	s2 := mk("e2", "星际穿越", `C:\x\inter2`, "科幻", "太空之旅")
+	mk("e3", "爱情公寓", `C:\x\apt`, "喜剧", "都市日常")
 	if s1.ID == s2.ID {
 		t.Fatalf("two same-named series must be independent, got %s", s1.ID)
 	}
@@ -71,28 +71,15 @@ func TestSeriesListFilter(t *testing.T) {
 		t.Fatalf("all = %d, want 3", len(all))
 	}
 
-	t.Run("q matches name or overview", func(t *testing.T) {
+	t.Run("q matches display name only", func(t *testing.T) {
 		got, err := series.List(ctx, domain.SeriesQuery{Q: "星际"})
 		if err != nil || len(got) != 2 {
 			t.Fatalf("name q = %d err=%v", len(got), err)
 		}
+		// overview（简介）不再参与匹配：关键词只命中系列显示名。
 		got, err = series.List(ctx, domain.SeriesQuery{Q: "都市"})
-		if err != nil || len(got) != 1 || got[0].Title != "爱情公寓" {
-			t.Fatalf("overview q = %+v err=%v", got, err)
-		}
-	})
-
-	t.Run("genre", func(t *testing.T) {
-		got, err := series.List(ctx, domain.SeriesQuery{Genre: "喜剧"})
-		if err != nil || len(got) != 1 || got[0].Title != "爱情公寓" {
-			t.Fatalf("genre = %+v err=%v", got, err)
-		}
-	})
-
-	t.Run("year", func(t *testing.T) {
-		got, err := series.List(ctx, domain.SeriesQuery{Year: 2020})
-		if err != nil || len(got) != 2 {
-			t.Fatalf("year = %d err=%v", len(got), err)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("overview must not match = %+v err=%v", got, err)
 		}
 	})
 

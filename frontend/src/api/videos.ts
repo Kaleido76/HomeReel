@@ -27,9 +27,7 @@ export interface Video {
   season_number?: number
   episode_number?: number
   episode_title?: string
-  year?: number
   rating?: number
-  genre?: string
   studio?: string
   cast_text?: string
   metadata_source: string
@@ -47,8 +45,6 @@ export interface VideoListResult {
 
 export interface VideoQuery {
   q?: string
-  genre?: string
-  year?: number
   kind?: 'movie' | 'episode'
   tags?: string[]
   showId?: string
@@ -87,9 +83,7 @@ export interface HistoryEntry {
 export interface VideoPatch {
   title?: string
   kind?: 'movie' | 'episode'
-  year?: number
   rating?: number
-  genre?: string
   studio?: string
   cast_text?: string
   tags?: string[]
@@ -103,8 +97,6 @@ export interface TagCount {
 export function fetchVideos(query: VideoQuery = {}): Promise<VideoListResult> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
-  if (query.genre) params.set('genre', query.genre)
-  if (query.year) params.set('year', String(query.year))
   if (query.kind) params.set('kind', query.kind)
   for (const tag of query.tags ?? []) params.append('tag', tag)
   if (query.showId) params.set('showId', query.showId)

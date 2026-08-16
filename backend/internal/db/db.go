@@ -410,6 +410,14 @@ var migrations = []string{
 		updated_at       TEXT NOT NULL,
 		PRIMARY KEY (series_id, user)
 	)`,
+	// 年份字段整体移除（2026-09）：videos.year 与 shows.year 两列删除，年份筛选/
+	// 展示一并去掉（前端不再发送 year 参数）。列未被索引/约束/触发器引用，DROP 安全。
+	`ALTER TABLE videos DROP COLUMN year;
+	ALTER TABLE shows DROP COLUMN year`,
+	// 类型字段整体移除（2026-09）：videos.genre 与 shows.genre 两列删除，类型筛选/
+	// 展示一并去掉（前端不再发送 genre 参数）。列未被索引/约束/触发器引用，DROP 安全。
+	`ALTER TABLE videos DROP COLUMN genre;
+	ALTER TABLE shows DROP COLUMN genre`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

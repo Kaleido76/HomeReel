@@ -1,26 +1,22 @@
 import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { Filter, RotateCcw } from 'lucide-react'
 import { fetchTags } from '../../api/videos'
-import { Tooltip } from '../../components/Tooltip'
-import { emptyFilters, sortOptions, type GridState } from './types'
+import { emptyFilters, type GridState } from './types'
 
 // Draft is the editable copy of the advanced filters while the panel is open.
 // Nothing is applied until the toggle button is clicked again — the same
 // JobsIndicator-style toggle: first click expands, second click applies and
-// collapses.
+// collapses. Only tags remain as a filter (genre/year/sort were removed).
 type Draft = {
   tags: string[]
-  genre: string
-  year: string
-  sort: GridState['sort']
 }
 
-function toDraft(f: Pick<GridState, 'tags' | 'genre' | 'year' | 'sort'>): Draft {
-  return { tags: f.tags, genre: f.genre, year: f.year, sort: f.sort }
+function toDraft(f: Pick<GridState, 'tags'>): Draft {
+  return { tags: f.tags }
 }
 
-export type AppliedAdvancedFilters = Pick<GridState, 'tags' | 'genre' | 'year' | 'sort'>
+export type AppliedAdvancedFilters = Pick<GridState, 'tags'>
 
 export function AdvancedFilter({
   filters,
@@ -38,8 +34,7 @@ export function AdvancedFilter({
     enabled: open,
   })
 
-  const activeCount =
-    filters.tags.length + (filters.genre ? 1 : 0) + (filters.year ? 1 : 0)
+  const activeCount = filters.tags.length
 
   function toggle() {
     if (open) {
@@ -59,31 +54,29 @@ export function AdvancedFilter({
   }
 
   function reset() {
-    setDraft({ ...emptyFilters, sort: 'date' })
+    setDraft({ ...emptyFilters })
   }
 
   return (
     <div className="relative">
-      <Tooltip content="高级筛选">
-        <button
-          onClick={toggle}
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          className={`relative flex shrink-0 items-center gap-1.5 rounded border px-2.5 py-1.5 text-sm transition-colors ${
-            activeCount > 0
-              ? 'border-blue-500 bg-blue-50 text-blue-700'
-              : 'border-neutral-300 bg-white text-neutral-700 hover:border-blue-400 hover:text-blue-600'
-          }`}
-        >
-          <SlidersHorizontal className="size-4" />
-          高级筛选
-          {activeCount > 0 && (
-            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-medium leading-none text-white">
-              {activeCount}
-            </span>
-          )}
-        </button>
-      </Tooltip>
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        className={`flex h-[34px] shrink-0 items-center gap-1.5 rounded border px-2.5 text-sm transition-colors ${
+          activeCount > 0
+            ? 'border-blue-500 bg-blue-50 text-blue-700'
+            : 'border-neutral-300 bg-white text-neutral-700 hover:border-blue-400 hover:text-blue-600'
+        }`}
+      >
+        <Filter className="size-4" />
+        <span className="hidden sm:inline">高级筛选</span>
+        {activeCount > 0 && (
+          <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-medium leading-none text-white">
+            {activeCount}
+          </span>
+        )}
+      </button>
 
       {open && (
         <div
@@ -127,36 +120,6 @@ export function AdvancedFilter({
                   )}
                 </div>
               )}
-            </Field>
-            <Field label="类型">
-              <input
-                value={draft.genre}
-                onChange={(e) => setDraft({ ...draft, genre: e.target.value })}
-                placeholder="如：科幻"
-                className="w-full rounded border border-neutral-300 px-2 py-1.5 text-sm outline-none placeholder:text-neutral-400 focus:border-blue-600"
-              />
-            </Field>
-            <Field label="年份">
-              <input
-                value={draft.year}
-                onChange={(e) => setDraft({ ...draft, year: e.target.value.replace(/\D/g, '').slice(0, 4) })}
-                placeholder="如：2020"
-                inputMode="numeric"
-                className="w-full rounded border border-neutral-300 px-2 py-1.5 text-sm outline-none placeholder:text-neutral-400 focus:border-blue-600"
-              />
-            </Field>
-            <Field label="排序">
-              <select
-                value={draft.sort}
-                onChange={(e) => setDraft({ ...draft, sort: e.target.value as GridState['sort'] })}
-                className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-700 outline-none focus:border-blue-600"
-              >
-                {sortOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
             </Field>
           </div>
         </div>

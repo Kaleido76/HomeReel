@@ -17,7 +17,7 @@
   `openFormat/openFormatVideo/openFileLocation`（分别切到 工具/文件 页签再 navigate）。
 - **新增子路由必须归属到某个页签的 router**（`tabs/routers.ts`），并在 `tabFromPath` 补路径映射，
   禁止添加全局平级路由；改动此类路由结构时勿破坏 keep-alive。
-- 深链/刷新按 URL 恢复对应页签视图；库的视图状态（`view/q/sort/page` + 高级筛选 `tags/desc/genre/year`）与
+- 深链/刷新按 URL 恢复对应页签视图；库的视图状态（`view/q/page` + 高级筛选 `tags`）与
   搜索词 `q` 存在 URL 参数中。
 
 ## 1.1 文件页签（泛用机器文件浏览器，2026-08 增量）
@@ -101,12 +101,22 @@
   **单集详情永远带 series 上下文（2026-09）**：视频属于某系列但以独立详情打开时（首页/搜索卡片跳入、
   深链 `/library/video/:id`），`VideoDetailPane` 自动 `replace` 重定向到 `/series/:id/video/:videoId` 补齐
   series 段；返回系列的入口统一为系列详情列顶部「返回系列」条，**单集详情不再有「所属系列」跳转链接**。
-- **过滤器是浏览栏的一部分**（`全部/单集/系列` tab + 搜索框 + 高级筛选按钮，位于浏览栏顶部，随浏览栏一起被挤出屏幕；
-  窄屏仅浏览视图显示）。
+- **过滤器是浏览栏的一部分**（`全部/单集/系列` 视图选择 + 搜索框 + 高级筛选按钮，位于浏览栏顶部，随浏览栏一起被挤出屏幕；
+  窄屏仅浏览视图显示）。**视图选择响应式（2026-09）**：宽屏（≥lg）三项 tab 并排；窄屏折叠为**单个下拉选择器**
+  （显示当前视图名，**无箭头图标**，点击垂直展开三项、二次点击某项即切换并收起；展开菜单项加大字号（`text-base`）
+  与 padding（`px-4 py-3`）便于小屏手指操作），避免窄屏 filterBar 被三项撑满挤掉搜索框与筛选按钮。
+  **搜索即时筛选（2026-09）**：搜索框每次输入即时
+  `update({ q })` 直接过滤（无 form 提交/失焦确认），关键字不 trim 保留原样。**匹配范围 = 卡片标题**：
+  系列按显示名（`name`）、单集按 `title` 匹配，**不含**文件名/路径/简介（后端 `GET /api/videos` 的 `q` 仅
+  `title LIKE`；系列为前端按 `name` 内存过滤）。
 - **高级筛选面板**（`AdvancedFilter.tsx`，替换了原排序下拉）：JobsIndicator 同款开关——首次点击展开、再次点击
-   **应用并收起**；内含 标签（多选 chips，来自 `/api/tags`）/ 类型 / 年份 过滤器 + 排序下拉；面板保留
-  本地草稿，应用前不生效；有激活筛选时按钮显示蓝色徽标计数，面板内「重置」仅清空草稿。
-  `tags` 在 URL 中逗号连接存储，`parseGridSearch` 还原为数组。
+   **应用并收起**；**仅含标签筛选**（多选 chips，来自 `/api/tags`，多标签 AND）——类型（genre）、年份（year）、
+   排序（sort）均已移除（2026-09）；面板保留本地草稿，应用前不生效；有激活筛选时按钮显示蓝色徽标计数，面板内
+   「重置」仅清空草稿。
+   **按钮图标为漏斗（`Filter`，2026-09）**：窄屏（<sm）文字隐藏仅留图标省空间；按钮自带「高级筛选」文字说明，
+   不再用 Tooltip。按钮固定高度 `h-[34px]`，与同行搜索框/视图选择严格对齐（文字隐藏后纯图标高度偏矮会下沉）。
+  `tags` 在 URL 中逗号连接存储，`parseGridSearch` 还原为数组。列表排序固定「最近添加」（后端默认
+  `created_at DESC`），无 UI 可改。
 - 系列详情成员行有**播放/续播 + 详情**两按钮：播放直达播放栏（左侧保留系列详情，不再插入单集详情）；
   详情打开单集详情栏（顶部有「返回系列」条）。
 - **系列成员列表（2026-09，`SeriesMemberList`）**：头部一行 = 左侧标题「剧集列表 N 集」+ 右侧**可展开的
@@ -176,7 +186,7 @@
 - 播放栏=`PlayerPane`：**顶部退出播放条** + 播放器 + 简略元信息 + 系列内上下集/自动连播 +
   **「接下来播放」列表**（当前集后的至多 3 个成员，小缩略图低调展示）。
 - **窄屏（<lg）**退化为单栏全页（浏览→详情→播放，`NarrowBack` 返回条），复用同一批组件。
-- 网格筛选状态（`view/q/sort/page` + `tags/desc/genre/year`）存于 `LibraryLayout` 组件 state
+- 网格筛选状态（`view/q/page` + 标签 `tags`）存于 `LibraryLayout` 组件 state
   （`features/library/types.ts`），仅 `/library` 页写回 URL。子页面组件（`VideoDetailPane`/`PlayerPane`/
   `SeriesDetailPage`）以 props 接收 id，不用 `useParams`。
 - 播放器切走自动暂停：`VideoPlayer` 订阅页签 store，非 library 页签即 `remote.pause()`，切回保持暂停由
@@ -320,3 +330,5 @@
 - 浏览栏**悬浮卡片**：每行一张 `border-neutral-200 bg-white rounded-lg shadow-sm` 卡片，行间 `gap-1.5`
   留白；hover `-translate-y-0.5` 上浮 + `border-blue-400/60` 描边变蓝 + `bg-blue-50/40` + `shadow-md`，
   `transition-all duration-200`；选中 `border-blue-500 bg-blue-50 ring-1 ring-blue-500/30`；封面无缩放动画。
+  卡片缩略图响应式（2026-09）：窄屏（<lg）16:9 封面缩至 `h-16 w-28`、卡片 padding/gap 收紧（`px-2.5 py-2 gap-2.5`），
+  卡片整体变矮，右侧标题/元数据获得更多宽度；宽屏恢复 `h-20 w-36` 大图。

@@ -20,7 +20,7 @@ func NewShowRepo(database *sql.DB) domain.ShowRepo {
 	return &showRepo{db: database}
 }
 
-const showCols = `id, name, overview, year, rating, genre, poster_path, backdrop_path,
+const showCols = `id, name, overview, rating, poster_path, backdrop_path,
 	metadata_source, created_at, updated_at`
 
 func (r *showRepo) List(ctx context.Context) ([]domain.Show, error) {
@@ -40,16 +40,14 @@ func (r *showRepo) List(ctx context.Context) ([]domain.Show, error) {
 		var (
 			sh             domain.Show
 			overview       sql.NullString
-			year           sql.NullInt64
 			rating         sql.NullFloat64
-			genre          sql.NullString
 			poster         sql.NullString
 			backdrop       sql.NullString
 			seasonCount    int
 			episodeCount   int
 			unwatchedCount int
 		)
-		if err := rows.Scan(&sh.ID, &sh.Name, &overview, &year, &rating, &genre,
+		if err := rows.Scan(&sh.ID, &sh.Name, &overview, &rating,
 			&poster, &backdrop, &sh.MetadataSource, &sh.CreatedAt, &sh.UpdatedAt,
 			&seasonCount, &episodeCount, &unwatchedCount); err != nil {
 			return nil, err
@@ -57,14 +55,8 @@ func (r *showRepo) List(ctx context.Context) ([]domain.Show, error) {
 		if overview.Valid {
 			sh.Overview = overview.String
 		}
-		if year.Valid {
-			sh.Year = int(year.Int64)
-		}
 		if rating.Valid {
 			sh.Rating = rating.Float64
-		}
-		if genre.Valid {
-			sh.Genre = genre.String
 		}
 		if poster.Valid {
 			sh.PosterPath = poster.String
@@ -99,16 +91,14 @@ func scanShow(row scanner) (domain.Show, error) {
 	var (
 		sh             domain.Show
 		overview       sql.NullString
-		year           sql.NullInt64
 		rating         sql.NullFloat64
-		genre          sql.NullString
 		poster         sql.NullString
 		backdrop       sql.NullString
 		seasonCount    int
 		episodeCount   int
 		unwatchedCount int
 	)
-	if err := row.Scan(&sh.ID, &sh.Name, &overview, &year, &rating, &genre,
+	if err := row.Scan(&sh.ID, &sh.Name, &overview, &rating,
 		&poster, &backdrop, &sh.MetadataSource, &sh.CreatedAt, &sh.UpdatedAt,
 		&seasonCount, &episodeCount, &unwatchedCount); err != nil {
 		return domain.Show{}, err
@@ -116,14 +106,8 @@ func scanShow(row scanner) (domain.Show, error) {
 	if overview.Valid {
 		sh.Overview = overview.String
 	}
-	if year.Valid {
-		sh.Year = int(year.Int64)
-	}
 	if rating.Valid {
 		sh.Rating = rating.Float64
-	}
-	if genre.Valid {
-		sh.Genre = genre.String
 	}
 	if poster.Valid {
 		sh.PosterPath = poster.String
@@ -234,11 +218,11 @@ func (r *showRepo) FindByName(ctx context.Context, name string) (domain.Show, er
 
 func (r *showRepo) Create(ctx context.Context, s domain.Show) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO shows (id, name, overview, year, rating, genre, poster_path,
+		INSERT INTO shows (id, name, overview, rating, poster_path,
 			backdrop_path, metadata_source, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.Name, nullString(s.Overview), nullInt(s.Year), nullFloat(s.Rating),
-		nullString(s.Genre), nullString(s.PosterPath), nullString(s.BackdropPath),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.Name, nullString(s.Overview), nullFloat(s.Rating),
+		nullString(s.PosterPath), nullString(s.BackdropPath),
 		s.MetadataSource, s.CreatedAt, s.UpdatedAt)
 	return err
 }
@@ -288,11 +272,11 @@ func (r *showRepo) UpdateMetadata(ctx context.Context, s domain.Show) error {
 	var oldName string
 	_ = r.db.QueryRowContext(ctx, `SELECT name FROM shows WHERE id = ?`, s.ID).Scan(&oldName)
 	if _, err := r.db.ExecContext(ctx, `
-		UPDATE shows SET name = ?, overview = ?, year = ?, rating = ?, genre = ?,
+		UPDATE shows SET name = ?, overview = ?, rating = ?,
 			poster_path = ?, backdrop_path = ?, metadata_source = ?, updated_at = ?
 		WHERE id = ?`,
-		s.Name, nullString(s.Overview), nullInt(s.Year), nullFloat(s.Rating),
-		nullString(s.Genre), nullString(s.PosterPath), nullString(s.BackdropPath),
+		s.Name, nullString(s.Overview), nullFloat(s.Rating),
+		nullString(s.PosterPath), nullString(s.BackdropPath),
 		s.MetadataSource, domain.Now(), s.ID); err != nil {
 		return err
 	}

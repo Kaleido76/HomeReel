@@ -24,9 +24,7 @@ func (s *Server) handleVideoPatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Title    *string   `json:"title"`
 		Kind     *string   `json:"kind"`
-		Year     *int      `json:"year"`
 		Rating   *float64  `json:"rating"`
-		Genre    *string   `json:"genre"`
 		Studio   *string   `json:"studio"`
 		CastText *string   `json:"cast_text"`
 		Tags     *[]string `json:"tags"`
@@ -37,9 +35,7 @@ func (s *Server) handleVideoPatch(w http.ResponseWriter, r *http.Request) {
 	patch := domain.VideoPatch{
 		Title:    body.Title,
 		Kind:     body.Kind,
-		Year:     body.Year,
 		Rating:   body.Rating,
-		Genre:    body.Genre,
 		Studio:   body.Studio,
 		CastText: body.CastText,
 	}
@@ -134,9 +130,7 @@ func (s *Server) handleShowPatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name         *string  `json:"name"`
 		Overview     *string  `json:"overview"`
-		Year         *int     `json:"year"`
 		Rating       *float64 `json:"rating"`
-		Genre        *string  `json:"genre"`
 		PosterPath   *string  `json:"poster_path"`
 		BackdropPath *string  `json:"backdrop_path"`
 	}
@@ -149,14 +143,8 @@ func (s *Server) handleShowPatch(w http.ResponseWriter, r *http.Request) {
 	if body.Overview != nil {
 		show.Overview = *body.Overview
 	}
-	if body.Year != nil {
-		show.Year = *body.Year
-	}
 	if body.Rating != nil {
 		show.Rating = *body.Rating
-	}
-	if body.Genre != nil {
-		show.Genre = *body.Genre
 	}
 	if body.PosterPath != nil {
 		show.PosterPath = *body.PosterPath

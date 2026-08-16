@@ -60,9 +60,7 @@ CREATE TABLE videos (
   season_number    INTEGER,                     -- 第几季
   episode_number   INTEGER,                     -- 第几集
   episode_title    TEXT,                        -- 单集名（默认为文件名）
-  year             INTEGER,
   rating           REAL,                        -- 评分 0~10（刮削或用户）
-  genre            TEXT,                        -- 逗号分隔类型
   studio           TEXT,
   cast_text        TEXT,                        -- 演职员（逗号分隔）
   metadata_source  TEXT NOT NULL DEFAULT 'manual', -- manual（刮削源已移除）
@@ -86,9 +84,7 @@ CREATE TABLE shows (
   id              TEXT PRIMARY KEY,             -- ULID
   name            TEXT NOT NULL,                -- 系列显示名（创建时默认=文件夹名，可手动编辑，扫描不覆盖）
   overview        TEXT,
-  year            INTEGER,
   rating          REAL,
-  genre           TEXT,
   poster_path     TEXT,                         -- 相对 data_dir
   backdrop_path   TEXT,
   metadata_source TEXT DEFAULT 'manual',        -- manual（刮削源已移除）
@@ -261,13 +257,13 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/videos` | 列表，支持 `q / genre / year / tag（可重复，多标签 AND）/ kind / showId / ungrouped / sort / order / page / pageSize`；`ungrouped=1` 查单集 |
+| GET | `/api/videos` | 列表，支持 `q`（仅匹配单集显示标题 `title`，不含文件名/路径）/ `tag（可重复，多标签 AND）/ kind / showId / ungrouped / sort / order / page / pageSize`；`ungrouped=1` 查单集 |
 | GET | `/api/videos/:id` | 详情（含标签、所属系列 `series_id`、能力标志 `direct/remux/transcode_playable`、`source_status`/`new_path`） |
-| PATCH | `/api/videos/:id` | 更新 `title / kind / year / rating / genre / studio / cast_text / tags`（2026-09 起不含简介 description/overview） |
+| PATCH | `/api/videos/:id` | 更新 `title / kind / rating / studio / cast_text / tags`（2026-09 起不含简介 description/overview、年份 year 与类型 genre） |
 | DELETE | `/api/videos/:id` | 删除元数据记录（仅删库，不动源文件） |
 | POST | `/api/videos/:id/refresh` | 重新 ffprobe 并更新元数据 |
 | POST | `/api/videos/:id/sync` | 按 file_id 定位改名/移动的源文件并收敛系列成员（找不到 → 404，前端引导移除） |
-| GET | `/api/series` | 系列列表（一季/一部一个系列，含 kind / 成员数 / 关联系数 / 总时长 `total_duration`），支持 `q`（剧名/简介）/ `genre / year / tag（可重复，成员标签 AND）` |
+| GET | `/api/series` | 系列列表（一季/一部一个系列，含 kind / 成员数 / 关联系数 / 总时长 `total_duration`），支持 `q`（仅系列显示名）/ `tag（可重复，成员标签 AND）` |
 | GET | `/api/series/:id` | 系列详情（含 members / links / check） |
 | POST | `/api/series/:id/sync` | 对根目录执行一次与标记相同的局部同步（按需检查的「同步」按钮） |
 | DELETE | `/api/series/:id/history` | 清除该系列全部成员观看进度（只删历史，不动视频/文件） |

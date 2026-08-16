@@ -9,9 +9,7 @@ export interface Series {
   kind: 'tv' | 'movie'
   season_number: number
   overview?: string
-  year?: number
   rating?: number
-  genre?: string
   poster_path?: string
   backdrop_path?: string
   metadata_source: string
@@ -63,16 +61,12 @@ export interface SeriesDetail {
 
 export interface SeriesQuery {
   q?: string
-  genre?: string
-  year?: number
   tags?: string[]
 }
 
 export function fetchSeries(query: SeriesQuery = {}): Promise<{ series: Series[] }> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
-  if (query.genre) params.set('genre', query.genre)
-  if (query.year) params.set('year', String(query.year))
   for (const tag of query.tags ?? []) params.append('tag', tag)
   const qs = params.toString()
   return api<{ series: Series[] }>(`/api/series${qs ? `?${qs}` : ''}`)

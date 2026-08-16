@@ -7,9 +7,7 @@ type Show struct {
 	ID             string  `json:"id"`
 	Name           string  `json:"name"`
 	Overview       string  `json:"overview"`
-	Year           int     `json:"year,omitempty"`
 	Rating         float64 `json:"rating,omitempty"`
-	Genre          string  `json:"genre,omitempty"`
 	PosterPath     string  `json:"poster_path,omitempty"`
 	BackdropPath   string  `json:"backdrop_path,omitempty"`
 	MetadataSource string  `json:"metadata_source"`

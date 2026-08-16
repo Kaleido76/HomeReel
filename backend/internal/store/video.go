@@ -35,7 +35,7 @@ type queryer interface {
 const videoCols = `id, source_id, file_id, relative_path, path, size, mtime, title,
 	kind, duration, codec, audio_codec, container, segmented, width, height, fps, file_size,
 	cover_path, thumb_path, backdrop_path, show_id, season_number, episode_number, episode_title,
-	year, rating, genre, studio, cast_text, metadata_source, title_source,
+	rating, studio, cast_text, metadata_source, title_source,
 	created_at, updated_at, last_scanned_at, faststart`
 
 // qualify prefixes every column with a table alias so videoCols can be used in
@@ -70,9 +70,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 		seasonNumber  sql.NullInt64
 		episodeNumber sql.NullInt64
 		episodeTitle  sql.NullString
-		year          sql.NullInt64
 		rating        sql.NullFloat64
-		genre         sql.NullString
 		studio        sql.NullString
 		castText      sql.NullString
 	)
@@ -80,7 +78,7 @@ func scanVideo(row scanner) (domain.Video, error) {
 		&v.Size, &v.MTime, &v.Title, &v.Kind, &duration, &codec,
 		&audioCodec, &container, &segmented, &width, &height, &fps, &fileSize,
 		&cover, &thumb, &backdrop, &showID, &seasonNumber, &episodeNumber, &episodeTitle,
-		&year, &rating, &genre, &studio, &castText, &v.MetadataSource,
+		&rating, &studio, &castText, &v.MetadataSource,
 		&v.TitleSource, &v.CreatedAt, &v.UpdatedAt, &v.LastScannedAt, &faststart); err != nil {
 		return domain.Video{}, err
 	}
@@ -138,14 +136,8 @@ func scanVideo(row scanner) (domain.Video, error) {
 	if episodeTitle.Valid {
 		v.EpisodeTitle = episodeTitle.String
 	}
-	if year.Valid {
-		v.Year = int(year.Int64)
-	}
 	if rating.Valid {
 		v.Rating = rating.Float64
-	}
-	if genre.Valid {
-		v.Genre = genre.String
 	}
 	if studio.Valid {
 		v.Studio = studio.String
@@ -195,17 +187,8 @@ func (r *videoRepo) List(ctx context.Context, q domain.VideoQuery) (domain.Video
 	var args []any
 	if q.Q != "" {
 		like := "%" + q.Q + "%"
-		where = append(where, `(title LIKE ? OR relative_path LIKE ?)`)
-		args = append(args, like, like)
-	}
-	if q.Genre != "" {
-		like := "%" + q.Genre + "%"
-		where = append(where, `genre LIKE ?`)
+		where = append(where, `title LIKE ?`)
 		args = append(args, like)
-	}
-	if q.Year > 0 {
-		where = append(where, `year = ?`)
-		args = append(args, q.Year)
 	}
 	if q.Kind != "" {
 		where = append(where, `kind = ?`)
@@ -408,17 +391,9 @@ func (r *videoRepo) UpdateMetadata(ctx context.Context, id string, patch domain.
 		sets = append(sets, "kind = ?")
 		args = append(args, *patch.Kind)
 	}
-	if patch.Year != nil {
-		sets = append(sets, "year = ?")
-		args = append(args, *patch.Year)
-	}
 	if patch.Rating != nil {
 		sets = append(sets, "rating = ?")
 		args = append(args, *patch.Rating)
-	}
-	if patch.Genre != nil {
-		sets = append(sets, "genre = ?")
-		args = append(args, *patch.Genre)
 	}
 	if patch.Studio != nil {
 		sets = append(sets, "studio = ?")

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"homereel/backend/internal/domain"
 )
@@ -24,12 +23,9 @@ func (s *Server) seriesOrError(w http.ResponseWriter, r *http.Request, id string
 }
 
 func (s *Server) handleSeriesList(w http.ResponseWriter, r *http.Request) {
-	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
 	list, err := s.series.List(r.Context(), domain.SeriesQuery{
-		Q:     r.URL.Query().Get("q"),
-		Genre: r.URL.Query().Get("genre"),
-		Year:  year,
-		Tags:  r.URL.Query()["tag"],
+		Q:    r.URL.Query().Get("q"),
+		Tags: r.URL.Query()["tag"],
 	})
 	if err != nil {
 		slog.Error("list series", "err", err)

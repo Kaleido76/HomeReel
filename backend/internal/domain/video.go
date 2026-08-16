@@ -32,9 +32,7 @@ type Video struct {
 	SeasonNumber   int     `json:"season_number,omitempty"`
 	EpisodeNumber  int     `json:"episode_number,omitempty"`
 	EpisodeTitle   string  `json:"episode_title,omitempty"`
-	Year           int     `json:"year,omitempty"`
 	Rating         float64 `json:"rating,omitempty"`
-	Genre          string  `json:"genre,omitempty"`
 	Studio         string  `json:"studio,omitempty"`
 	CastText       string  `json:"cast_text,omitempty"`
 	MetadataSource string  `json:"metadata_source"`
@@ -51,9 +49,7 @@ type Video struct {
 type VideoPatch struct {
 	Title          *string
 	Kind           *string
-	Year           *int
 	Rating         *float64
-	Genre          *string
 	Studio         *string
 	CastText       *string
 	BackdropPath   *string
@@ -62,9 +58,7 @@ type VideoPatch struct {
 
 // VideoQuery filters and paginates the video library.
 type VideoQuery struct {
-	Q         string   // matches title or relative path
-	Genre     string   // matches genre (substring)
-	Year      int      // matches year exactly
+	Q         string   // matches the display title (series member / standalone video)
 	Kind      string   // movie | episode
 	Tags      []string // all tags must be present (AND)
 	ShowID    string

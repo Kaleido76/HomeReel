@@ -30,11 +30,8 @@ func (s *Server) videoOrError(w http.ResponseWriter, r *http.Request, id string)
 func (s *Server) handleVideosList(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
-	year, _ := strconv.Atoi(r.URL.Query().Get("year"))
 	res, err := s.videos.List(r.Context(), domain.VideoQuery{
 		Q:         r.URL.Query().Get("q"),
-		Genre:     r.URL.Query().Get("genre"),
-		Year:      year,
 		Kind:      r.URL.Query().Get("kind"),
 		Tags:      r.URL.Query()["tag"],
 		ShowID:    r.URL.Query().Get("showId"),

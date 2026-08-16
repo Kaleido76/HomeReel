@@ -16,9 +16,7 @@ type Series struct {
 	Kind           string  `json:"kind"`                // 恒为 "tv"（历史列，无电影/tv 结构类型；区分走标签）
 	SeasonNumber   int     `json:"season_number"`
 	Overview       string  `json:"overview,omitempty"`
-	Year           int     `json:"year,omitempty"`
 	Rating         float64 `json:"rating,omitempty"`
-	Genre          string  `json:"genre,omitempty"`
 	PosterPath     string  `json:"poster_path,omitempty"`
 	BackdropPath   string  `json:"backdrop_path,omitempty"`
 	MetadataSource string  `json:"metadata_source"`
@@ -66,11 +64,9 @@ type SeriesLink struct {
 	SortIndex   int    `json:"sort_index"`
 }
 
-// SeriesQuery filters the series list. Q matches the show name or overview.
+// SeriesQuery filters the series list. Q matches the series display name only.
 type SeriesQuery struct {
-	Q     string   // matches show name or overview
-	Genre string   // matches genre (substring)
-	Year  int      // matches year exactly
+	Q     string   // matches the series display name
 	Tags  []string // every tag present on at least one member video
 }
 

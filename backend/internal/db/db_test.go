@@ -31,13 +31,25 @@ func TestMigrateFresh(t *testing.T) {
 	}
 
 	cols := []string{"kind", "show_id", "season_number", "episode_number",
-		"episode_title", "year", "rating", "genre", "studio", "cast_text",
+		"episode_title", "rating", "studio", "cast_text",
 		"metadata_source", "search_text", "backdrop_path", "audio_codec", "fps", "file_size",
 		"source_id", "faststart", "title_source"}
 	for _, col := range cols {
 		if !columnExists(t, database, "videos", col) {
 			t.Errorf("videos.%s missing after migration", col)
 		}
+	}
+	if columnExists(t, database, "videos", "year") {
+		t.Errorf("videos.year should have been dropped (年份字段移除)")
+	}
+	if columnExists(t, database, "shows", "year") {
+		t.Errorf("shows.year should have been dropped (年份字段移除)")
+	}
+	if columnExists(t, database, "videos", "genre") {
+		t.Errorf("videos.genre should have been dropped (类型字段移除)")
+	}
+	if columnExists(t, database, "shows", "genre") {
+		t.Errorf("shows.genre should have been dropped (类型字段移除)")
 	}
 	if columnExists(t, database, "videos", "resource_id") {
 		t.Errorf("videos.resource_id should have been dropped (management model change)")

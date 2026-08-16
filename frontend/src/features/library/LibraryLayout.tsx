@@ -6,14 +6,11 @@ import { LibraryList } from './LibraryList'
 import { SeriesDetailPage } from '../series/SeriesDetailPage'
 import { VideoDetailPane } from '../player/VideoDetailPane'
 import { PlayerPane } from '../player/PlayerPane'
-import { sortOptions, viewTabs, type GridState, type ListSelection } from './types'
+import { viewTabs, type GridState, type ListSelection } from './types'
 import { useMediaQuery } from '../../lib/useMediaQuery'
 
-const isSort = (v: string): v is GridState['sort'] =>
-  (sortOptions as readonly unknown[] as readonly string[]).includes(v)
-
 // parseGridSearch reads the grid state from the /library URL so a refresh or
-// deep link restores the same filter/sort the user had open.
+// deep link restores the same filter/search the user had open.
 function parseGridSearch(search: Record<string, unknown>): GridState {
   const view = search.view === 'series' ? 'series' : search.view === 'standalone' ? 'standalone' : 'all'
   const rawPage = typeof search.page === 'string' ? Number(search.page) : Number.NaN
@@ -21,11 +18,8 @@ function parseGridSearch(search: Record<string, unknown>): GridState {
   return {
     view,
     q: typeof search.q === 'string' ? search.q : '',
-    sort: typeof search.sort === 'string' && isSort(search.sort) ? search.sort : 'date',
     page: Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1,
     tags,
-    genre: typeof search.genre === 'string' ? search.genre : '',
-    year: typeof search.year === 'string' ? search.year : '',
   }
 }
 
@@ -95,6 +89,7 @@ export function LibraryLayout() {
   const onGridRoute = stack.length === 1
 
   const [grid, setGrid] = useState<GridState>(() => parseGridSearch(location.search ?? {}))
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
 
   useEffect(() => {
     if (onGridRoute) {
@@ -135,7 +130,8 @@ export function LibraryLayout() {
 
   const filterBar = (
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-neutral-200 bg-white px-4 py-2">
-      <div className="flex w-fit gap-0.5 rounded border border-neutral-200 bg-white p-0.5">
+      {/* Wide screens: three tabs side by side. */}
+      <div className="hidden w-fit gap-0.5 rounded border border-neutral-200 bg-white p-0.5 lg:flex">
         {viewTabs.map((t) => (
           <button
             key={t.value}
@@ -150,22 +146,48 @@ export function LibraryLayout() {
           </button>
         ))}
       </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          update({ q: grid.q.trim() })
-        }}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded border border-neutral-200 bg-white px-2.5 py-1.5"
-      >
+      {/* Narrow screens: the three choices collapse into one dropdown so the
+          search box and filter button keep their room. */}
+      <div className="relative lg:hidden">
+        <button
+          onClick={() => setViewMenuOpen((o) => !o)}
+          aria-expanded={viewMenuOpen}
+          className="flex items-center rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-700"
+        >
+          {viewTabs.find((t) => t.value === grid.view)?.label}
+        </button>
+        {viewMenuOpen && (
+          <div className="absolute left-0 top-full z-50 mt-1 w-32 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg">
+            {viewTabs.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => {
+                  update({ view: t.value })
+                  setViewMenuOpen(false)
+                }}
+                className={`block w-full px-4 py-3 text-left text-base ${
+                  grid.view === t.value
+                    ? 'bg-blue-50 font-medium text-blue-700'
+                    : 'text-neutral-600 hover:bg-neutral-50'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Search box: instant filtering — every keystroke filters directly,
+          no submit/confirm step. */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 rounded border border-neutral-200 bg-white px-2.5 py-1.5">
         <Search className="size-4 shrink-0 text-neutral-400" />
         <input
           value={grid.q}
-          onChange={(e) => setGrid({ ...grid, q: e.target.value })}
-          onBlur={() => update({ q: grid.q.trim() })}
-          placeholder="搜索标题或文件名…"
+          onChange={(e) => update({ q: e.target.value })}
+          placeholder="搜索系列或单集标题…"
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
         />
-      </form>
+      </div>
       <AdvancedFilter filters={grid} onApply={(f) => update({ ...f, page: 1 })} />
     </div>
   )

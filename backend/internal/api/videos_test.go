@@ -90,25 +90,11 @@ func TestVideosListAdvancedFilter(t *testing.T) {
 	seedVideo(t, database, sourceID, "v2", "b.mp4", "b.mp4", "Beta", 200)
 	ctx := context.Background()
 	repo := store.NewVideoRepo(database)
-	genre, year := "科幻", 2001
-	if err := repo.UpdateMetadata(ctx, "v1", domain.VideoPatch{
-		Genre: &genre, Year: &year,
-	}); err != nil {
-		t.Fatalf("metadata: %v", err)
-	}
 	if err := repo.SetTags(ctx, "v1", []string{"科幻"}); err != nil {
 		t.Fatalf("tags: %v", err)
 	}
 
-	resp, body := doJSON(t, "GET", ts.URL+"/api/videos?genre="+url.QueryEscape("科幻"), "", cookie)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) {
-		t.Fatalf("genre filter = %d %s", resp.StatusCode, body)
-	}
-	resp, body = doJSON(t, "GET", ts.URL+"/api/videos?year=2001", "", cookie)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"Alpha"`) || strings.Contains(body, `"Beta"`) {
-		t.Fatalf("year filter = %d %s", resp.StatusCode, body)
-	}
-	resp, body = doJSON(t, "GET", ts.URL+"/api/videos?tag="+url.QueryEscape("科幻")+"&tag="+url.QueryEscape("太空"), "", cookie)
+	resp, body := doJSON(t, "GET", ts.URL+"/api/videos?tag="+url.QueryEscape("科幻")+"&tag="+url.QueryEscape("太空"), "", cookie)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"total":0`) {
 		t.Fatalf("conflicting multi tag should match none = %d %s", resp.StatusCode, body)
 	}

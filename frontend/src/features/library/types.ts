@@ -1,22 +1,11 @@
-export const sortOptions = [
-  { value: 'date', label: '最近添加' },
-  { value: 'title', label: '标题' },
-  { value: 'duration', label: '时长' },
-  { value: 'name', label: '文件名' },
-  { value: 'rating', label: '评分' },
-] as const
-
 export type GridState = {
   view: 'all' | 'standalone' | 'series'
   q: string
-  sort: (typeof sortOptions)[number]['value']
   page: number
   tags: string[]
-  genre: string
-  year: string
 }
 
-export const emptyFilters = { tags: [], genre: '', year: '' }
+export const emptyFilters = { tags: [] }
 
 export const viewTabs: { value: GridState['view']; label: string }[] = [
   { value: 'all', label: '全部' },

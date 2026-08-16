@@ -23,15 +23,13 @@ func NewSeriesRepo(database *sql.DB) domain.SeriesRepo {
 }
 
 const seriesCols = `se.id, se.show_id, s.name AS title, se.number AS season_number, se.kind, se.root_path,
-	s.overview, s.year, s.rating, s.genre, s.poster_path, s.backdrop_path, s.metadata_source,
+	s.overview, s.rating, s.poster_path, s.backdrop_path, s.metadata_source,
 	se.sort_manual, s.created_at, s.updated_at`
 
 func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 	var (
 		overview      sql.NullString
-		year          sql.NullInt64
 		rating        sql.NullFloat64
-		genre         sql.NullString
 		poster        sql.NullString
 		backdrop      sql.NullString
 		rootPath      sql.NullString
@@ -43,7 +41,7 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 		totalDuration sql.NullFloat64
 	)
 	if err := row.Scan(&series.ID, &series.ShowID, &series.Title, &series.SeasonNumber, &series.Kind,
-		&rootPath, &overview, &year, &rating, &genre, &poster, &backdrop, &series.MetadataSource,
+		&rootPath, &overview, &rating, &poster, &backdrop, &series.MetadataSource,
 		&sortManual, &createdAt, &updatedAt, &memberCount, &linkCount, &totalDuration); err != nil {
 		return domain.Series{}, err
 	}
@@ -53,14 +51,8 @@ func scanSeries(row scanner, series domain.Series) (domain.Series, error) {
 	if overview.Valid {
 		series.Overview = overview.String
 	}
-	if year.Valid {
-		series.Year = int(year.Int64)
-	}
 	if rating.Valid {
 		series.Rating = rating.Float64
-	}
-	if genre.Valid {
-		series.Genre = genre.String
 	}
 	if poster.Valid {
 		series.PosterPath = poster.String
@@ -93,17 +85,8 @@ func (r *seriesRepo) List(ctx context.Context, q domain.SeriesQuery) ([]domain.S
 	var args []any
 	if q.Q != "" {
 		like := "%" + q.Q + "%"
-		where = append(where, `(s.name LIKE ? OR s.overview LIKE ?)`)
-		args = append(args, like, like)
-	}
-	if q.Genre != "" {
-		like := "%" + q.Genre + "%"
-		where = append(where, `s.genre LIKE ?`)
+		where = append(where, `s.name LIKE ?`)
 		args = append(args, like)
-	}
-	if q.Year > 0 {
-		where = append(where, `s.year = ?`)
-		args = append(args, q.Year)
 	}
 	for _, tag := range q.Tags {
 		where = append(where, `EXISTS (SELECT 1 FROM videos v JOIN video_tags vt ON vt.video_id = v.id
@@ -199,9 +182,9 @@ func (r *seriesRepo) CreateAtRoot(ctx context.Context, name, rootPath string) (d
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO shows (id, name, overview, year, rating, genre, poster_path,
+		INSERT INTO shows (id, name, overview, rating, poster_path,
 			backdrop_path, metadata_source, created_at, updated_at)
-		VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'manual', ?, ?)`,
+		VALUES (?, ?, NULL, NULL, NULL, NULL, 'manual', ?, ?)`,
 		showID, name, now, now); err != nil {
 		return domain.Series{}, err
 	}
