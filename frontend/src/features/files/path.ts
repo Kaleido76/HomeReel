@@ -75,16 +75,6 @@ export function underDrive(path: string, driveRoot: string): boolean {
   return path.startsWith(base + '\\')
 }
 
-export function formatBytes(n: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024
-    i++
-  }
-  return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`
-}
-
 export function formatTime(sec: number): string {
   if (!sec) return ''
   return new Date(sec * 1000).toLocaleString()

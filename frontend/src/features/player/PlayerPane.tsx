@@ -41,7 +41,11 @@ export function PlayerPane({
   const detail = useQuery({ queryKey: ['video', videoId], queryFn: () => fetchVideo(videoId) })
   const seriesDetail = useQuery({
     queryKey: ['series', detail.data?.series_id ?? 'none'],
-    queryFn: () => fetchSeriesDetail(detail.data!.series_id!),
+    queryFn: () => {
+      const seriesId = detail.data?.series_id
+      if (!seriesId) throw new Error('无系列上下文')
+      return fetchSeriesDetail(seriesId)
+    },
     enabled: !!detail.data?.series_id,
   })
   const [autoplay, setAutoplay] = useState(true)

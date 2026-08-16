@@ -181,7 +181,7 @@ func (s *Service) ListSubtitles(ctx context.Context, v domain.Video) []SubtitleT
 			Index:    st.Index,
 			Codec:    st.Codec,
 			Playable: media.TextSubtitleCodecs[st.Codec],
-			Label:    subtitleLabel(st.Language, st.Title, n),
+			Label:    trackLabel(st.Language, st.Title, n, "字幕 %d"),
 		})
 	}
 	return out
@@ -217,7 +217,7 @@ func (s *Service) ListAudioTracks(ctx context.Context, v domain.Video) []AudioTr
 			Codec:    t.Codec,
 			Language: t.Language,
 			Channels: t.Channels,
-			Label:    audioLabel(t.Language, t.Title, i+1),
+			Label:    trackLabel(t.Language, t.Title, i+1, "音轨 %d"),
 		})
 	}
 	return out
@@ -233,26 +233,16 @@ var subtitleLangLabels = map[string]string{
 	"spa": "西语", "es": "西语",
 }
 
-func subtitleLabel(lang, title string, fallback int) string {
+// trackLabel builds a track's display label: the track title when set (e.g.
+// "国语"/"粤语"), else a language label, else the fallback text (e.g. "音轨 N").
+func trackLabel(lang, title string, fallback int, fallbackFmt string) string {
 	if title != "" {
 		return title
 	}
 	if l, ok := subtitleLangLabels[strings.ToLower(lang)]; ok {
 		return l
 	}
-	return fmt.Sprintf("字幕 %d", fallback)
-}
-
-// audioLabel builds an audio track's display label: the track title when set
-// (e.g. "国语"/"粤语"), else a language label, else "音轨 N".
-func audioLabel(lang, title string, fallback int) string {
-	if title != "" {
-		return title
-	}
-	if l, ok := subtitleLangLabels[strings.ToLower(lang)]; ok {
-		return l
-	}
-	return fmt.Sprintf("音轨 %d", fallback)
+	return fmt.Sprintf(fallbackFmt, fallback)
 }
 
 // Subtitle serves a subtitle for the player. trackIndex selects an embedded

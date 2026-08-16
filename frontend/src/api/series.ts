@@ -114,10 +114,6 @@ export function updateSeriesName(showId: string, name: string): Promise<{ show: 
   })
 }
 
-export function fetchSeriesLinks(id: string): Promise<{ links: SeriesLink[] }> {
-  return api<{ links: SeriesLink[] }>(`/api/series/${id}/links`)
-}
-
 // setSeriesLinks replaces the series' link group with the full desired set
 // (方案 B)：勾选集即期望的关联集合，提交后该系列与勾选系列同组互相可见。
 export function setSeriesLinks(id: string, seriesIds: string[]): Promise<{ ok: boolean }> {

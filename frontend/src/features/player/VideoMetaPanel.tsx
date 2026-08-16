@@ -41,6 +41,7 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
     save.mutate({ tags: next })
   }
 
+  const title = video.episode_title || video.title
   const commitTitle = () => {
     const t = titleInput.trim()
     setEditingTitle(false)
@@ -48,7 +49,6 @@ export function VideoMetaPanel({ video, initialTags }: { video: Video; initialTa
     save.mutate({ title: t })
   }
 
-  const title = video.episode_title || video.title
   const dirPath = video.path ? parentPath(video.path) : null
   // 元信息行文本部分：genre / 发行：studio / 主演：cast 显式拼接，不依赖数组下标
   // （当 year/rating 缺失时 filter 会前移下标，slice(2) 截错段）；year/rating 带

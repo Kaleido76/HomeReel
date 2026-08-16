@@ -5,6 +5,8 @@ import { ArrowDownAZ, ArrowUpNarrowWide, GripVertical, Info, Pencil, Play, X } f
 import { reorderSeriesMembers, resortSeries, type SeriesMember } from '../../api/series'
 import { formatDuration } from '../../lib/format'
 import { playMode } from '../../lib/playability'
+import { RESUME_TAIL } from '../../lib/playback'
+import { ProgressBar } from '../../components/ProgressBar'
 import { Tooltip } from '../../components/Tooltip'
 import { SeriesRenameModal } from './SeriesRenameModal'
 
@@ -46,12 +48,15 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
   const [sortMode, setSortMode] = useState(false)
   const [renaming, setRenaming] = useState(false)
 
+  // All three order mutations refresh the same detail/list caches after they land.
+  const onOrderChanged = () => {
+    void queryClient.invalidateQueries({ queryKey: ['series', seriesId] })
+    void queryClient.invalidateQueries({ queryKey: ['series'] })
+  }
+
   const reorder = useMutation({
     mutationFn: (ids: string[]) => reorderSeriesMembers(seriesId, ids),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['series', seriesId] })
-      void queryClient.invalidateQueries({ queryKey: ['series'] })
-    },
+    onSuccess: onOrderChanged,
   })
 
   // sortByName re-orders members by their current display name (显示名) via the
@@ -64,18 +69,14 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
         .map((m) => m.video_id)
       return reorderSeriesMembers(seriesId, ids)
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['series', seriesId] })
-      void queryClient.invalidateQueries({ queryKey: ['series'] })
-    },
+    onSuccess: onOrderChanged,
   })
 
   const resort = useMutation({
     mutationFn: () => resortSeries(seriesId),
     onSuccess: () => {
       setSortMode(false)
-      void queryClient.invalidateQueries({ queryKey: ['series', seriesId] })
-      void queryClient.invalidateQueries({ queryKey: ['series'] })
+      onOrderChanged()
     },
   })
 
@@ -256,19 +257,16 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
               </div>
               <div className="min-w-0 flex-1 px-4 py-3.5">
                 <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
-                {member.duration > 0 && member.progress > 0 && member.progress < member.duration - 20 && (
-                  <div className="mt-2 h-1 w-full max-w-xs overflow-hidden rounded-sm bg-neutral-100">
-                    <div
-                      className="h-full rounded-sm bg-blue-600"
-                      style={{ width: `${Math.min(100, (member.progress / member.duration) * 100)}%` }}
-                    />
-                  </div>
+                {member.duration > 0 && member.progress > 0 && member.progress < member.duration - RESUME_TAIL && (
+                  <ProgressBar value={(member.progress / member.duration) * 100} className="mt-2 h-1 w-full max-w-xs" />
                 )}
               </div>
               <span className="flex shrink-0 items-center pr-4 text-xs text-neutral-400">
                 {member.duration > 0 ? formatDuration(member.duration) : ''}
               </span>
               <div className="flex shrink-0 items-center gap-2 pr-4">
+                {/* member carries both the probe metadata and the backend
+                    capability flags playMode reads, so it serves as both args. */}
                 {playMode(member, member) !== 'none' ? (
                   <Link
                     to="/series/$id/play/$videoId"
@@ -313,17 +311,12 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
             width: startRect.width,
           }}
           >
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-neutral-800">{dragMember.episode_title || dragMember.title}</p>
-              {dragMember.duration > 0 && dragMember.progress > 0 && dragMember.progress < dragMember.duration - 20 && (
-                <div className="mt-2 h-1 w-full max-w-xs overflow-hidden rounded-sm bg-neutral-100">
-                  <div
-                    className="h-full rounded-sm bg-blue-600"
-                    style={{ width: `${Math.min(100, (dragMember.progress / dragMember.duration) * 100)}%` }}
-                  />
-                </div>
-              )}
-            </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-neutral-800">{dragMember.episode_title || dragMember.title}</p>
+                {dragMember.duration > 0 && dragMember.progress > 0 && dragMember.progress < dragMember.duration - RESUME_TAIL && (
+                  <ProgressBar value={(dragMember.progress / dragMember.duration) * 100} className="mt-2 h-1 w-full max-w-xs" />
+                )}
+              </div>
             <span className="shrink-0 text-xs text-neutral-400">
               {dragMember.duration > 0 ? formatDuration(dragMember.duration) : ''}
             </span>

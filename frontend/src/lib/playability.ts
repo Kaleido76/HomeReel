@@ -79,7 +79,7 @@ const audioTokens: Record<string, string> = {
   flac: 'flac',
 }
 
-// PlayabilityReport is the decision behind canPlay, broken down per stream so
+// PlayabilityReport is the decision behind playMode, broken down per stream so
 // the detail page can explain *which* part blocks playback (container / video
 // codec / audio codec) instead of a bare "not playable".
 //
@@ -101,7 +101,7 @@ export interface PlayabilityReport {
   playable: boolean
 }
 
-// —— 缓存与复用（优化，判定规则与 canPlay 完全一致）——
+// —— 缓存与复用（优化，判定规则与 playMode 完全一致）——
 
 const MAX_CACHE = 512
 const cache = new Map<string, PlayabilityReport>()
@@ -167,7 +167,7 @@ function computeReport(media: PlayabilityInput): PlayabilityReport {
   return report
 }
 
-// reportFor is the cached entry point used by canPlay and prefetchPlayability.
+// reportFor is the cached entry point used by playMode and prefetchPlayability.
 export function reportFor(media: PlayabilityInput): PlayabilityReport {
   const key = cacheKey(media)
   const hit = cache.get(key)
@@ -175,15 +175,6 @@ export function reportFor(media: PlayabilityInput): PlayabilityReport {
   const report = computeReport(media)
   if (report.decoderSupported !== null) remember(key, report)
   return report
-}
-
-// canPlay is the single runtime playability decision. backendPlayable is the
-// backend's conservative fallback, used only when canPlayType itself throws.
-export function canPlay(media: PlayabilityInput, backendPlayable: boolean): boolean {
-  const report = reportFor(media)
-  if (report.playable) return true
-  if (report.decoderSupported === null) return backendPlayable
-  return false
 }
 
 // PlayMode is the streaming tier a video will actually play through (ADR-006

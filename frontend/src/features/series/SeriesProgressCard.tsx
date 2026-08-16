@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { History } from 'lucide-react'
 import { clearSeriesHistory, type SeriesMember } from '../../api/series'
 import { HistorySection } from '../../components/HistorySection'
+import { ProgressBar } from '../../components/ProgressBar'
 
 // 已观看判定阈值：观看超过 90% 即视为看完——很多影片/剧集片尾有数分钟报幕，
 // 要求接近 100% 会永远判为「未看完」。
@@ -48,11 +49,7 @@ export function SeriesProgressCard({ seriesId, members }: { seriesId: string; me
             已观看 {watched} / {members.length} 集
             {total > 0 ? ` · 整体进度 ${Math.round(pct)}%` : ''}
           </p>
-          {total > 0 && (
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-sm bg-neutral-100">
-              <div className="h-full rounded-sm bg-blue-600" style={{ width: `${pct}%` }} />
-            </div>
-          )}
+          {total > 0 && <ProgressBar value={pct} className="mt-2 h-1.5 w-full" />}
         </>
       )}
     </HistorySection>

@@ -28,3 +28,9 @@ export function formatEta(seconds: number): string {
   if (h > 0) return m > 0 ? `约 ${h} 小时 ${m} 分` : `约 ${h} 小时`
   return `约 ${m} 分钟`
 }
+
+// formatVolume renders a remembered playback volume (0..1) as a percentage,
+// appending a muted marker when the player was muted.
+export function formatVolume(volume: number, muted?: boolean): string {
+  return `${Math.round(volume * 100)}%${muted ? '（静音）' : ''}`
+}

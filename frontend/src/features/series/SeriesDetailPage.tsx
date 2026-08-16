@@ -6,6 +6,7 @@ import { fetchSeriesDetail, fetchSeriesPrefs, clearSeriesPrefs, removeSeriesLink
 import { SeriesPickerModal } from '../../components/SeriesPickerModal'
 import { Tooltip } from '../../components/Tooltip'
 import { prefetchPlayability } from '../../lib/playability'
+import { formatVolume } from '../../lib/format'
 import { openFileLocation } from '../../tabs/manager'
 import { PlaybackHistoryCard } from '../player/PlaybackHistoryCard'
 import { PlaybackPrefsCard } from '../player/PlaybackPrefsCard'
@@ -98,7 +99,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const sp = seriesPrefs.data?.prefs
   const spAudio = typeof sp?.audio_track_name === 'string' ? sp.audio_track_name : undefined
   const spSubtitle = typeof sp?.subtitle_name === 'string' ? (sp.subtitle_name === '' ? '关闭' : sp.subtitle_name) : undefined
-  const spVolume = typeof sp?.volume === 'number' ? `${Math.round(sp.volume * 100)}%${sp.muted ? '（静音）' : ''}` : undefined
+  const spVolume = typeof sp?.volume === 'number' ? formatVolume(sp.volume, sp.muted) : undefined
 
   const commitName = () => {
     const t = nameInput.trim()

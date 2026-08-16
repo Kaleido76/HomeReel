@@ -132,10 +132,6 @@ export function deleteVideo(id: string): Promise<{ deleted: boolean }> {
   return api<{ deleted: boolean }>(`/api/videos/${id}`, { method: 'DELETE' })
 }
 
-export function refreshVideo(id: string): Promise<{ queued: boolean }> {
-  return api<{ queued: boolean }>(`/api/videos/${id}/refresh`, { method: 'POST' })
-}
-
 export function syncVideo(id: string): Promise<{ synced: boolean }> {
   return api<{ synced: boolean }>(`/api/videos/${id}/sync`, { method: 'POST' })
 }

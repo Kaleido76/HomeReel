@@ -12,14 +12,29 @@ import {
   fetchVideoPrefs,
   fetchVideoSubtitles,
   syncVideo,
+  type PlaybackPrefs,
 } from '../../api/videos'
 import { playMode } from '../../lib/playability'
+import { formatVolume } from '../../lib/format'
 import { openFormatVideo } from '../../tabs/manager'
 import { PlaybackHistoryCard } from '../player/PlaybackHistoryCard'
 import { PlaybackPrefsCard } from '../player/PlaybackPrefsCard'
 import { PlaybackProgressSection } from '../player/PlaybackProgressSection'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
 import { VideoTechCard } from '../player/VideoTechCard'
+
+// describePrefSubtitle renders a remembered subtitle choice for the detail page:
+// a series-scoped record stores the track name, a video-scoped record a concrete
+// id ("sidecar" / "e<N>" / empty = off).
+function describePrefSubtitle(prefs: PlaybackPrefs, seriesScoped: boolean): string | undefined {
+  if (seriesScoped) {
+    if (typeof prefs.subtitle_name !== 'string') return undefined
+    return prefs.subtitle_name === '' ? '关闭' : prefs.subtitle_name
+  }
+  if (typeof prefs.subtitle_id !== 'string') return undefined
+  if (prefs.subtitle_id === '') return '关闭'
+  return prefs.subtitle_id === 'sidecar' ? '侧边文件' : `内封轨 ${prefs.subtitle_id.replace(/^e/, '')}`
+}
 
 // VideoDetailPane is the single-video detail shown in the middle column. It is
 // deliberately compact: a play action, the editable metadata panel and a
@@ -120,20 +135,8 @@ export function VideoDetailPane({
     : typeof p?.audio_track === 'number'
       ? audioTracks.data?.audio[p.audio_track]?.label
       : undefined
-  const prefSubtitle = prefsFromSeries
-    ? typeof p?.subtitle_name === 'string'
-      ? p.subtitle_name === ''
-        ? '关闭'
-        : p.subtitle_name
-      : undefined
-    : typeof p?.subtitle_id === 'string'
-      ? p.subtitle_id === ''
-        ? '关闭'
-        : p.subtitle_id === 'sidecar'
-          ? '侧边文件'
-          : `内封轨 ${p.subtitle_id.replace(/^e/, '')}`
-      : undefined
-  const prefVolume = typeof p?.volume === 'number' ? `${Math.round(p.volume * 100)}%${p.muted ? '（静音）' : ''}` : undefined
+  const prefSubtitle = p ? describePrefSubtitle(p, prefsFromSeries) : undefined
+  const prefVolume = typeof p?.volume === 'number' ? formatVolume(p.volume, p.muted) : undefined
 
   async function doSync() {
     setError('')

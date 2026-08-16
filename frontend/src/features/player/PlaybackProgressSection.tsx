@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { History } from 'lucide-react'
 import { clearHistory, fetchHistory } from '../../api/videos'
 import { HistorySection } from '../../components/HistorySection'
+import { ProgressBar } from '../../components/ProgressBar'
 import { formatDuration } from '../../lib/format'
 
 // PlaybackProgressSection is the 观看进度 小节 of the single-episode detail page
@@ -38,11 +39,7 @@ export function PlaybackProgressSection({ videoId, duration }: { videoId: string
             {duration > 0 ? ` / ${formatDuration(duration)}` : ''}
             {h.updated_at ? ` · ${h.updated_at.slice(0, 10)}` : ''}
           </p>
-          {duration > 0 && (
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-sm bg-neutral-100">
-              <div className="h-full rounded-sm bg-blue-600" style={{ width: `${historyPct}%` }} />
-            </div>
-          )}
+          {duration > 0 && <ProgressBar value={historyPct} className="mt-2 h-1.5 w-full" />}
         </>
       ) : (
         <p className="mt-2 text-sm text-neutral-500">上次已播放完毕，将从片头开始。</p>

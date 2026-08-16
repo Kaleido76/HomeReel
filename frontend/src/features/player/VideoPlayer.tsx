@@ -36,14 +36,8 @@ import {
   type PlaybackPrefsPatch,
 } from '../../api/videos'
 import { getActiveTab, subscribeTabs } from '../../tabs/manager'
+import { NEAR_END, RESUME_MIN, RESUME_TAIL, SAVE_INTERVAL } from '../../lib/playback'
 import type { PlayMode } from '../../lib/playability'
-
-// Resume only kicks in beyond these boundaries so an almost-finished video
-// starts fresh and a stray 1s glitch never seeks anywhere.
-const RESUME_MIN = 10
-const RESUME_TAIL = 20
-// Progress persistence is throttled (ADR plan: ~10s cadence).
-const SAVE_INTERVAL = 10
 
 // VideoPlayer plays through the tier the caller selected (ADR-006, 2026-08):
 //   direct  → the original file over HTTP Range (/api/stream/{id})
@@ -225,7 +219,7 @@ export function VideoPlayer({
   function onTimeUpdate(detail: { currentTime: number }) {
     posRef.current = detail.currentTime
     const dur = video.duration || 0
-    if (dur > 0 && detail.currentTime >= dur - 1) {
+    if (dur > 0 && detail.currentTime >= dur - NEAR_END) {
       return
     }
     if (detail.currentTime - lastSaveRef.current >= SAVE_INTERVAL) {
