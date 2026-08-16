@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -67,9 +68,75 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 		out = append(out, *groups[id])
 	}
 
+	// 播放选择记忆（音轨/字幕/音量偏好缓存）：按视频列出，删除后播放器回到
+	// 默认轨/默认字幕/默认音量（可重建缓存，与续播 history 无关）。
+	prefsRows, err := s.prefs.ListAll(r.Context(), "local")
+	if err != nil {
+		slog.Warn("list playback prefs", "err", err)
+	}
+	prefs := make([]cachePrefsEntry, 0, len(prefsRows))
+	for _, p := range prefsRows {
+		v, ok := vByID[p.VideoID]
+		if !ok {
+			continue
+		}
+		entry := cachePrefsEntry{
+			VideoID:   p.VideoID,
+			Title:     v.Title,
+			ShowID:    v.ShowID,
+			ShowTitle: showTitles[v.ShowID],
+			AudioTrack: p.AudioTrack,
+			SubtitleID: p.SubtitleID,
+			Volume:     p.Volume,
+			Muted:      p.Muted,
+			UpdatedAt:  p.UpdatedAt,
+		}
+		prefs = append(prefs, entry)
+	}
+	sort.Slice(prefs, func(i, j int) bool {
+		if prefs[i].ShowTitle != prefs[j].ShowTitle {
+			return prefs[i].ShowTitle < prefs[j].ShowTitle
+		}
+		return prefs[i].Title < prefs[j].Title
+	})
+
+	// 系列级播放选择记忆（ADR-006 player prefs 修订）：按系列列出共享的记忆
+	// （音轨/字幕按名称），单条删除走 DELETE /api/series/{id}/prefs。
+	seriesPrefsRows, err := s.prefs.ListAllSeries(r.Context(), "local")
+	if err != nil {
+		slog.Warn("list series playback prefs", "err", err)
+	}
+	seriesByName := make(map[string]string, len(seriesPrefsRows))
+	if len(seriesPrefsRows) > 0 {
+		if all, err := s.series.List(r.Context(), domain.SeriesQuery{}); err == nil {
+			for _, se := range all {
+				seriesByName[se.ID] = se.Name
+			}
+		} else {
+			slog.Warn("list series for prefs", "err", err)
+		}
+	}
+	seriesPrefs := make([]cacheSeriesPrefsEntry, 0, len(seriesPrefsRows))
+	for _, p := range seriesPrefsRows {
+		seriesPrefs = append(seriesPrefs, cacheSeriesPrefsEntry{
+			SeriesID:       p.SeriesID,
+			Title:          seriesByName[p.SeriesID],
+			AudioTrackName: p.AudioTrackName,
+			SubtitleName:   p.SubtitleName,
+			Volume:         p.Volume,
+			Muted:          p.Muted,
+			UpdatedAt:      p.UpdatedAt,
+		})
+	}
+	sort.Slice(seriesPrefs, func(i, j int) bool {
+		return seriesPrefs[i].Title < seriesPrefs[j].Title
+	})
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"orphans":   s.streaming.CacheOverview(ids),
-		"subtitles": out,
+		"orphans":      s.streaming.CacheOverview(ids),
+		"subtitles":    out,
+		"prefs":        prefs,
+		"series_prefs": seriesPrefs,
 	})
 }
 
@@ -86,6 +153,32 @@ type cacheSubtitleGroup struct {
 	ShowTitle string              `json:"show_title,omitempty"`
 	Files     []cacheSubtitleFile `json:"files"`
 	Bytes     int64               `json:"bytes"`
+}
+
+// cachePrefsEntry is one video's playback selection cache as shown by the cache
+// manager. Pointer fields are omitted when unset, mirroring the prefs API.
+type cachePrefsEntry struct {
+	VideoID    string   `json:"video_id"`
+	Title      string   `json:"title"`
+	ShowID     string   `json:"show_id,omitempty"`
+	ShowTitle  string   `json:"show_title,omitempty"`
+	AudioTrack *int     `json:"audio_track,omitempty"`
+	SubtitleID *string  `json:"subtitle_id,omitempty"`
+	Volume     *float64 `json:"volume,omitempty"`
+	Muted      *bool    `json:"muted,omitempty"`
+	UpdatedAt  string   `json:"updated_at"`
+}
+
+// cacheSeriesPrefsEntry is one series' shared playback selection cache as shown
+// by the cache manager. Tracks are stored by name (ADR-006 player prefs 修订).
+type cacheSeriesPrefsEntry struct {
+	SeriesID       string   `json:"series_id"`
+	Title          string   `json:"title"`
+	AudioTrackName *string  `json:"audio_track_name,omitempty"`
+	SubtitleName   *string  `json:"subtitle_name,omitempty"`
+	Volume         *float64 `json:"volume,omitempty"`
+	Muted          *bool    `json:"muted,omitempty"`
+	UpdatedAt      string   `json:"updated_at"`
 }
 
 // handleCacheSubtitleClear deletes every extracted-subtitle cache file of one
@@ -119,6 +212,35 @@ func (s *Server) handleCacheOrphans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cleared": s.streaming.ClearOrphans(ids)})
+}
+
+// handleCachePrefsClear deletes every playback selection cache row (per-video
+// AND series-scoped, so the cache manager「清空全部」clears the shared memories too).
+func (s *Server) handleCachePrefsClear(w http.ResponseWriter, r *http.Request) {
+	n, err := s.prefs.DeleteAll(r.Context(), "local")
+	if err != nil {
+		slog.Error("clear playback prefs", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "清空失败")
+		return
+	}
+	ns, err := s.prefs.DeleteAllSeries(r.Context(), "local")
+	if err != nil {
+		slog.Error("clear series playback prefs", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "清空失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": n + ns})
+}
+
+// handleCachePrefsVideoClear deletes one video's playback selection cache row.
+func (s *Server) handleCachePrefsVideoClear(w http.ResponseWriter, r *http.Request) {
+	n, err := s.prefs.Delete(r.Context(), r.PathValue("videoId"), "local")
+	if err != nil {
+		slog.Error("clear playback prefs", "video_id", r.PathValue("videoId"), "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "清理失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": n})
 }
 
 // videoIDSet loads the ids of every indexed video, used to tell orphan caches

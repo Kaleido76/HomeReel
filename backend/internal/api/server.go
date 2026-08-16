@@ -33,6 +33,7 @@ type Server struct {
 	shows     domain.ShowRepo
 	series    domain.SeriesRepo
 	history   domain.HistoryRepo
+	prefs     domain.PlaybackPrefsRepo
 	streaming *streaming.Service
 	search    search.Provider
 	bus       *events.Bus
@@ -46,13 +47,13 @@ type Server struct {
 // refresh.
 func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Service, fsvc *fservice.Service,
 	videosRepo domain.VideoRepo, showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
-	historyRepo domain.HistoryRepo, streamingSvc *streaming.Service,
+	historyRepo domain.HistoryRepo, prefsRepo domain.PlaybackPrefsRepo, streamingSvc *streaming.Service,
 	searchProvider search.Provider, bus *events.Bus,
 	dataDir string, staticDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, fsvc: fsvc, jobs: jobsSvc, scanner: scannerSvc,
 		videos: videosRepo, shows: showsRepo, series: seriesRepo,
-		history: historyRepo, streaming: streamingSvc,
+		history: historyRepo, prefs: prefsRepo, streaming: streamingSvc,
 		search: searchProvider, bus: bus, dataDir: dataDir,
 	}
 	mux := http.NewServeMux()
@@ -88,6 +89,8 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("GET /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryGet)))
 	mux.Handle("PUT /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryPut)))
 	mux.Handle("DELETE /api/videos/{id}/history", s.requireAuth(http.HandlerFunc(s.handleHistoryDelete)))
+	mux.Handle("GET /api/videos/{id}/prefs", s.requireAuth(http.HandlerFunc(s.handlePrefsGet)))
+	mux.Handle("PUT /api/videos/{id}/prefs", s.requireAuth(http.HandlerFunc(s.handlePrefsPut)))
 	mux.Handle("GET /api/shows", s.requireAuth(http.HandlerFunc(s.handleShowsList)))
 	mux.Handle("GET /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowDetail)))
 	mux.Handle("PATCH /api/shows/{id}", s.requireAuth(http.HandlerFunc(s.handleShowPatch)))
@@ -104,6 +107,8 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("PUT /api/series/{id}/links", s.requireAuth(http.HandlerFunc(s.handleSeriesSetLinks)))
 	mux.Handle("DELETE /api/series/{id}/links/{linkedId}", s.requireAuth(http.HandlerFunc(s.handleSeriesRemoveLink)))
 	mux.Handle("GET /api/series/{id}/poster", s.requireAuth(http.HandlerFunc(s.handleSeriesPoster)))
+	mux.Handle("GET /api/series/{id}/prefs", s.requireAuth(http.HandlerFunc(s.handleSeriesPrefsGet)))
+	mux.Handle("DELETE /api/series/{id}/prefs", s.requireAuth(http.HandlerFunc(s.handleSeriesPrefsDelete)))
 	mux.Handle("GET /api/tags", s.requireAuth(http.HandlerFunc(s.handleTags)))
 	mux.Handle("GET /api/home", s.requireAuth(http.HandlerFunc(s.handleHome)))
 	mux.Handle("GET /api/search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
@@ -120,6 +125,8 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("DELETE /api/cache/orphans", s.requireAuth(http.HandlerFunc(s.handleCacheOrphans)))
 	mux.Handle("DELETE /api/cache/subtitles/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCacheSubtitleClear)))
 	mux.Handle("DELETE /api/cache/subtitles/{videoId}/{track}", s.requireAuth(http.HandlerFunc(s.handleCacheSubtitleTrackClear)))
+	mux.Handle("DELETE /api/cache/prefs", s.requireAuth(http.HandlerFunc(s.handleCachePrefsClear)))
+	mux.Handle("DELETE /api/cache/prefs/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCachePrefsVideoClear)))
 	if staticDir != "" {
 		mux.Handle("GET /", staticHandler(staticDir))
 	}

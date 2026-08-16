@@ -134,3 +134,28 @@ export function removeSeriesLink(id: string, linkedId: string): Promise<{ ok: bo
 export function seriesPosterUrl(id: string): string {
   return `/api/series/${id}/poster`
 }
+
+// SeriesPlaybackPrefs is a series' shared playback selection cache (ADR-006
+// player prefs 修订): every episode auto-applies the same audio track, subtitle
+// and volume. Tracks are stored by NAME (e.g. "简体中文") and resolved against
+// each episode's own track list at play time, so a choice made in one episode
+// follows the others.
+export interface SeriesPlaybackPrefs {
+  series_id: string
+  audio_track_name?: string
+  subtitle_name?: string
+  volume?: number
+  muted?: boolean
+  updated_at: string
+}
+
+export function fetchSeriesPrefs(id: string): Promise<{ prefs: SeriesPlaybackPrefs | null }> {
+  return api<{ prefs: SeriesPlaybackPrefs | null }>(`/api/series/${id}/prefs`)
+}
+
+// clearSeriesPrefs deletes a series' shared playback selection cache (detail
+// pages「清除缓存」/ cache manager). After clearing, episodes fall back to their
+// own per-video records.
+export function clearSeriesPrefs(id: string): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>(`/api/series/${id}/prefs`, { method: 'DELETE' })
+}

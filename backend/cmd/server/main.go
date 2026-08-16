@@ -66,6 +66,7 @@ func run() error {
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
+	prefsRepo := store.NewPlaybackPrefsRepo(database)
 	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir, cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
 	scannerSvc := scanner.New(
 		videosRepo,
@@ -150,7 +151,7 @@ func run() error {
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler: api.New(authSvc, jobsSvc, scannerSvc, fsvc,
-			videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
+			videosRepo, showsRepo, seriesRepo, historyRepo, prefsRepo, streamingSvc,
 			search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
 			config.ResolveStaticDir(cfg.Server.StaticDir)),
 		ReadHeaderTimeout: 10 * time.Second,

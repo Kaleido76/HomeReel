@@ -71,15 +71,17 @@
     字段——系列与 show 1:1，改名即系列改名并重建成员搜索索引；ADR-015 修订：显示名默认=文件夹名，
     创建后与文件夹脱钩，扫描/标记/同步不覆盖）；根目录路径（`root_path`，等宽字）可点击跳
      「文件」页签并定位系列根目录（`manager.openFileLocation(root_path)`）。
-     关联系列卡（2026-09）：已关联列表每项为「名称 + 移除 ×」，新增经「**管理关联**」按钮打开
+     关联系列卡（2026-09）：已关联列表为**垂直列表式**——每项一行「名称（截断，点击跳转）+ 移除 ×」，响应式
+     网格多列（`grid-cols-1 sm:grid-cols-2 xl:grid-cols-3`：最窄单列、宽屏系列列内最多三列，窄屏单列堆叠更
+     友好）；新增经「**管理关联**」按钮打开
      `SeriesPickerModal`（**多选**，排除自身，**已关联系列默认勾选**）——确定时 `PUT /api/series/{id}/links`
      提交**全量勾选集**（方案 B 分组模型）：该系列与勾选系列同组互相可见，取消勾选即不再关联；移除 ×
      走 `DELETE /api/series/{id}/links/{linkedId}`（双向生效）。
-  - **系列观看进度（2026-09，`SeriesProgressCard`）**：元数据卡下方的进度卡聚合全部成员续播位置——
-    已观看 X / N 集（观看超 90% 即算看完，片尾报幕不误判）+ 整体进度条（已看时长/总时长）；「清除全部进度」
-    按钮调 `DELETE /api/series/{id}/history` 一次清空该系列所有成员历史，成功后失效 `['series', id]` 与
-    `['home']`。`VideoPlayer` 退出保存进度时若视频属某系列（`show_id` 非空）会额外失效 `['series']`，
-    使进度卡/成员行即时刷新。
+  - **系列观看进度（2026-09，`SeriesProgressCard`）**：合并卡「播放历史」内的「观看进度」小节聚合全部成员续播
+    位置——已观看 X / N 集（观看超 90% 即算看完，片尾报幕不误判）+ 整体进度条（已看时长/总时长）；图标清除
+    按钮（文字在 ToolTip）调 `DELETE /api/series/{id}/history` 一次清空该系列所有成员历史，成功后失效
+    `['series', id]` 与 `['home']`。`VideoPlayer` 退出保存进度时若视频属某系列（`show_id` 非空）会额外失效
+    `['series']`，使进度卡/成员行即时刷新。
   - **手动归组 UI 已移除**（`VideoMetaPanel` 不再有系列/集号下拉）：归属由路径决定，PATCH 不再接受
     show/season/episode 字段。
 - **v1 不含**上传/下载/新建文件夹；仅列表视图（无网格视图）。路径状态存 URL（`?path=`），刷新/深链可恢复。
@@ -147,11 +149,13 @@
 - **单集详情页头 + 播放历史**（`VideoDetailPane`，2026-09）：详情页顶部为**标题式页头**「详情」
   （`text-xl font-semibold`，无图标，右侧为播放按钮，无法在线播放时改由下方格式工厂引导）；主体卡片顺序为
   **元信息（含单集名）→ 播放历史 → 技术信息**，源状态警告（moved/missing/无法在线）为顶部的条件告警条。
-  「**播放历史**」卡片（`PlaybackHistoryCard`，自带 `['history',id]` 查询与清除 mutation）**始终显示**——
-  有记录时展示上次播放进度条（上次播放到 X / 总时长 · 日期，蓝色进度条），
-  无记录时显示「尚未播放过。」；「**清除历史**」按钮（`DELETE /api/videos/{id}/history`，清空续播位置）
-  在无记录时禁用。清除成功后 `setQueryData` 即时把卡片切为「尚未播放过。」，无需刷新。
-  `VideoPlayer` 退出播放时保存进度后 invalidate `['history', id]` 查询，详情页返回后进度即时刷新。
+  「**播放历史**」为**合并卡**（`PlaybackHistoryCard` 外壳 + 两个小节）：小节一「观看进度」
+  （`PlaybackProgressSection`，自带 `['history',id]` 查询与清除 mutation）——有记录时展示上次播放进度条
+  （上次播放到 X / 总时长 · 日期，蓝色进度条），无记录时显示「尚未播放过。」；小节二「配置缓存」
+  （`PlaybackPrefsCard`）。两个小节的清除按钮均为**纯图标**（文字在 ToolTip），靠按钮所在小节区分清除对象：
+  进度小节清空续播位置（`DELETE /api/videos/{id}/history`，无记录时禁用，清除成功后 `setQueryData` 即时切为
+  「尚未播放过。」）、配置小节清除播放选择记忆。`VideoPlayer` 退出播放时保存进度后 invalidate `['history', id]`
+  查询，详情页返回后进度即时刷新。
   元信息卡最末的**文件路径**（`font-mono` 相对路径）可点击——hover 变蓝加下划线，经 `manager.openFileLocation`
   切到「文件」页签并定位到该文件的**所在目录**（`parentPath(video.path)`）。
 - **单集详情技术卡片**（`VideoTechCard`，2026-08 / 2026-09 扩展）：详情栏内专门卡片集中展示 probe 技术信息并
@@ -202,6 +206,34 @@
     的进度，直到真正追上（HLS 新流未就绪时单次 seek 会被丢弃，故自愈重试），追上后若切换前在播放则自动
     `remote.play()` 续播。
   Direct 层不注入菜单（浏览器默认轨）。
+- **播放选择记忆（2026-09，ADR-006 player prefs；系列共享 2026-09 修订）**：缓存「上次手动选择的音轨/字幕/
+  音量」，播放时自动应用、**仅用户手动切换时更新**（`PUT /api/videos/{id}/prefs` 部分更新）。属于可重建缓存，
+  由工具页「缓存管理」删除（`DELETE /api/cache/prefs…`）或详情页「清除缓存」删除，删除后回默认轨/默认字幕/
+  默认音量，与续播 `history` 完全分离。**系列剧集共享同一记忆**：`GET /api/videos/{id}/prefs` 返回**有效**
+  记录（`scope: series | video` + 归属 `series_id`）。`series` 记录存音轨/字幕的**名称**（label），前端按当前
+  集的实际轨道清单解析；`video` 记录存具体值（音轨序号 / `subtitle_id`）。系列有记录时忽略单集记录；单集记录
+  是关系重组后的兜底。
+  - **自动应用**（`applyPrefs`，按媒体流经 `appliedPrefsRef` 每字段至多一次）：音轨仅在动态层（remux/
+    transcode）生效——`series` 按 `audio_track_name` 在当前集音轨清单里 `findIndex(label)`、`video` 按序号，
+    找到才 `setAudio`（换轨即重建流）；字幕按名称/`subtitle_id` 匹配 `<Track>` 的 `id`
+    （`sidecar`=侧边文件 / `e<N>`=内封文本轨流序号，空串=关闭字幕）经 `remote.changeTextTrackMode` 应用；
+    音量经 `remote.changeVolume`/`mute`/`unmute`（两层共用）。音量是播放器级属性、跨 src 变化保持，故只应用
+    一次；音轨/字幕随 src 变化（选轨重载）重新应用以保持选择。`playerReadyRef`（`onLoadedMetadata` 置位）保证
+    provider 就绪后才下发音量/字幕请求，避免请求被丢弃而标记已应用。系列级名称匹配不到当前集轨道时该字段不
+    应用（回默认）。
+  - **仅手动刷新**：`applyingPrefsRef` 在自动应用期间置位，抑制一切保存。保存触发点——音轨 = 菜单
+    `onTrackSelect`（系列成员发 `audio_track_name`、独立单集发 `audio_track`）；字幕 = 监听
+    `media-text-track-change-request`（内置字幕菜单/字幕按钮的唯一出口，含「关闭字幕」→ 空串），按
+    `detail.index` 反查 `textTracks` 取回 `id` 再反查 label（系列成员发 `subtitle_name`）；音量 =
+    `onVolumeChange`（1s 节流 + 退出时若用户调过则补存一次）。`savePrefs` 成功后 invalidate `['prefs', id]`
+    （及系列 `['series-prefs', seriesId]`）重取，同一页面会话内再次进入播放立即应用新选择。
+  - **详情页展示与清除（2026-09）**：`PlaybackPrefsCard`（`features/player/PlaybackPrefsCard.tsx`）是合并卡
+    「播放历史」内的「配置缓存」小节——三行信息（音轨/字幕/音量）+ 纯图标清除按钮（文字在 ToolTip）。
+    系列详情页经 `GET /api/series/{id}/prefs` 展示共享记录（注「整部系列共享」），清除删系列记录
+    （`DELETE /api/series/{id}/prefs`）；单集详情页展示**有效**记录（`series` 时注「来自系列」并清除系列记录、
+    `video` 时清除自身记录），清除后回退到兜底记录/默认值。
+  - **已知边界**：Direct 层无法选音轨（浏览器默认轨），故音轨记忆只在 remux/transcode 生效；字幕与音量
+    全层生效。
 - 样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，
   `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。
 - **`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc`），否则

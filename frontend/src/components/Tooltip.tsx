@@ -17,25 +17,31 @@ function position(
 ): { left: number; top: number } | undefined {
   if (!anchor || !size) return undefined
   const pad = GAP
+  // clientWidth/clientHeight exclude the scrollbar that innerWidth/innerHeight
+  // include: clamping against innerWidth would let the bubble sit ~scrollbar px
+  // past the visible viewport, and shrink-to-fit would then wrap its text a few
+  // px early — leaving exactly one CJK character alone on the second line.
+  const vw = document.documentElement.clientWidth || window.innerWidth
+  const vh = document.documentElement.clientHeight || window.innerHeight
   let left: number
   let top: number
   if (placement === 'top' || placement === 'bottom') {
-    left = clamp(anchor.left + anchor.width / 2 - size.w / 2, pad, window.innerWidth - size.w - pad)
+    left = clamp(anchor.left + anchor.width / 2 - size.w / 2, pad, vw - size.w - pad)
     if (placement === 'top') {
       top = anchor.top - size.h - GAP
       if (top < pad) top = anchor.bottom + GAP
     } else {
       top = anchor.bottom + GAP
-      if (top + size.h > window.innerHeight - pad) top = anchor.top - size.h - GAP
+      if (top + size.h > vh - pad) top = anchor.top - size.h - GAP
     }
   } else {
-    top = clamp(anchor.top + anchor.height / 2 - size.h / 2, pad, window.innerHeight - size.h - pad)
+    top = clamp(anchor.top + anchor.height / 2 - size.h / 2, pad, vh - size.h - pad)
     if (placement === 'left') {
       left = anchor.left - size.w - GAP
       if (left < pad) left = anchor.right + GAP
     } else {
       left = anchor.right + GAP
-      if (left + size.w > window.innerWidth - pad) left = anchor.left - size.w - GAP
+      if (left + size.w > vw - pad) left = anchor.left - size.w - GAP
     }
   }
   return { left, top }
@@ -46,6 +52,15 @@ function position(
 // and clamps to the viewport, flipping to the opposite side when there is no
 // room on the requested placement. The bubble is measured first (invisible)
 // so it never jumps on first hover; an empty content renders nothing.
+//
+// The bubble is laid out with width: max-content (capped to the viewport via
+// max-w-[calc(100vw - 2rem)]) so its width NEVER depends on the positioned
+// `left`/available space — otherwise a bubble clamped near the right edge would
+// be sized against the scrollbar-inflated innerWidth and its text would wrap a
+// few px early, leaving a single orphan CJK character on the second line. The
+// position clamp itself uses clientWidth/clientHeight (scrollbar excluded), so
+// the positioned bubble always fits the visible viewport and matches the
+// measured size exactly.
 export function Tooltip({
   content,
   placement = 'top',
@@ -114,8 +129,12 @@ export function Tooltip({
           <div
             ref={measure}
             role="tooltip"
-            style={pos ? { left: pos.left, top: pos.top, transform: shown ? 'none' : hiddenTransform } : { transform: hiddenTransform }}
-            className={`pointer-events-none fixed z-[100] max-w-[70vw] rounded-md border border-neutral-700 bg-neutral-900 px-2.5 py-1 text-[13px] leading-5 text-neutral-50 shadow-lg transition duration-150 ease-out ${
+            style={
+              pos
+                ? { left: pos.left, top: pos.top, width: 'max-content', transform: shown ? 'none' : hiddenTransform }
+                : { width: 'max-content', transform: hiddenTransform }
+            }
+            className={`pointer-events-none fixed z-[100] max-w-[calc(100vw-2rem)] rounded-md border border-neutral-700 bg-neutral-900 px-2.5 py-1 text-[13px] leading-5 text-neutral-50 shadow-lg transition duration-150 ease-out ${
               shown ? 'opacity-100' : 'opacity-0'
             }`}
           >

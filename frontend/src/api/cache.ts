@@ -28,9 +28,38 @@ export interface SubtitleCacheGroup {
   bytes: number
 }
 
+// PlaybackPrefsCacheEntry is one video's playback selection cache (audio track /
+// subtitle / volume) as shown by the cache manager. Clearing it resets the video
+// to the browser defaults on the next play.
+export interface PlaybackPrefsCacheEntry {
+  video_id: string
+  title: string
+  show_id?: string
+  show_title?: string
+  audio_track?: number
+  subtitle_id?: string
+  volume?: number
+  muted?: boolean
+  updated_at: string
+}
+
+// SeriesPrefsCacheEntry is one series' shared playback selection cache as shown
+// by the cache manager. Tracks are stored by name (ADR-006 player prefs 修订).
+export interface SeriesPrefsCacheEntry {
+  series_id: string
+  title: string
+  audio_track_name?: string
+  subtitle_name?: string
+  volume?: number
+  muted?: boolean
+  updated_at: string
+}
+
 export interface CacheOverview {
   orphans: CacheOrphans
   subtitles: SubtitleCacheGroup[]
+  prefs: PlaybackPrefsCacheEntry[]
+  series_prefs: SeriesPrefsCacheEntry[]
 }
 
 export function fetchCacheStats(): Promise<CacheOverview> {
@@ -51,4 +80,18 @@ export function clearAllSubtitleCache(): Promise<{ cleared: number }> {
 
 export function clearOrphanCache(): Promise<{ cleared: number }> {
   return api<{ cleared: number }>('/api/cache/orphans', { method: 'DELETE' })
+}
+
+export function clearPrefs(videoId: string): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>(`/api/cache/prefs/${videoId}`, { method: 'DELETE' })
+}
+
+// clearSeriesPrefs deletes one series' shared playback selection cache (the
+// cache manager reuses the series detail page's endpoint).
+export function clearSeriesPrefs(seriesId: string): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>(`/api/series/${seriesId}/prefs`, { method: 'DELETE' })
+}
+
+export function clearAllPrefs(): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>('/api/cache/prefs', { method: 'DELETE' })
 }

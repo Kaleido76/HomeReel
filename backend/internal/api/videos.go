@@ -68,13 +68,7 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
-	seriesID := ""
-	if v.ShowID != "" && v.SeasonNumber > 0 {
-		seriesID, err = s.series.FindID(r.Context(), v.ShowID, v.SeasonNumber)
-		if err != nil && !errors.Is(err, domain.ErrNotFound) {
-			slog.Warn("find video series", "video_id", v.ID, "err", err)
-		}
-	}
+	seriesID := s.videoSeriesID(r.Context(), v)
 	// 单集详情按需检查源文件：路径在 → ok；路径不在但能在媒体源内按 file_id
 	// 找到（改名/移动）→ moved（可同步）；找不到 → missing（可移除）。
 	status, checkErr := s.scanner.CheckVideo(r.Context(), v.ID)

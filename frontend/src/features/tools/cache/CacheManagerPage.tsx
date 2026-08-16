@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Eraser, FolderOpen, Images, Subtitles, Trash2 } from 'lucide-react'
+import { Eraser, FolderOpen, Images, SlidersHorizontal, Subtitles, Trash2 } from 'lucide-react'
 import {
+  clearAllPrefs,
   clearAllSubtitleCache,
   clearOrphanCache,
+  clearPrefs,
+  clearSeriesPrefs,
   clearSubtitleCache,
   clearSubtitleTrack,
   fetchCacheStats,
   type CacheOrphans,
+  type PlaybackPrefsCacheEntry,
+  type SeriesPrefsCacheEntry,
   type SubtitleCacheGroup,
 } from '../../../api/cache'
 import { formatBytes } from '../../../lib/format'
@@ -26,6 +31,8 @@ export function CacheManagerPage() {
 
   const orphans = overview.data?.orphans
   const subtitleGroups = overview.data?.subtitles ?? []
+  const prefsEntries = overview.data?.prefs ?? []
+  const seriesPrefsEntries = overview.data?.series_prefs ?? []
   const orphanTotal = orphans ? orphanCount(orphans) : 0
 
   async function run(action: () => Promise<{ cleared: number }>, confirmText: string) {
@@ -35,7 +42,7 @@ export function CacheManagerPage() {
     try {
       const { cleared } = await action()
       await queryClient.invalidateQueries({ queryKey: ['cache'] })
-      setMessage(`已清理 ${cleared} 个缓存文件`)
+      setMessage(`已清理 ${cleared} 项缓存`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '清理失败')
     }
@@ -57,6 +64,24 @@ export function CacheManagerPage() {
       showGroups[idx].groups.push(g)
     } else {
       standalone.push(g)
+    }
+  }
+
+  // Playback selection caches share the same show grouping.
+  const prefShowGroups: { title: string; entries: PlaybackPrefsCacheEntry[] }[] = []
+  const prefStandalone: PlaybackPrefsCacheEntry[] = []
+  const prefShowIndex = new Map<string, number>()
+  for (const p of prefsEntries) {
+    if (p.show_id && p.show_title) {
+      let idx = prefShowIndex.get(p.show_id)
+      if (idx === undefined) {
+        idx = prefShowGroups.length
+        prefShowIndex.set(p.show_id, idx)
+        prefShowGroups.push({ title: p.show_title, entries: [] })
+      }
+      prefShowGroups[idx].entries.push(p)
+    } else {
+      prefStandalone.push(p)
     }
   }
 
@@ -144,6 +169,67 @@ export function CacheManagerPage() {
       </section>
 
       <section className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-1.5">
+            <SlidersHorizontal className="size-4 text-neutral-400" />
+            <h2 className="text-sm font-medium text-neutral-800">播放选择记忆</h2>
+          </div>
+          <button
+            disabled={prefsEntries.length === 0 && seriesPrefsEntries.length === 0}
+            onClick={() => void run(clearAllPrefs, '确定清空全部播放选择记忆？下次播放将回到默认音轨/字幕/音量。')}
+            className="flex items-center gap-1.5 rounded border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Eraser className="size-3.5" /> 清空全部
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-neutral-500">
+          记录每个视频上次手动选择的音轨、字幕与音量，播放时自动应用（仅用户主动切换时更新）。系列剧集共享
+          同一记忆（系列级，按音轨/字幕名称匹配）。删除后回到浏览器默认。
+        </p>
+
+        {prefsEntries.length === 0 && seriesPrefsEntries.length === 0 ? (
+          <p className="mt-4 text-sm text-neutral-500">
+            尚无播放选择记忆。播放时手动切换过音轨、字幕或音量的视频/系列会在这里列出。
+          </p>
+        ) : (
+          <div className="mt-4 space-y-6">
+            {prefShowGroups.map((sg) => (
+              <div key={sg.title}>
+                <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  <FolderOpen className="size-3.5" /> {sg.title}
+                </h3>
+                <div className="mt-2 space-y-3">
+                  {sg.entries.map((p) => (
+                    <PrefsVideoRow key={p.video_id} entry={p} run={run} />
+                  ))}
+                </div>
+              </div>
+            ))}
+            {prefStandalone.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">未归组的视频</h3>
+                <div className="mt-2 space-y-3">
+                  {prefStandalone.map((p) => (
+                    <PrefsVideoRow key={p.video_id} entry={p} run={run} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {seriesPrefsEntries.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">系列级（整部共享）</h3>
+                <div className="mt-2 space-y-3">
+                  {seriesPrefsEntries.map((p) => (
+                    <SeriesPrefsRow key={p.series_id} entry={p} run={run} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
         <div className="flex items-center gap-1.5">
           <Images className="size-4 text-neutral-400" />
           <h2 className="text-sm font-medium text-neutral-800">封面与缩略图</h2>
@@ -170,6 +256,91 @@ function orphanCount(o: CacheOrphans): number {
 
 function orphanBytes(o: CacheOrphans): number {
   return o.cover.orphan_bytes + o.thumb.orphan_bytes + o.subtitle.orphan_bytes
+}
+
+// prefsSummary turns a playback selection cache into a compact description of
+// what would be re-applied on the next play (only the recorded fields).
+function prefsSummary(p: PlaybackPrefsCacheEntry): string {
+  const parts: string[] = []
+  if (typeof p.audio_track === 'number') parts.push(`音轨 ${p.audio_track + 1}`)
+  if (typeof p.subtitle_id === 'string') {
+    if (p.subtitle_id === '') parts.push('字幕 关闭')
+    else parts.push(`字幕 ${p.subtitle_id === 'sidecar' ? '侧边文件' : `内封轨 ${p.subtitle_id.replace(/^e/, '')}`}`)
+  }
+  if (typeof p.volume === 'number') parts.push(`音量 ${Math.round(p.volume * 100)}%${p.muted ? '（静音）' : ''}`)
+  return parts.length > 0 ? parts.join(' · ') : '（仅记录了部分偏好）'
+}
+
+function PrefsVideoRow({
+  entry,
+  run,
+}: {
+  entry: PlaybackPrefsCacheEntry
+  run: (action: () => Promise<{ cleared: number }>, confirmText: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="flex items-center justify-between gap-4 rounded border border-neutral-200 p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-neutral-800">{entry.title}</p>
+        <p className="mt-0.5 truncate text-xs text-neutral-500">{prefsSummary(entry)}</p>
+      </div>
+      <button
+        disabled={busy}
+        onClick={() =>
+          void (async () => {
+            setBusy(true)
+            await run(() => clearPrefs(entry.video_id), `确定删除「${entry.title}」的播放选择记忆？`)
+            setBusy(false)
+          })()
+        }
+        className="flex shrink-0 items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+      >
+        <Trash2 className="size-3" /> 删除
+      </button>
+    </div>
+  )
+}
+
+// seriesPrefsSummary turns a series' shared playback selection cache into a
+// compact description of what every episode would auto-apply (tracks by name).
+function seriesPrefsSummary(p: SeriesPrefsCacheEntry): string {
+  const parts: string[] = []
+  if (typeof p.audio_track_name === 'string') parts.push(`音轨 ${p.audio_track_name}`)
+  if (typeof p.subtitle_name === 'string') parts.push(`字幕 ${p.subtitle_name === '' ? '关闭' : p.subtitle_name}`)
+  if (typeof p.volume === 'number') parts.push(`音量 ${Math.round(p.volume * 100)}%${p.muted ? '（静音）' : ''}`)
+  return parts.length > 0 ? parts.join(' · ') : '（仅记录了部分偏好）'
+}
+
+function SeriesPrefsRow({
+  entry,
+  run,
+}: {
+  entry: SeriesPrefsCacheEntry
+  run: (action: () => Promise<{ cleared: number }>, confirmText: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="flex items-center justify-between gap-4 rounded border border-neutral-200 p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-neutral-800">{entry.title}</p>
+        <p className="mt-0.5 truncate text-xs text-neutral-500">{seriesPrefsSummary(entry)}</p>
+      </div>
+      <button
+        disabled={busy}
+        onClick={() =>
+          void (async () => {
+            setBusy(true)
+            await run(() => clearSeriesPrefs(entry.series_id), `确定删除系列「${entry.title}」的共享播放选择记忆？`)
+            setBusy(false)
+          })()
+        }
+        className="flex shrink-0 items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+      >
+        <Trash2 className="size-3" /> 删除
+      </button>
+    </div>
+  )
 }
 
 function SubtitleVideoRow({

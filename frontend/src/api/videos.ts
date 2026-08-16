@@ -155,6 +155,58 @@ export function clearHistory(id: string): Promise<{ cleared: boolean }> {
   return api<{ cleared: boolean }>(`/api/videos/${id}/history`, { method: 'DELETE' })
 }
 
+// PlaybackPrefs is the effective playback selection cache (ADR-006 player
+// prefs): the chosen audio track, the chosen subtitle source and the volume.
+// scope tells which record the values come from — "series" means the video's
+// series shares one memory across every episode (tracks are matched by NAME
+// against the current episode's own tracks), "video" the member's own concrete
+// selections. The player auto-applies them on every play and only refreshes them
+// when the user manually changes a selection. As a rebuildable cache it can be
+// cleared from the cache manager page or the detail pages; deleting a row resets
+// the video to the browser defaults.
+export interface PlaybackPrefs {
+  scope: 'series' | 'video'
+  audio_track?: number
+  subtitle_id?: string
+  audio_track_name?: string
+  subtitle_name?: string
+  volume?: number
+  muted?: boolean
+  updated_at?: string
+}
+
+// VideoPrefsResponse carries the effective prefs plus the video's series context
+// (series_id is present whenever the video belongs to a series, so the player
+// writes series-scoped on manual changes even before a series record exists).
+export interface VideoPrefsResponse {
+  prefs: PlaybackPrefs | null
+  series_id?: string
+}
+
+// PlaybackPrefsPatch is a partial update: only the provided fields are written.
+// For a series member the player sends track NAMES (audio_track_name/subtitle_
+// name) and volume/muted; subtitle_name is '' when subtitles were turned off.
+// Standalone videos send the concrete per-video audio_track/subtitle_id.
+export interface PlaybackPrefsPatch {
+  audio_track?: number
+  subtitle_id?: string
+  audio_track_name?: string
+  subtitle_name?: string
+  volume?: number
+  muted?: boolean
+}
+
+export function fetchVideoPrefs(id: string): Promise<VideoPrefsResponse> {
+  return api<VideoPrefsResponse>(`/api/videos/${id}/prefs`)
+}
+
+export function putVideoPrefs(id: string, patch: PlaybackPrefsPatch): Promise<{ saved: boolean }> {
+  return api<{ saved: boolean }>(`/api/videos/${id}/prefs`, {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  })
+}
+
 export function fetchTags(): Promise<{ tags: TagCount[] }> {
   return api<{ tags: TagCount[] }>('/api/tags')
 }

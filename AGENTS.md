@@ -52,6 +52,7 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 | `docs/frontend.md` | 前端实现事实源（页签 keep-alive/栏位栈/Vidstack/响应式/文件浏览器/卡片） | 改动 `frontend/src/{tabs,features}` |
 | `docs/status.md` | 现状快照/遗留待办/人工验证清单/未来方向 | 规划新功能、验收、会话交接 |
 | `UI.md` | UI 设计语言（视觉规范；与实现冲突处以 frontend.md §5/§6 为准） | 改动前端样式/布局前 |
+| `Note.md` | 用户草稿 | 永不阅读 |
 
 **规则**：改代码或架构前先读本文档 §4 的 ADR 与 `docs/decisions.md` 契约；实现细节以各领域文档为准。
 发现文档与代码不一致时，以 ADR 与契约为准，并向用户指出差异。
@@ -82,7 +83,7 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 | ADR-003 | 部署形态 | 纯 Web 应用，监听 `0.0.0.0`，浏览器访问 | 任何局域网设备（PC/手机/平板/TV）无需安装即可用 |
 | ADR-004 | 文件入库 | 目录扫描 + **多媒体源标记**（`media_sources`）驱动视频库；手动分块上传与统一上传接口已随旧 Explorer 移除（2026-08，files 上传能力待后续补） | 入库只依赖「用户标记的目录」，与文件浏览完全解耦 |
 | ADR-005 | 数据库 | SQLite（纯 Go 驱动 + WAL 模式）；演进路线：WAL → FTS5 → Background Queue → Read Cache → 仅真正遇瓶颈才考虑 PostgreSQL | Windows 免 CGO、零依赖、单文件；个人量级瓶颈是 ffmpeg 而非数据库 |
-| ADR-006 | 播放策略 | **三层动态流（2026-08 修订，替代纯 Range 直连）**：前端把 probe 元数据映射成 MIME/codecs 串，用 `canPlayType()` 核对目标机能力决定播放层——Direct（浏览器原生可解码）→ HTTP Range 直连；Remux（编码可解但容器不兼容，如 MKV h264+aac）→ 后端**整片流拷贝成缓存 MP4** 走 Range（全片可拖）；Transcode（编码不兼容 HEVC/rmvb/DTS 等，**或音频不可拷贝 AC3/EAC3/DTS/PCM**——浏览器无 Dolby 解码器且整条音频重编码过慢会卡死 Remux 整片生成）→ **按需转码 HLS**（VOD 全量列表 + 关键帧对齐 + 每会话独立）。三者皆不可才引导格式工厂（保留为可选预转码工具）。**多音轨选轨（2026-09）**：播放器菜单选轨后 Remux 按轨缓存、Transcode 以新会话重建流、Direct 暂用默认轨。实现细节（命令/缓存命名/音轨号传递）见 [media.md](docs/media.md) §4/§6。**实测依据**：ffmpeg 对 Matroska 流拷贝按需 seek 不可靠，故 Remux 整片流拷贝不切片；Transcode 用重编码精确 seek，内容与 PTS 均精确 | 原「纯 Range + 引导转换」要用户手动操作；Remux 一次流拷贝成本极低且结果全片可拖；Transcode 只转用户实际看的部分。判定机制运行期固化（前后端协同），不逐格式堆硬编码布尔 |
+| ADR-006 | 播放策略 | **三层动态流（2026-08 修订，替代纯 Range 直连）**：前端把 probe 元数据映射成 MIME/codecs 串，用 `canPlayType()` 核对目标机能力决定播放层——Direct（浏览器原生可解码）→ HTTP Range 直连；Remux（编码可解但容器不兼容，如 MKV h264+aac）→ 后端**整片流拷贝成缓存 MP4** 走 Range（全片可拖）；Transcode（编码不兼容 HEVC/rmvb/DTS 等，**或音频不可拷贝 AC3/EAC3/DTS/PCM**——浏览器无 Dolby 解码器且整条音频重编码过慢会卡死 Remux 整片生成）→ **按需转码 HLS**（VOD 全量列表 + 关键帧对齐 + 每会话独立）。三者皆不可才引导格式工厂（保留为可选预转码工具）。**多音轨选轨（2026-09）**：播放器菜单选轨后 Remux 按轨缓存、Transcode 以新会话重建流、Direct 暂用默认轨。**播放选择记忆（2026-09 修订）**：单集级 + 系列级两层缓存音轨/字幕/音量——系列剧集共享同一记忆（音轨/字幕按**轨道名称**匹配，系列有记录时优先于单集记录、单集记录作关系重组兜底），详情页可查看并清除。实现细节（命令/缓存命名/音轨号传递）见 [media.md](docs/media.md) §4/§6。**实测依据**：ffmpeg 对 Matroska 流拷贝按需 seek 不可靠，故 Remux 整片流拷贝不切片；Transcode 用重编码精确 seek，内容与 PTS 均精确 | 原「纯 Range + 引导转换」要用户手动操作；Remux 一次流拷贝成本极低且结果全片可拖；Transcode 只转用户实际看的部分。判定机制运行期固化（前后端协同），不逐格式堆硬编码布尔 |
 | ADR-007 | 文件身份 | `(source_id, file_id, relative_path)` 三元组唯一；**file_id 全局匹配**（跨源移动仍识别为同一视频）；`(file_id, size, mtime)` 为变更指纹；`hash`（SHA-256）为可选后台任务（**2026-09 修订**：videos 表无 hash 列、无 hash 任务类型，当前未实现，仅保留扩展空间） | 文件移动目录（甚至移动出原多媒体源、进入另一源）后仍能识别为同一视频；大文件全量哈希代价高，首次索引快速 |
 | ADR-008 | 任务队列 | SQLite 持久化 `jobs` 表 + 进程内 worker 池 | 可展示进度、崩溃可恢复、实现简单 |
 | ADR-009 | 搜索 | 定义 `SearchProvider` 接口；当前实现 SQLite FTS5（反规范化 `search_text`），Meilisearch/AI 检索后续新增实现 | 控制器不直接写 SQL；替换搜索引擎无需改动 Controller |
@@ -134,11 +135,6 @@ frontend/
 - 不主动 `git commit` / `push`，除非用户明确要求
 - 不擅自创建文档文件（`.md`），除非用户明确要求
 - 引用代码时使用 `文件路径:行号` 格式
-
-
-- **禁止为验证长期占用命令行**：不得自行启动后台 webserver / 服务再用命令轮询等待；命令行链路验证
-  以 httptest / 单次可返回的 curl 为准，浏览器与交互类验证一律列入「需手动验证清单」交给用户。
-
 
 ## 7. 必须遵守的强制规则（红线）
 
@@ -209,6 +205,15 @@ frontend/
 
 - 阶段完成后建议打 tag 并写阶段小结（走查 ADR 与目录结构）；修订 ADR 必须留痕并回填关联章节
 
+### 8.5 Git 交付方式
+
+当用户提出“提交本次会话的修改”时，使用Git打包提交到远程仓库。
+
+- git add .
+- git commit -m "commit messgae"
+- git push
+
+Commit Message应当是一个简单的英文短语，用词准确、凝练地描述当前会话做了哪些修改。请你提供2~3个message选项，然后向用户询问使用哪一个更加恰当。
 
 ## 9. 沟通约定
 

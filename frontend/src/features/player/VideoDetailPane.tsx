@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
+import { clearPrefs as clearVideoPrefs } from '../../api/cache'
+import { clearSeriesPrefs } from '../../api/series'
 import {
   deleteVideo,
   fetchVideo,
   fetchVideoAudioTracks,
+  fetchVideoPrefs,
   fetchVideoSubtitles,
   syncVideo,
 } from '../../api/videos'
 import { playMode } from '../../lib/playability'
 import { openFormatVideo } from '../../tabs/manager'
 import { PlaybackHistoryCard } from '../player/PlaybackHistoryCard'
+import { PlaybackPrefsCard } from '../player/PlaybackPrefsCard'
+import { PlaybackProgressSection } from '../player/PlaybackProgressSection'
 import { VideoMetaPanel } from '../player/VideoMetaPanel'
 import { VideoTechCard } from '../player/VideoTechCard'
 
@@ -54,6 +59,22 @@ export function VideoDetailPane({
   const subtitles = useQuery({ queryKey: ['subtitles', videoId], queryFn: () => fetchVideoSubtitles(videoId) })
   // Shares the ['audio', id] cache with VideoPlayer (multi-track containers).
   const audioTracks = useQuery({ queryKey: ['audio', videoId], queryFn: () => fetchVideoAudioTracks(videoId) })
+  // 播放选择记忆（ADR-006 player prefs 修订）：与播放器共享同一条 ['prefs', id]
+  // 缓存。系列成员展示「来自系列」的有效值，清除时删系列记录（删后回退到单集
+  // 自己的记录）；独立视频展示并清除自己的记录。
+  const prefs = useQuery({ queryKey: ['prefs', videoId], queryFn: () => fetchVideoPrefs(videoId) })
+  const clearPrefsMutation = useMutation({
+    mutationFn: () => {
+      const p = prefs.data?.prefs
+      if (p?.scope === 'series' && prefs.data?.series_id) return clearSeriesPrefs(prefs.data.series_id)
+      return clearVideoPrefs(videoId)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prefs', videoId] })
+      const sid = prefs.data?.series_id
+      if (sid) queryClient.invalidateQueries({ queryKey: ['series-prefs', sid] })
+    },
+  })
 
   // 单集详情永远带 series 上下文：视频属于某系列但当前以独立详情打开时，自动
   // 补齐 series 段（replace，不留历史记录），返回系列的入口统一为系列详情列的
@@ -89,6 +110,30 @@ export function VideoDetailPane({
   // remux MP4, or on-demand HLS transcode; 'none' falls back to the format
   // factory. The heavy player derives the same mode again from its own fetch.
   const mode = playMode(video, detail.data)
+
+  const p = prefs.data?.prefs
+  const prefsFromSeries = p?.scope === 'series'
+  const prefAudio = prefsFromSeries
+    ? typeof p?.audio_track_name === 'string'
+      ? p.audio_track_name
+      : undefined
+    : typeof p?.audio_track === 'number'
+      ? audioTracks.data?.audio[p.audio_track]?.label
+      : undefined
+  const prefSubtitle = prefsFromSeries
+    ? typeof p?.subtitle_name === 'string'
+      ? p.subtitle_name === ''
+        ? '关闭'
+        : p.subtitle_name
+      : undefined
+    : typeof p?.subtitle_id === 'string'
+      ? p.subtitle_id === ''
+        ? '关闭'
+        : p.subtitle_id === 'sidecar'
+          ? '侧边文件'
+          : `内封轨 ${p.subtitle_id.replace(/^e/, '')}`
+      : undefined
+  const prefVolume = typeof p?.volume === 'number' ? `${Math.round(p.volume * 100)}%${p.muted ? '（静音）' : ''}` : undefined
 
   async function doSync() {
     setError('')
@@ -179,7 +224,20 @@ export function VideoDetailPane({
         <VideoMetaPanel video={video} initialTags={detail.data.tags ?? []} />
       </div>
 
-      <PlaybackHistoryCard videoId={videoId} duration={video.duration} />
+      <PlaybackHistoryCard
+        progress={<PlaybackProgressSection videoId={videoId} duration={video.duration} />}
+        memory={
+          <PlaybackPrefsCard
+            audio={prefAudio}
+            subtitle={prefSubtitle}
+            volume={prefVolume}
+            note={prefsFromSeries ? '来自系列' : undefined}
+            hasPrefs={!!p}
+            clearing={clearPrefsMutation.isPending}
+            onClear={() => clearPrefsMutation.mutate()}
+          />
+        }
+      />
 
       <VideoTechCard
         video={video}

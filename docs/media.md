@@ -274,3 +274,22 @@
   Transcode 层，暂缓（可作为后续增强）。
 - **已知限制（v1 接受）**：同一文件若混装「可拷贝 aac/mp3 + 不可拷贝 ac3」音轨，Remux 层选到不可拷贝轨可能
   无声——罕见场景，统一编码的多音轨（如双 AC3 / 双 AAC）不受影响。
+
+### 6.1 播放选择记忆（2026-09，per-video + 系列级 音轨/字幕/音量偏好缓存）
+
+- **单集级**：`playback_prefs` 表（video_id,user 主键，FK 级联删除），列 `audio_track`（0 起音轨序号，NULL=未选）、
+  `subtitle_id`（`sidecar`=侧边文件 / `e<N>`=内封文本轨流序号 / `""`=明确关闭字幕，NULL=未选）、`volume`（0~1）、
+  `muted`。与续播 `history` 分离：前者是**可重建缓存**（工具页「缓存管理」可删，删行回默认），后者是用户数据。
+- **系列级（2026-09 修订，ADR-006 player prefs）**：`series_playback_prefs` 表（series_id,user 主键，FK
+  级联删除），列 `audio_track_name`/`subtitle_name`——音轨/字幕按**轨道名称（label）**存储与匹配，使同一选择
+  在每集解析到各自真实轨道（如「简体中文」在每集都选中对应轨）；`volume`/`muted` 直接共享。**系列有记录时
+  优先于单集记录**（「忽略单集记录」），单集记录作为关系重组后的兜底：单集曾独立播放过、或系列记录被清除后
+  生效；单集归属系列后，手动切换**写系列级**（按名称），不再写自身。
+- 读写：`GET/PUT /api/videos/{id}/prefs`（GET 返回**有效**记录 + `scope` + `series_id`；PUT 部分更新，只写
+  携带字段，未携带字段保留——系列成员发名称、独立单集发序号/字幕 id）；系列记录单独走
+  `GET/DELETE /api/series/{id}/prefs`；删除走 `DELETE /api/cache/prefs`（全部，含系列级）/
+  `DELETE /api/cache/prefs/{videoId}`（单视频）。
+- 播放器行为：进入播放自动应用记忆（音轨仅在 remux/transcode 生效——Direct 无法选轨；字幕/音量全层生效），
+  仅用户手动切换音轨/字幕/音量时刷新。系列级按名称匹配不到当前集的轨道时该字段不应用（回默认）。系列详情页 /
+  单集详情页的「播放历史」合并卡内「配置缓存」小节显示记忆内容并提供清除图标。实现细节见
+  [frontend.md](frontend.md) §3「播放选择记忆」。

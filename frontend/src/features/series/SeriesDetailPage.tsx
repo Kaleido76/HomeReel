@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Calendar, Check, Layers, Link2, Loader2, Pencil, Plus, RefreshCw, Star, X } from 'lucide-react'
-import { fetchSeriesDetail, removeSeriesLink, seriesPosterUrl, setSeriesLinks, syncSeries, updateSeriesName } from '../../api/series'
+import { fetchSeriesDetail, fetchSeriesPrefs, clearSeriesPrefs, removeSeriesLink, seriesPosterUrl, setSeriesLinks, syncSeries, updateSeriesName } from '../../api/series'
 import { SeriesPickerModal } from '../../components/SeriesPickerModal'
 import { Tooltip } from '../../components/Tooltip'
 import { prefetchPlayability } from '../../lib/playability'
 import { openFileLocation } from '../../tabs/manager'
+import { PlaybackHistoryCard } from '../player/PlaybackHistoryCard'
+import { PlaybackPrefsCard } from '../player/PlaybackPrefsCard'
 import { SeriesMemberList } from './SeriesMemberList'
 import { SeriesProgressCard } from './SeriesProgressCard'
 
@@ -21,11 +23,18 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const id = seriesId
   const queryClient = useQueryClient()
   const detail = useQuery({ queryKey: ['series', id], queryFn: () => fetchSeriesDetail(id) })
+  // 系列级播放选择记忆：整部系列共享的音轨/字幕（按名称）/音量，播放时自动应用。
+  const seriesPrefs = useQuery({ queryKey: ['series-prefs', id], queryFn: () => fetchSeriesPrefs(id) })
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const [pickingLink, setPickingLink] = useState(false)
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['series', id] })
+
+  const clearPrefs = useMutation({
+    mutationFn: () => clearSeriesPrefs(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['series-prefs', id] }),
+  })
 
   // 数据到达即预收集全部成员的可播放性（进入页面时集中判定一次，成员行渲染
   // 直接命中缓存），避免几十个成员逐个 createElement + canPlayType 的累积开销。
@@ -85,6 +94,11 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const { series, members, links, check } = detail.data
   const linkedIds = new Set(links.map((l) => l.linked_id))
   const rootPath = series.root_path
+
+  const sp = seriesPrefs.data?.prefs
+  const spAudio = typeof sp?.audio_track_name === 'string' ? sp.audio_track_name : undefined
+  const spSubtitle = typeof sp?.subtitle_name === 'string' ? (sp.subtitle_name === '' ? '关闭' : sp.subtitle_name) : undefined
+  const spVolume = typeof sp?.volume === 'number' ? `${Math.round(sp.volume * 100)}%${sp.muted ? '（静音）' : ''}` : undefined
 
   const commitName = () => {
     const t = nameInput.trim()
@@ -203,7 +217,20 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
         </div>
       </div>
 
-      <SeriesProgressCard seriesId={id} members={members} />
+      <PlaybackHistoryCard
+        progress={<SeriesProgressCard seriesId={id} members={members} />}
+        memory={
+          <PlaybackPrefsCard
+            audio={spAudio}
+            subtitle={spSubtitle}
+            volume={spVolume}
+            note="整部系列共享"
+            hasPrefs={!!sp}
+            clearing={clearPrefs.isPending}
+            onClear={() => clearPrefs.mutate()}
+          />
+        }
+      />
 
       <div className="rounded-xl border border-neutral-200 bg-white p-4">
         <SeriesMemberList seriesId={id} members={members} />
@@ -215,17 +242,25 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
           <span className="ml-2 text-xs font-normal text-neutral-400">关联无名称，仅用于一起展示与跳转</span>
         </h3>
         {links.length === 0 && <p className="mb-3 text-sm text-neutral-400">暂无关联。可在下方手动添加。</p>}
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {links.map((l) => (
-            <div key={l.linked_id} className="flex items-center gap-1.5 rounded-md border border-neutral-200 py-1 pl-3 pr-1.5">
-              <Link to="/series/$id" params={{ id: l.linked_id }} className="text-sm font-medium text-neutral-700 hover:text-blue-600">
+            <div
+              key={l.linked_id}
+              className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 py-1.5 pl-3 pr-1.5"
+            >
+              <Link
+                to="/series/$id"
+                params={{ id: l.linked_id }}
+                title={l.linked_name}
+                className="min-w-0 truncate text-sm font-medium text-neutral-700 hover:text-blue-600"
+              >
                 {l.linked_name}
               </Link>
               <Tooltip content="移除关联">
                 <button
                   onClick={() => removeLink.mutate(l.linked_id)}
                   disabled={removeLink.isPending}
-                  className="rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                  className="shrink-0 rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                 >
                   <X className="size-3.5" />
                 </button>

@@ -59,6 +59,7 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	showsRepo := store.NewShowRepo(database)
 	seriesRepo := store.NewSeriesRepo(database)
 	historyRepo := store.NewHistoryRepo(database)
+	prefsRepo := store.NewPlaybackPrefsRepo(database)
 	scannerSvc := scanner.New(
 		videosRepo,
 		sourcesRepo,
@@ -76,7 +77,7 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, "ffmpeg", "ffprobe")
 	fsvc.SetLibraryNotifier(scannerSvc.IngestPaths, scannerSvc.EvictPaths)
 	handler := New(authSvc, jobsSvc, scannerSvc, fsvc,
-		videosRepo, showsRepo, seriesRepo, historyRepo, streamingSvc,
+		videosRepo, showsRepo, seriesRepo, historyRepo, prefsRepo, streamingSvc,
 		search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)
 	return handler, database
 }

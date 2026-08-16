@@ -145,6 +145,35 @@ CREATE TABLE history (
   PRIMARY KEY (video_id, user)
 );
 
+-- 播放选择记忆（2026-09，ADR-006 player prefs）：per-video 的音轨/字幕/音量
+-- 偏好缓存。与续播 history 分离——这是「可重建缓存」，可在工具页缓存管理删除
+-- （删行即回到默认轨/默认字幕/默认音量），仅用户手动切换时刷新。
+CREATE TABLE playback_prefs (
+  video_id    TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  user        TEXT NOT NULL DEFAULT 'local',
+  audio_track INTEGER,             -- 0 起音轨序号；NULL=未选（默认轨）
+  subtitle_id TEXT,                -- "sidecar"=侧边文件 / "e<N>"=内封文本轨流序号 / ""=明确关闭字幕；NULL=未选
+  volume      REAL,                -- 0~1；NULL=未记录
+  muted       INTEGER,             -- NULL=未记录
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (video_id, user)
+);
+
+-- 系列级播放选择记忆（2026-09 修订，ADR-006 player prefs）：系列剧集共享同一
+-- 音轨/字幕/音量记忆。音轨/字幕按**轨道名称**（label）存储与匹配——同一选择在
+-- 每集解析到各自的真实轨道（如「简体中文」在每集都选中对应轨）。**系列有记录时
+-- 优先于单集记录**（单集记录作为关系重组后的兜底），删除走系列详情页/缓存管理。
+CREATE TABLE series_playback_prefs (
+  series_id        TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  user             TEXT NOT NULL DEFAULT 'local',
+  audio_track_name TEXT,           -- 音轨名称（label），NULL=未选
+  subtitle_name    TEXT,           -- 字幕名称（label）；""=明确关闭字幕；NULL=未选
+  volume           REAL,           -- 0~1；NULL=未记录
+  muted            INTEGER,        -- NULL=未记录
+  updated_at       TEXT NOT NULL,
+  PRIMARY KEY (series_id, user)
+);
+
 -- 会话（登录后签发）
 CREATE TABLE sessions (
   token      TEXT PRIMARY KEY,
@@ -266,11 +295,13 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | GET | `/api/stream/:id/subtitle` | 字幕（侧边 `.srt/.vtt/.ass` 优先；`?track=<index>` 指定内封文本轨，按需提取为 vtt） |
 | GET | `/api/videos/:id/subtitles` | 字幕轨清单（侧边 + 内封文本轨，供播放器字幕菜单） |
 | GET | `/api/videos/:id/audio` | 音轨清单（多音轨容器，index/codec/声道/label，供播放器音轨菜单选轨） |
-| GET | `/api/cache` | 缓存概览：孤儿统计（封面/缩略图/字幕/remux）+ 字幕缓存按视频分组列表（含剧集系列标题） |
+| GET | `/api/cache` | 缓存概览：孤儿统计（封面/缩略图/字幕/remux）+ 字幕缓存按视频分组列表（含剧集系列标题）+ **播放选择记忆**列表（`prefs` 按视频、`series_prefs` 系列级共享） |
 | DELETE | `/api/cache?kind=subtitle` | 清空全部字幕缓存（可重建，不影响源文件） |
 | DELETE | `/api/cache/orphans` | 清空孤儿缓存（库中已无对应视频的残留文件） |
 | DELETE | `/api/cache/subtitles/{videoId}` | 清空该视频全部字幕缓存 |
 | DELETE | `/api/cache/subtitles/{videoId}/{track}` | 删除该视频指定轨的字幕缓存（track=-1 指旧式 `<id>.vtt`） |
+| DELETE | `/api/cache/prefs` | 清空全部播放选择记忆（单集 + 系列级，删行后播放器回默认音轨/字幕/音量） |
+| DELETE | `/api/cache/prefs/{videoId}` | 删除该视频的播放选择记忆 |
 
 > 2026-08 修订（ADR-006）：**三层动态流**。可播放性由前端运行期 `canPlayType()` 核对（probe 元数据 →
 > MIME/codecs），据此选择：
@@ -292,6 +323,10 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | GET | `/api/videos/:id/history` | 读取续播位置 |
 | PUT | `/api/videos/:id/history` | `{ progress }` 保存（节流由前端控制） |
 | DELETE | `/api/videos/:id/history` | 清空续播位置（单集详情页「清除历史」） |
+| GET | `/api/videos/:id/prefs` | 读取**有效**播放选择记忆：`{ prefs, series_id }`。`prefs.scope` 区分 `series`（系列记录优先，含音轨/字幕**名称**，前端按当前集实际轨道解析）与 `video`（单集自身具体值）；无记录 `null`。`series_id` 在该视频归属系列时始终给出（播放器据此写系列级） |
+| PUT | `/api/videos/:id/prefs` | 部分更新。归属系列的单集写**系列级**：`{ audio_track_name?, subtitle_name?, volume?, muted? }`（按名称共享）；独立单集写自身：`{ audio_track?, subtitle_id?, volume?, muted? }`。只写携带字段（播放器仅在用户手动切换时调用） |
+| GET | `/api/series/:id/prefs` | 读取系列的共享播放选择记忆（音轨/字幕**名称** + 音量，无则 `null`） |
+| DELETE | `/api/series/:id/prefs` | 删除系列的共享播放选择记忆（系列详情页「清除缓存」/ 缓存管理） |
 | GET | `/api/home` | 首页行：继续观看 / 最近添加（单次拉取） |
 | GET | `/api/search?q=` | 统一搜索（文件名 / 标签 / 剧名，FTS5；单集简介已移除 2026-09） |
 | GET | `/api/jobs` | 任务队列状态（索引进度） |

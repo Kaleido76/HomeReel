@@ -381,6 +381,35 @@ var migrations = []string{
 		PRIMARY KEY (group_id, series_id)
 	);
 	CREATE UNIQUE INDEX idx_link_group_members_series ON link_group_members(series_id);`,
+	// 播放选择记忆（2026-09）：per-video 的音轨/字幕/音量偏好缓存。用户手动切换
+	// 音轨/字幕/音量时记录，播放时自动应用；属于「可重建缓存」，可在工具页缓存
+	// 管理删除（删除后回到默认轨/默认字幕/默认音量）。audio_track 为 0 起音轨
+	// 序号（NULL=未选）；subtitle_id 标识字幕源（"sidecar"=侧边文件、"e<N>"=内封
+	// 文本轨流序号、""=明确关闭字幕）；volume 0..1，muted 独立记录。
+	`CREATE TABLE playback_prefs (
+		video_id    TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+		user        TEXT NOT NULL DEFAULT 'local',
+		audio_track INTEGER,
+		subtitle_id TEXT,
+		volume      REAL,
+		muted       INTEGER,
+		updated_at  TEXT NOT NULL,
+		PRIMARY KEY (video_id, user)
+	)`,
+	// 系列级播放选择记忆（2026-09，ADR-006 player prefs 修订）：系列剧集共享同一
+	// 音轨/字幕/音量记忆。音轨/字幕按**轨道名称**匹配（同名字幕轨/音轨在集与集之间
+	// 复用，例如「简体中文」在每集中自动选中对应轨道），故存 label 字符串而非序号。
+	// 系列有记录时优先于单集记录（单集记录作为关系重组后的兜底）；属「可重建缓存」。
+	`CREATE TABLE series_playback_prefs (
+		series_id        TEXT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+		user             TEXT NOT NULL DEFAULT 'local',
+		audio_track_name TEXT,
+		subtitle_name    TEXT,
+		volume           REAL,
+		muted            INTEGER,
+		updated_at       TEXT NOT NULL,
+		PRIMARY KEY (series_id, user)
+	)`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in
