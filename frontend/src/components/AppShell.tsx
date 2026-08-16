@@ -1,4 +1,4 @@
-import { LogOut, Video } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 import { useAuth } from '../features/auth/auth'
 import { JobsIndicator } from '../features/jobs/JobsIndicator'
 import { TabBar } from '../tabs/TabBar'
@@ -11,14 +11,13 @@ export function AppShell() {
   return (
     <div className="flex h-dvh flex-col bg-neutral-50">
       <header className="shrink-0 border-b border-neutral-200 bg-white">
-        <div className="flex h-14 w-full items-center justify-between gap-4 px-3 sm:px-6">
+        <div className="flex h-14 w-full items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={() => activate('home')}
-              className="flex shrink-0 items-center gap-2 font-semibold text-neutral-900"
+              className="hidden shrink-0 items-center font-bold text-neutral-900 sm:flex"
             >
-              <Video className="size-5 text-blue-600" />
-              <span className="hidden sm:inline">HomeReel</span>
+              HomeReel
             </button>
             <TabBar />
           </div>
