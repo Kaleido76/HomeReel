@@ -62,10 +62,11 @@
 
 **两级策略（快速 MP4，ffprobe 探测流 → 自动选择）**：
 1. **无损流拷贝（首选）**：`-map 0 -c copy -c:s mov_text -f mp4 -movflags +faststart`——视频/音频帧
-   **逐比特拷贝**，码率/画质/所有音轨不变；文本字幕转 mov_text 保留。唯一例外：音频仅当编码是
-   **全设备通用**的 aac/mp3（`universalMp4Audio` 白名单）才拷贝，其余（**AC3/EAC3**、dts、vorbis、opus、
+   **逐比特拷贝**，码率/画质/所有音轨不变；文本字幕转 mov_text 保留。唯一例外：**按首个音轨编码**判定——
+   仅当首轨是**全设备通用**的 aac/mp3（`universalMp4Audio` 白名单）才拷贝，否则（**AC3/EAC3**、dts、vorbis、opus、
    flac、truehd、pcm…）一律转 AAC 192k——AC3/EAC3 浏览器通常无 Dolby 解码器会无声、Windows 播放器也报
-   「不支持的 AC3 编码」，拷贝会产出「换个设备就无声」的文件。视频永远无损。
+   「不支持的 AC3 编码」，拷贝会产出「换个设备就无声」的文件。视频永远无损。**注意**：判定只看首个音轨，
+   混装「aac 首轨 + AC3 次轨」时 `-map 0` 会把非通用轨一并拷贝（罕见场景，见 §6 已知限制）。
 2. **烧录字幕重编码（自动降级）**：无损拷贝失败（典型：内封 **PGS/VobSub 位图字幕**——mp4 无法承载、
    而选择 MKV 往往正是因为它们）时，自动改为高质量重编码：视频 `libx264 -crf 19 -pix_fmt yuv420p`
    （画质接近原片）、音频尽量 `-c:a copy`（仅通用编码，否则 AAC 192k）、把**首选字幕轨烧录进画面**
@@ -80,10 +81,10 @@
   ② 时长缺失且是流拷贝时用 **`total_size/源大小`**（产物≈源大小，1:1 无任意系数）；③ 最后才用按文件大小估算的
   时长（假设约 8 Mbps 平均码率）兜底。剩余时间由 `jobs.Reporter` 按「进度 × 已耗时」推算写入
   `job.eta_seconds`，前端任务面板与格式工厂面板以「预计还需 X」展示（扫描/复制/移动等确定进度任务同样受益）。
-- 前端：文件页签工具栏「格式工厂」按钮把勾选（或含视频的当前目录）移交到「工具」页签的格式工厂工具
+- 前端：文件页签工具栏「格式工厂」按钮把勾选（或含可转换文件的当前目录）移交到「工具」页签的格式工厂工具
   （`features/tools/format/FormatFactoryPage.tsx`）。面板自上而下：**操作面板**（预设工具 + 可微调参数表单）、
-  **待转换队列**（勾选的文件/文件夹 + 「开始转换」，可随时继续追加批次入队）、**转换队列**（所有 convert
-  任务：进行中在前带进度条与 ETA，历史在后分成功/失败，每行标注所用预设）。
+  **待转换队列**（勾选的文件/文件夹 + 「开始转换」；再次从文件页移交会**替换**当前待转换批次，非追加）、
+  **转换队列**（所有 convert 任务：进行中在前带进度条与 ETA，历史在后分成功/失败，每行标注所用预设）。
 - **探测信息（`POST /api/convert/probe`，`fservice/convert_probe.go`）**：为所选文件逐个 ffprobe
   （`probeStreams` 复用转换引擎的探测），目录展开为直接一级视频，返回 `video_codec` / `audio_codecs` /
   `subtitle_codecs` / `duration` / `has_bitmap_subtitle`（`bitmapSubtitleCodecs`：PGS/VobSub/DVB 等位图字幕）。
@@ -207,7 +208,7 @@
 | ogg / ogv | theora | vorbis | 目标机支持 → **Direct**；否则 **Transcode** |
 | 以上容器 | 其他编码 | 任意 | **Transcode** / 格式工厂 |
 
-#### 4.3.4 AVI / WMV / FLV / TS / 3GP（浏览器无原生容器，一律不直连）
+#### 4.3.4 AVI / WMV / FLV / TS（浏览器无原生容器，一律不直连）
 
 | 容器 | 视频编码 | 音频编码 | 路径 |
 |---|---|---|---|
@@ -220,14 +221,16 @@
 | ts / m2ts / mpeg | h264 / avc1 | aac / 无声 | **Remux**（流拷贝） |
 | ts / m2ts / mpeg | h264 / avc1 | ac3 / eac3 / dts / pcm | **Transcode**（音频转 AAC） |
 | ts / m2ts / mpeg | mpeg2 | mp2 / ac3 | **Transcode** |
-| 3gp | h264 | aac | **Remux** |
+
+> **3gp 例外**：`.3gp` 虽非浏览器原生容器扩展名，但 ffprobe 用 MOV demuxer 解析，容器入库为 `mov`，
+> 前端映射到 `video/mp4` → 按 box 家族正常判定（h264+aac → **Direct**），与 mp4/mov 同规则。
 
 #### 4.3.5 兜底（none → 格式工厂）
 
 | 情况 | 说明 |
 |---|---|
 | ffmpeg 未配置 | `remux_playable` / `transcode_playable` 均为 false → 播放按钮禁用，引导格式工厂 |
-| 源文件不可达（存储离线/已删除） | 详情页标 `missing`；Remux/HLS 端点返回 409 `stream_unavailable` |
+| 源文件不可达（存储离线/已删除） | 详情页标 `missing`；Direct/Remux 端点返回 409 `storage_unavailable`，HLS playlist 返回 409 `stream_unavailable` |
 | 编码 ffmpeg 也无法解码（罕见） | Transcode 亦失败 → 播放报错，格式工厂可尝试重新编码 |
 | 需要永久离线/跨播放器观看 | 格式工厂产出 Faststart MP4 副本（`-c copy` 优先，失败自动降级重编码） |
 

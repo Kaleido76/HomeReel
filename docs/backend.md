@@ -5,8 +5,8 @@
 
 ## 1. 时间戳
 
-统一固定宽度纳秒 RFC3339（`2006-01-02T15:04:05.000000000Z07:00`），保证字典序=时间序（recency 比较依赖）。
-实现：`store.util.nowRFC3339` / `scanner.timeLayout` / `api.timeLayout`。
+数据层统一固定宽度纳秒 RFC3339（`2006-01-02T15:04:05.000000000Z07:00`），保证字典序=时间序（recency 比较依赖）。
+实现：`domain.TimeLayout` / `domain.Now()`。**例外**：jobs 与 sessions 用秒级 `time.RFC3339`（不参与 recency 比较）。
 
 ## 2. SQLite 单写者
 
@@ -78,10 +78,11 @@
 - **缓存清理（2026-08）**：`covers/`、`thumbs/`、`subtitles/`（内封字幕按需提取的 vtt）、`remux/`
   （按需流拷贝的 MP4 + 指纹 sidecar）都是**可重建缓存**。
   视频删除/源文件变更经 `RemoveCache`（`streaming`）自动清理；工具页「缓存管理」补充手动清空入口——
-  `GET /api/cache`（`streaming.CacheStats`）按类统计条目数/占用/孤儿数，`DELETE /api/cache?kind=…` 清空对应
-  类，`DELETE /api/cache/orphans`（`streaming.ClearOrphans`）清理库中已无对应视频的残留文件。孤儿判定由
-  缓存文件名解析视频 ID（封面 `<id>`、缩略图 `<id>.thumb`、字幕 `<id>` / `<id>-<track>`、remux `<id>.mp4`
-  及 `<id>.mp4.meta`）与全库索引对比。
+  `GET /api/cache`（`streaming.CacheOverview`）按类统计条目数/占用/孤儿数，`DELETE /api/cache?kind=subtitle`
+  （**仅支持 `kind=subtitle`**；封面/缩略图/remux 只能作为孤儿经下方清理），`DELETE /api/cache/orphans`
+  （`streaming.ClearOrphans`）清理库中已无对应视频的残留文件。孤儿判定由
+  缓存文件名解析视频 ID（封面 `<id>`、缩略图 `<id>.thumb`、字幕 `<id>` / `<id>-<track>`、remux `<id>` /
+  `<id>-a<N>` / 指纹 sidecar `<id>.mp4.meta`）与全库索引对比。
 
 ## 7. 扫描安全
 
@@ -96,8 +97,9 @@
 
 - `jobs` 是**长时任务管理器**（ADR-008）：队列 + Worker（probe/thumbnail/scan_source/convert，崩溃恢复）；
   缩略图 covers 320px + thumbs 160px。
-- **任务分类**：`Enqueue` 创建用户可见长时任务（scan_source/convert，带展示名 `name`）；`EnqueueInternal` 创建
-  内部短任务（probe/thumbnail，`internal=true`，前端任务面板隐藏、不触发生命周期通知）。
+- **任务分类**：`Enqueue` 创建用户可见长时任务（scan_source/mark_resource/fscopy/fsmove/convert，带展示名
+  `name`）；`EnqueueInternal` 创建内部短任务（probe/thumbnail，`internal=true`，前端任务面板隐藏、不触发
+  生命周期通知）。
 - **整体进度**：`Job.Progress` 为 `[0,1]`；`<0` 表示不确定（前端显示动态条）。`Handler` 收到
   `jobs.Reporter`，`report.Progress` 节流写库（≤250ms 或 ≥1% 差值），handler 不调用即保持不确定。
   `Repo.MarkProgress`。

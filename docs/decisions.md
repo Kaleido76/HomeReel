@@ -9,12 +9,12 @@
 ### 1.1 存储布局
 
 ```
-<data_dir>/            # 默认 C:\HomeReel\data（config 可改）
+<data_dir>/            # 默认 data（config 可改）
 ├── data.db            # SQLite（WAL 模式）
 ├── covers/            # <video_id>.jpg  （大图，供 Library 卡片）
 ├── thumbs/            # <video_id>.thumb.jpg （小图，供网格列表）
-├── subtitles/         # <video_id>/ 抽取的轨道（可选）
-├── remux/             # Remux 整片流拷贝的缓存 MP4 + 指纹 sidecar（可重建）
+├── subtitles/         # <id>.vtt / <id>-<track>.vtt 抽取的字幕（可选）
+├── remux/             # Remux 整片流拷贝的缓存 MP4（<id>.mp4 / <id>-a<N>.mp4）+ 指纹 sidecar（可重建）
 └── hls/               # Transcode 会话分片（会话空闲约 10 分钟清理）
 ```
 
@@ -39,14 +39,16 @@ CREATE TABLE videos (
   file_id          TEXT NOT NULL,               -- inode / Windows FileID（NTFS 文件 ID）
   relative_path    TEXT NOT NULL,               -- 相对所属多媒体源根的路径
   path             TEXT NOT NULL,               -- 绝对路径（冗余，便于流式/直接访问）
-  hash             TEXT,                        -- SHA-256（可选后台任务，可空）
-  mtime            INTEGER,                     -- 修改时间（毫秒），与 size 一起作为变更指纹
+  size             INTEGER NOT NULL DEFAULT 0,  -- 文件字节数，与 mtime 一起作为变更指纹
+  mtime            INTEGER NOT NULL DEFAULT 0,  -- 修改时间（毫秒），与 size 一起作为变更指纹
+  title            TEXT NOT NULL DEFAULT '',    -- 电影标题 / 剧集默认为 Show 名
   kind             TEXT NOT NULL DEFAULT 'movie', -- movie（单集）| episode（系列成员）
-  title            TEXT NOT NULL,               -- 电影标题 / 剧集默认为 Show 名
   duration         REAL,                        -- 秒
   codec            TEXT,                        -- 视频编码（如 h264 / hevc）
   audio_codec      TEXT,
   container        TEXT,                        -- mkv / mp4 / mov ...
+  segmented        INTEGER NOT NULL DEFAULT 0,  -- 分段 MP4（多 mdat/moof），探测标记，不可直连
+  faststart        INTEGER NOT NULL DEFAULT 0,  -- mp4 家族 moov 前置（可立即 seek）
   width            INTEGER,
   height           INTEGER,
   fps              REAL,
@@ -63,15 +65,16 @@ CREATE TABLE videos (
   genre            TEXT,                        -- 逗号分隔类型
   studio           TEXT,
   cast_text        TEXT,                        -- 演职员（逗号分隔）
-  metadata_source  TEXT DEFAULT 'manual',       -- manual（刮削源已移除）
+  metadata_source  TEXT NOT NULL DEFAULT 'manual', -- manual（刮削源已移除）
+  title_source     TEXT NOT NULL DEFAULT 'file', -- file（文件派生，扫描/探测刷新）| manual（用户编辑，永不覆盖）
   search_text      TEXT,                        -- 反规范化文本（title+tags+show），供 FTS5
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
-  last_scanned_at  TEXT,                        -- 最近一次被扫描确认的时间
+  last_scanned_at  TEXT NOT NULL,               -- 最近一次被扫描确认的时间
   UNIQUE (source_id, relative_path)
 );
 CREATE INDEX idx_videos_source ON videos(source_id);
-CREATE INDEX idx_videos_mtime   ON videos(updated_at);
+CREATE INDEX idx_videos_file   ON videos(file_id);
 CREATE INDEX idx_videos_show    ON videos(show_id, season_number, episode_number);
 CREATE INDEX idx_videos_kind    ON videos(kind);
 
@@ -149,15 +152,24 @@ CREATE TABLE sessions (
   expires_at TEXT NOT NULL
 );
 
+-- 键值配置（固定 pin、口令哈希 等）
+CREATE TABLE settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- 任务队列（ADR-008）
 CREATE TABLE jobs (
   id         TEXT PRIMARY KEY,
-  type       TEXT NOT NULL,        -- probe | thumbnail | scan_source | convert | fscopy | fsmove | mark_resource | hash | rescan
+  type       TEXT NOT NULL,        -- probe | thumbnail | scan_source | mark_resource | fscopy | fsmove | convert
   target     TEXT NOT NULL,        -- 目标文件/目录路径（probe/thumbnail 用 extra.video_id 定位）
   extra      TEXT NOT NULL DEFAULT '', -- JSON：{video_id, source_id} 等
   status     TEXT NOT NULL,        -- queued | running | done | failed
-  progress   REAL DEFAULT 0,       -- 0~1
-  error      TEXT,
+  progress   REAL NOT NULL DEFAULT 0,   -- 0~1；<0 表示不确定
+  error      TEXT NOT NULL DEFAULT '',
+  name       TEXT NOT NULL DEFAULT '',   -- 任务展示名（internal=false 时用于任务面板）
+  internal   INTEGER NOT NULL DEFAULT 0, -- 1=内部短任务（probe/thumbnail），对用户隐藏
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -171,12 +183,13 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 -- 剧集单集并入 Show 名称，便于按剧名命中。单集简介（description/overview）已于 2026-09 移除。
 ```
 
-> 迁移说明：`db/` 包内置顺序迁移（简单版本表 + `CREATE TABLE IF NOT EXISTS` 序列），不引入重型迁移框架。
+> 迁移说明：`db/` 包内置顺序迁移（`schema_migrations` 版本表 + 顺序执行 DDL），不引入重型迁移框架。
 > 将来迁 PostgreSQL 时按 `domain/repo.go` 接口换实现即可。集合子系统已于 2026-08 移除：新库不再建集合表，
 > 老库经追加的 `DROP TABLE` 迁移物理删除。
 >
-> 落地说明：**所有时间戳统一为固定宽度纳秒 RFC3339（`2006-01-02T15:04:05.000000000Z07:00`）**，
-> 保证字符串字典序即时间序（扫描 recency 比较依赖此约定）。
+> 落地说明：**数据层时间戳统一为固定宽度纳秒 RFC3339（`2006-01-02T15:04:05.000000000Z07:00`）**，
+> 保证字符串字典序即时间序（扫描 recency 比较依赖此约定）。例外：jobs 与 sessions 用秒级
+> `time.RFC3339`（与排序语义无关，不参与 recency 比较）。
 
 ## 2. 后端 API 契约
 
@@ -190,6 +203,7 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | POST | `/api/auth/login` | `{ password }` → 校验口令，签发会话 Cookie |
 | POST | `/api/auth/logout` | 注销会话 |
 | GET | `/api/auth/status` | 是否已登录（前端路由守卫用） |
+| GET | `/api/me` | 当前身份（恒为 `{ user: "local" }`，受保护路由示例） |
 
 ### 2.2 文件浏览与多媒体源（「文件」页签，2026-08 重构）
 
@@ -210,6 +224,7 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | POST | `/api/files/sources/scan` | 手动重新扫描 |
 | POST | `/api/files/resources` | 标记所选文件夹为系列 `{ paths, kind: series }` → 入队 mark_resource 任务（离散「单集」概念已清除，仅支持 series） |
 | POST | `/api/convert` | 格式工厂：`{ paths }` 把所选文件/文件夹转换为**浏览器可播放的 Faststart MP4 副本**，逐个入队 `convert` 后台任务（单集→同目录 `X.mp4`；系列/文件夹→同级 `X (MP4)\`）。首选无损流拷贝（`-c copy`，音频浏览器不支持的编码自动转 AAC），无损失败自动降级为烧录字幕的高质量重编码（h264 CRF19，详见 [media.md](media.md) §3.1） |
+| POST | `/api/convert/probe` | 格式工厂探测：`{ paths }` 逐个 ffprobe 返回流事实（视频/音频/字幕编码、位图字幕标记），供操作面板指引/禁用 |
 
 > 旧存储卷 API（`/api/storages*`、`/api/fs/*`、`/api/upload`）已随旧 Explorer 一并移除（2026-08）。
 
@@ -218,12 +233,14 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/videos` | 列表，支持 `q / genre / year / tag（可重复，多标签 AND）/ kind / showId / ungrouped / sort / order / page / pageSize`；`ungrouped=1` 查单集 |
-| GET | `/api/videos/:id` | 详情（含标签、历史、所属系列 `series_id`） |
-| PATCH | `/api/videos/:id` | 更新 `title / tags / year / rating / genre / studio / cast_text`（2026-09 起不含简介 description/overview） |
-| DELETE | `/api/videos/:id` | 删除元数据（可选 `?deleteFile=true` 同时删源文件） |
+| GET | `/api/videos/:id` | 详情（含标签、所属系列 `series_id`、能力标志 `direct/remux/transcode_playable`、`source_status`/`new_path`） |
+| PATCH | `/api/videos/:id` | 更新 `title / kind / year / rating / genre / studio / cast_text / tags`（2026-09 起不含简介 description/overview） |
+| DELETE | `/api/videos/:id` | 删除元数据记录（仅删库，不动源文件） |
 | POST | `/api/videos/:id/refresh` | 重新 ffprobe 并更新元数据 |
+| POST | `/api/videos/:id/sync` | 按 file_id 定位改名/移动的源文件并收敛系列成员（找不到 → 404，前端引导移除） |
 | GET | `/api/series` | 系列列表（一季/一部一个系列，含 kind / 成员数 / 关联系数 / 总时长 `total_duration`），支持 `q`（剧名/简介）/ `genre / year / tag（可重复，成员标签 AND）` |
-| GET | `/api/series/:id` | 系列详情（含 members / links） |
+| GET | `/api/series/:id` | 系列详情（含 members / links / check） |
+| POST | `/api/series/:id/sync` | 对根目录执行一次与标记相同的局部同步（按需检查的「同步」按钮） |
 | DELETE | `/api/series/:id/history` | 清除该系列全部成员观看进度（只删历史，不动视频/文件） |
 | POST | `/api/series/:id/order` | 手动排序成员 `{ video_ids: [...] }`（须为该系列成员全集的排列，重排 episode_number 并置 sort_manual） |
 | POST | `/api/series/:id/resort` | 恢复自动模式（2026-09）：清 sort_manual 按文件名序重绑成员 1..N，纯 DB 操作；手动改过的标题保留 |
@@ -276,8 +293,7 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | PUT | `/api/videos/:id/history` | `{ progress }` 保存（节流由前端控制） |
 | DELETE | `/api/videos/:id/history` | 清空续播位置（单集详情页「清除历史」） |
 | GET | `/api/home` | 首页行：继续观看 / 最近添加（单次拉取） |
-| GET | `/api/search?q=` | 统一搜索（文件名 / 标签 / 描述 / 剧名，FTS5） |
-| GET/PUT | `/api/settings` | 读 / 写可运行时配置 |
+| GET | `/api/search?q=` | 统一搜索（文件名 / 标签 / 剧名，FTS5；单集简介已移除 2026-09） |
 | GET | `/api/jobs` | 任务队列状态（索引进度） |
 | GET | `/api/health` | 健康检查 |
 
@@ -287,7 +303,7 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 server:
   host: "0.0.0.0"          # 局域网访问
   port: 8080
-  data_dir: "C:\\HomeReel\\data"
+  data_dir: "data"         # 默认 data（相对路径）
   static_dir: ""           # 前端构建产物（SPA）目录；空=自动探测 ./static 或 ../frontend/dist，均不存在则仅 API
 
 auth:
@@ -298,16 +314,9 @@ auth:
 # 首个全量扫描经 jobs 队列异步执行。
 
 media:
-  ffmpeg_path: ""          # 空则用 PATH
-  ffprobe_path: ""
-  thumb_interval_s: 1      # 取帧位置
-  probe_concurrency: 2
-  delete_mode: "trash"     # trash | permanent（删除文件时）
-
-scan:
-  watch: true
-  debounce_ms: 5000
-  availability_check_s: 60 # 外接卷可用性探测间隔（秒）
+  ffmpeg_path: "ffmpeg"    # 默认取 PATH 中的 ffmpeg/ffprobe
+  ffprobe_path: "ffprobe"
+  probe_concurrency: 2     # 后台 probe/thumbnail 任务并发数
 ```
 
 ## 4. AI 模块扩展契约（仅预留，默认不实现）
@@ -357,12 +366,12 @@ AI 服务侧建议：Python/Go 独立服务 + 队列（复用现有 jobs 表或�
 
 **后端**：`go test ./...`——domain 逻辑、store（`file::memory:` SQLite 或临时目录）、
 api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner 指纹算法、events 总线。
-媒体相关（ffprobe/ffmpeg）：打 `//go:build integration` 标签，CI/本机有 FFmpeg 时运行，否则跳过；
-`testdata` 内置极小样例视频。关键路径必须覆盖：增量扫描去重、删除同步、FTS 同步、会话过期、
+媒体相关（ffprobe/ffmpeg）：打 `//go:build integration` 标签，CI/本机有 FFmpeg 时运行，否则跳过
+（当前尚未编写 integration 测试）。关键路径必须覆盖：增量扫描去重、删除同步、FTS 同步、会话过期、
 外接卷拔出→离线→插回→重扫（mock 卷枚举后端）、系列归组规则。
 
-**前端**：Vitest + Testing Library——工具函数、组件（列表、筛选、历史节流）。
-播放器相关只做轻量冒烟（真实媒体验证依赖手动/后续 Playwright e2e）。
+**前端**：Vitest + Testing Library（规划方向，**当前未配置**，见 status.md §2）——工具函数、组件
+（列表、筛选、历史节流）。播放器相关只做轻量冒烟（真实媒体验证依赖手动/后续 Playwright e2e）。
 
 **验收红线**：每个 Phase 的「验收」条目即该阶段完成判定；不得跳过测试进入下一阶段。
 
@@ -378,7 +387,7 @@ api（`net/http/httptest` 全链路、mock 文件系统可注入）、scanner �
 | 嵌套/重叠多媒体源 | **新建源禁止嵌套**（`AddSource` 校验拒绝，400 `nested_source`）；历史遗留嵌套源由扫描路由表防御（子源拥有其子树，父源跳过子源子树，MarkMissing 不越界） |
 | 剧集命名不规范导致归组错误 | 系列由用户手动创建（路径 + FileID 对应），识别错误由用户手动归组兜底 |
 | 浏览器编码兼容（HEVC/MKV/AC3 等） | 前端运行期 canPlayType 核对（probe → MIME/codecs）：可直连 → Range；不可直连 → 动态流（视频可解**且音频可流拷贝 aac/mp3** 走 Remux MP4：容器重封装纯拷贝；视频不可解**或音频不可拷贝 AC3/EAC3/DTS/PCM** 走 HLS Transcode 按需转码，均后端生成）；三者皆不可 → 引导格式工厂转换 |
-| 播放源 ffmpeg 未配置/源文件不可达 | 详情页 `remux_playable` / `transcode_playable` 为 false → 播放按钮禁用并引导格式工厂；HLS/Remux 端点返回 409 `stream_unavailable` |
+| 播放源 ffmpeg 未配置/源文件不可达 | 详情页 `remux_playable` / `transcode_playable` 为 false → 播放按钮禁用并引导格式工厂；Direct/Remux 端点返回 409 `storage_unavailable`，HLS playlist 返回 409 `stream_unavailable` |
 | MKV 流拷贝按需 seek 不可靠（ffmpeg 对 Matroska cluster seek 依赖布局/版本） | Remux 层不切片：整片流拷贝成缓存 MP4（`-c:v copy -c:a copy`，仅 aac/mp3 音频）再走 Range；Transcode 层用重编码精确 seek（`-ss 关键帧`），实测内容与 PTS 均精确对齐 |
 | AC3/EAC3/DTS/PCM 音轨（h264 视频本可解，但浏览器无 Dolby 解码器且整条音频重编码太慢） | h264+AC3/EAC3/DTS/PCM **不归入 Remux 层**（整片阻塞生成 + ~70× 实时音频重编码会卡死首播），改走 **HLS Transcode**：分片按需重编码视频+音频转 AAC，几秒即起播（见 media.md §4.1/§4.2）。原「Remux 仅音频转 AAC」方案实测首播 ~80 秒转圈被否决 |
 | 转码分片 B 帧重排尾部与相邻分片 1 帧重叠 | MPEG-TS 固有现象，hls.js 按 EXTINF 累积时间轴 + timestampOffset 对齐，可容忍 |
