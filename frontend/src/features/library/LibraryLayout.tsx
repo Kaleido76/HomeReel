@@ -194,37 +194,11 @@ export function LibraryLayout() {
 
   const top = stack[stack.length - 1]
 
-  // ---- narrow: single full-page column with back navigation ----
-  if (!wide) {
-    return (
-      <div className="flex h-full flex-col">
-        {onGridRoute && filterBar}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {top.type === 'video-detail' ? (
-            <>
-              <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
-              <VideoDetailPane
-                videoId={top.id}
-                playHref={videoPlayHref(top.parent, top.id)}
-                seriesScoped={top.parent.startsWith('/series/')}
-              />
-            </>
-          ) : top.type === 'series-detail' ? (
-            <>
-              <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
-              <SeriesDetailPage seriesId={top.id} />
-            </>
-          ) : top.type === 'player' ? (
-            <PlayerPane videoId={top.id} exitHref={top.parent} goHref={playerGo(top.parent)} />
-          ) : (
-            <div className="h-full py-4">
-              <LibraryList state={grid} onUpdate={update} selection={selection} onSelect={onSelect} />
-            </div>
-          )}
-        </div>
-      </div>
-    )
-  }
+  // The player is rendered at the LibraryLayout root as a layer keyed by video
+  // id (see the overlay below), not inside the narrow/wide branches. Both
+  // branches therefore leave a placeholder where the player column would sit;
+  // the real player lives in one stable spot, so resizing across the 1024px
+  // breakpoint mid-playback no longer unmounts/remounts it (Bug #1).
 
   // ---- wide: render the whole stack, slide it so the top two columns are on screen ----
   // translateX = -(depth - 2) * 50vw, so [browse] alone shows browse + hint,
@@ -232,37 +206,79 @@ export function LibraryLayout() {
   const translate = -Math.max(0, stack.length - 2) * 50
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div
-          className="flex h-full transition-transform duration-300 ease-out"
-          style={{ transform: `translateX(${translate}vw)` }}
-        >
-          {/* browse column (index 0): the filter bar is part of it, so it slides
-              off-screen along with the column when the user opens a panel. */}
-          <div className="flex h-full w-[50vw] shrink-0 flex-col">
-            {filterBar}
-            <div className="min-h-0 flex-1">
-              <LibraryList state={grid} onUpdate={update} selection={selection} onSelect={onSelect} />
+    <div className="relative flex h-full flex-col">
+      {wide ? (
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div
+            className="flex h-full transition-transform duration-300 ease-out"
+            style={{ transform: `translateX(${translate}vw)` }}
+          >
+            {/* browse column (index 0): the filter bar is part of it, so it slides
+                off-screen along with the column when the user opens a panel. */}
+            <div className="flex h-full w-[50vw] shrink-0 flex-col">
+              {filterBar}
+              <div className="min-h-0 flex-1">
+                <LibraryList state={grid} onUpdate={update} selection={selection} onSelect={onSelect} />
+              </div>
             </div>
+
+            {stack.slice(1).map((col) => (
+              <div
+                key={colKey(col)}
+                className="h-full w-[50vw] shrink-0 overflow-y-auto border-l border-neutral-200 bg-neutral-50"
+              >
+                {columnContent(col, goPath)}
+              </div>
+            ))}
+
+            {stack.length === 1 && (
+              <div className="flex h-full w-[50vw] shrink-0 items-center justify-center border-l border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-400">
+                点击左侧条目查看详情
+              </div>
+            )}
           </div>
-
-          {stack.slice(1).map((col) => (
-            <div
-              key={colKey(col)}
-              className="h-full w-[50vw] shrink-0 overflow-y-auto border-l border-neutral-200 bg-neutral-50"
-            >
-              {columnContent(col, goPath)}
-            </div>
-          ))}
-
-          {stack.length === 1 && (
-            <div className="flex h-full w-[50vw] shrink-0 items-center justify-center border-l border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-400">
-              点击左侧条目查看详情
-            </div>
-          )}
         </div>
-      </div>
+      ) : (
+        // ---- narrow: single full-page column with back navigation ----
+        <div className="flex h-full flex-col">
+          {onGridRoute && filterBar}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {top.type === 'video-detail' ? (
+              <>
+                <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
+                <VideoDetailPane
+                  videoId={top.id}
+                  playHref={videoPlayHref(top.parent, top.id)}
+                  seriesScoped={top.parent.startsWith('/series/')}
+                />
+              </>
+            ) : top.type === 'series-detail' ? (
+              <>
+                <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
+                <SeriesDetailPage seriesId={top.id} />
+              </>
+            ) : top.type === 'player' ? (
+              null
+            ) : (
+              <div className="h-full py-4">
+                <LibraryList state={grid} onUpdate={update} selection={selection} onSelect={onSelect} />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* The player overlay: mounted here (top-level) so the video survives the
+          wide/narrow switch. The player column is always the top/last column, so
+          it fills the right half in wide mode and the whole column in narrow. */}
+      {top.type === 'player' && (
+        <div
+          className="absolute inset-y-0 z-20"
+          style={wide ? { left: '50vw', width: '50vw' } : { left: 0, width: '100%' }}
+        >
+          <PlayerPane videoId={top.id} exitHref={top.parent} goHref={playerGo(top.parent)} />
+        </div>
+      )}
     </div>
   )
 }
@@ -316,7 +332,9 @@ function columnContent(col: Column, goPath: (href: string) => void): ReactNode {
     case 'series-detail':
       return <SeriesDetailPage seriesId={col.id} />
     case 'player':
-      return <PlayerPane videoId={col.id} exitHref={col.parent} goHref={playerGo(col.parent)} />
+      // The real player is rendered at the LibraryLayout root overlay (Bug #1);
+      // the column itself is a placeholder reserving the 50vw slot.
+      return <div className="h-full" />
     case 'browse':
       return null
   }

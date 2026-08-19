@@ -101,6 +101,10 @@
   **单集详情永远带 series 上下文（2026-09）**：视频属于某系列但以独立详情打开时（首页/搜索卡片跳入、
   深链 `/library/video/:id`），`VideoDetailPane` 自动 `replace` 重定向到 `/series/:id/video/:videoId` 补齐
   series 段；返回系列的入口统一为系列详情列顶部「返回系列」条，**单集详情不再有「所属系列」跳转链接**。
+- **播放器挂到 Layout 顶层（2026-09）**：播放栏的 `PlayerPane` 不在窄屏/宽屏两棵分支里渲染，而是由
+  `LibraryLayout` 根节点统一挂载为**绝对定位覆盖层**（keyed 由 `videoId`），宽屏占右侧 `50vw`、窄屏占整列；
+  两棵分支只留占位。这样播放中跨 1024px 断点（`useMediaQuery` 翻转）不会卸载/重挂 `VideoPlayer`，视频/进度/
+  音量得以保留（此前双树切换会重载并重置音量）。
 - **过滤器是浏览栏的一部分**（`全部/单集/系列` 视图选择 + 搜索框 + 高级筛选按钮，位于浏览栏顶部，随浏览栏一起被挤出屏幕；
   窄屏仅浏览视图显示）。**视图选择响应式（2026-09）**：宽屏（≥lg）三项 tab 并排；窄屏折叠为**单个下拉选择器**
   （显示当前视图名，**无箭头图标**，点击垂直展开三项、二次点击某项即切换并收起；展开菜单项加大字号（`text-base`）
@@ -161,7 +165,11 @@
   **元信息（含单集名）→ 播放历史 → 技术信息**，源状态警告（moved/missing/无法在线）为顶部的条件告警条。
   「**播放历史**」为**合并卡**（`PlaybackHistoryCard` 外壳 + 两个小节）：小节一「观看进度」
   （`PlaybackProgressSection`，自带 `['history',id]` 查询与清除 mutation）——有记录时展示上次播放进度条
-  （上次播放到 X / 总时长 · 日期，蓝色进度条），无记录时显示「尚未播放过。」；小节二「配置缓存」
+  （上次播放到 X / 总时长 · 日期，蓝色进度条），无记录时显示「尚未播放过。」；**已播完判定（2026-09）**：
+  视频自然播完时 `VideoPlayer.onEnded` 把进度存为**完整时长**（`progress == duration`，而非 0），以此把「已播完」
+  与「从未播放」（无行、progress 0）区分开——详情/成员行/系列聚合各处把 `progress >= duration` 显示为 **100%**
+  进度条（系列聚合按 >90% 计已看），且因落在 RESUME 区间外续播仍从片头开始；`ContinueWatching` 因 `progress <
+  duration-20` 过滤而把播完项排除出「继续观看」。小节二「配置缓存」
   （`PlaybackPrefsCard`）。两个小节的清除按钮均为**纯图标**（文字在 ToolTip），靠按钮所在小节区分清除对象：
   进度小节清空续播位置（`DELETE /api/videos/{id}/history`，无记录时禁用，清除成功后 `setQueryData` 即时切为
   「尚未播放过。」）、配置小节清除播放选择记忆。`VideoPlayer` 退出播放时保存进度后 invalidate `['history', id]`
@@ -227,16 +235,20 @@
     transcode）生效——`series` 按 `audio_track_name` 在当前集音轨清单里 `findIndex(label)`、`video` 按序号，
     找到才 `setAudio`（换轨即重建流）；字幕按名称/`subtitle_id` 匹配 `<Track>` 的 `id`
     （`sidecar`=侧边文件 / `e<N>`=内封文本轨流序号，空串=关闭字幕）经 `remote.changeTextTrackMode` 应用；
-    音量经 `remote.changeVolume`/`mute`/`unmute`（两层共用）。音量是播放器级属性、跨 src 变化保持，故只应用
-    一次；音轨/字幕随 src 变化（选轨重载）重新应用以保持选择。`playerReadyRef`（`onLoadedMetadata` 置位）保证
-    provider 就绪后才下发音量/字幕请求，避免请求被丢弃而标记已应用。系列级名称匹配不到当前集轨道时该字段不
-    应用（回默认）。
+    音量/静音经**受控 props**（`<MediaPlayer volume muted>`）应用——Vidstack 在 can-play 时执行
+    `provider.setVolume(volumeProp)`，若不传 `volume` prop 会重置为默认 100%，故记忆值以 `playerVolume`/
+    `playerMuted` state 驱动 prop（`volumeAdoptedRef` 只采纳一次），用户调整时经 `onVolumeChange` 同步回 prop
+    避免回跳。音轨/字幕随 src 变化（选轨重载）重新应用；`playerReadyRef`（`onLoadedMetadata` 置位）保证
+    provider 就绪后才下发音轨/字幕请求。系列级名称匹配不到当前集轨道时该字段不应用（回默认）。
   - **仅手动刷新**：`applyingPrefsRef` 在自动应用期间置位，抑制一切保存。保存触发点——音轨 = 菜单
     `onTrackSelect`（系列成员发 `audio_track_name`、独立单集发 `audio_track`）；字幕 = 监听
     `media-text-track-change-request`（内置字幕菜单/字幕按钮的唯一出口，含「关闭字幕」→ 空串），按
-    `detail.index` 反查 `textTracks` 取回 `id` 再反查 label（系列成员发 `subtitle_name`）；音量 =
-    `onVolumeChange`（1s 节流 + 退出时若用户调过则补存一次）。`savePrefs` 成功后 invalidate `['prefs', id]`
-    （及系列 `['series-prefs', seriesId]`）重取，同一页面会话内再次进入播放立即应用新选择。
+     `detail.index` 反查 `textTracks` 取回 `id` 再反查 label（系列成员发 `subtitle_name`）；音量 =
+     `onVolumeChange`——**音量滑杆拖动时防抖保存**（400ms 无变化即写，`volumeTimerRef`），拖到底松手后保存的是
+     最终值而非按下瞬间的中间值；`flushVolume` 作为退出（卸载）兜底补存一次。`savePrefs` 成功后
+     **`setQueryData` 立即更新** `['prefs', id]`（及系列 `['series-prefs', seriesId]`）本地缓存使详情页即时显示，
+     再 invalidate 兜底 refetch；同一页面会话内再次进入播放立即应用新选择。**prefs 查询用
+     `refetchOnMount: 'always'`** 覆盖全局 30s staleTime，确保每次进入播放都读到最新记忆音量（不会被旧缓存挡掉）。
   - **详情页展示与清除（2026-09）**：`PlaybackPrefsCard`（`features/player/PlaybackPrefsCard.tsx`）是合并卡
     「播放历史」内的「配置缓存」小节——三行信息（音轨/字幕/音量）+ 纯图标清除按钮（文字在 ToolTip）。
     系列详情页经 `GET /api/series/{id}/prefs` 展示共享记录（注「整部系列共享」），清除删系列记录
@@ -246,6 +258,9 @@
     全层生效。
 - 样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，
   `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。
+- **全屏时钟（2026-09）**：`FullscreenClock` 组件渲染在 `MediaPlayer` 内，`useMediaState('fullscreen')`
+  为真时在播放器**右上角贴角**（`right-2 top-2`）显示当前系统时间 `HH:mm`——半透明圆角底
+  （`bg-black/40`）、略放大（`text-base`），每 30s 刷新，`pointer-events-none` 不挡控制条。
 - **`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc`），否则
   回退 HEAD 探测失败即报 `could not find a loader`。
 - **播放器填满播放栏高度**：`MediaPlayer` 加 `className="h-full w-full bg-black"` +

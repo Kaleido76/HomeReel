@@ -7,6 +7,7 @@ import {
   Track,
   isHLSProvider,
   useMediaRemote,
+  useMediaState,
   type MediaPlayerInstance,
   type MediaProviderAdapter,
   type VideoSrc,
@@ -34,10 +35,41 @@ import {
   streamUrl,
   subtitleUrl,
   type PlaybackPrefsPatch,
+  type VideoPrefsResponse,
 } from '../../api/videos'
+import { type SeriesPlaybackPrefs } from '../../api/series'
 import { getActiveTab, subscribeTabs } from '../../tabs/manager'
 import { NEAR_END, RESUME_MIN, RESUME_TAIL, SAVE_INTERVAL } from '../../lib/playback'
 import type { PlayMode } from '../../lib/playability'
+
+// StreamSrc is the media source handed to <MediaPlayer>: a plain MP4 (direct /
+// remux) or the transcode HLS playlist. /api/stream/{id} has no extension, so the
+// type must be explicit (Vidstack cannot infer it from the URL).
+type StreamSrc = VideoSrc | { src: string; type: 'application/x-mpegurl' }
+
+// FullscreenClock shows the current system time (HH:mm) in the player's top-right
+// corner while the media is fullscreen. It sits inside <MediaPlayer> so it can
+// read the fullscreen state; the clock is pointer-events-none so it never blocks
+// the controls underneath.
+function FullscreenClock() {
+  const fullscreen = useMediaState('fullscreen')
+  const [time, setTime] = useState(() => new Date())
+
+  useEffect(() => {
+    if (!fullscreen) return
+    const id = window.setInterval(() => setTime(new Date()), 30_000)
+    return () => window.clearInterval(id)
+  }, [fullscreen])
+
+  if (!fullscreen) return null
+  const hh = String(time.getHours()).padStart(2, '0')
+  const mm = String(time.getMinutes()).padStart(2, '0')
+  return (
+    <div className="pointer-events-none absolute right-2 top-2 z-[60] rounded bg-black/40 px-2 py-0.5 text-base font-semibold leading-tight text-white/90">
+      {hh}:{mm}
+    </div>
+  )
+}
 
 // VideoPlayer plays through the tier the caller selected (ADR-006, 2026-08):
 //   direct  → the original file over HTTP Range (/api/stream/{id})
@@ -76,28 +108,45 @@ export function VideoPlayer({
   // subtitle source and volume. Remembered values are auto-applied once per
   // stream and refreshed only when the user manually changes a selection — the
   // save handlers below are all suppressed while applyPrefs runs.
-  const prefs = useQuery({ queryKey: ['prefs', video.id], queryFn: () => fetchVideoPrefs(video.id) })
-  // applyingPrefsRef guards the auto-apply's remote calls (changeVolume/mute/
-  // changeTextTrackMode all dispatch request events that the save handlers would
-  // otherwise treat as a user choice).
+  const prefs = useQuery({
+    queryKey: ['prefs', video.id],
+    queryFn: () => fetchVideoPrefs(video.id),
+    // Force a fresh read on every entry into playback: the global staleTime
+    // (30s) would otherwise reuse a cached prefs row (e.g. an empty one), so a
+    // remembered volume saved elsewhere would not be applied (Bug #2).
+    refetchOnMount: 'always',
+  })
+  // applyingPrefsRef guards the auto-apply's remote calls (changeTextTrackMode
+  // dispatches request events that the save handlers would otherwise treat as a
+  // user choice). Volume is applied via the controlled volume/muted props, so it
+  // is not routed through remote here.
   const applyingPrefsRef = useRef(false)
   // Per-field application state keyed by the current mediaSrc: switching audio
   // tracks changes mediaSrc and resets audio/subtitle so the new stream gets its
-  // remembered selections again; volume persists across src changes on the same
-  // element and is applied exactly once.
+  // remembered selections again. Volume persists across src changes on the same
+  // element and is handled separately via the controlled props.
   const appliedPrefsRef = useRef<{
-    src: VideoSrc | { src: string; type: 'application/x-mpegurl' } | null
+    src: StreamSrc | null
     audio: boolean
     subtitle: boolean
-    volume: boolean
-  }>({ src: null, audio: false, subtitle: false, volume: false })
+  }>({ src: null, audio: false, subtitle: false })
   // Volume is recorded only on a real user adjustment, never on auto-apply; the
   // unmount save is the safety net for a change made right before leaving.
   const userChangedVolumeRef = useRef(false)
-  const lastVolumeSaveRef = useRef(0)
-  // The provider only accepts volume/text-track requests once media metadata has
-  // loaded (set in onLoadedMetadata); gating keeps a pre-ready auto-apply from
-  // dropping its remote call while still consuming the per-field flag.
+  // Debounce timer for the volume slider: during a drag the volume changes on
+  // every pointer move, so we wait for it to settle (400ms with no change) and
+  // then persist the final value — the value at press is not meaningful (Bug #4).
+  const volumeTimerRef = useRef<number | undefined>(undefined)
+  // Controlled volume/muted passed to <MediaPlayer> (Vidstack resets the media
+  // volume to 100% on can-play unless a volume prop is given). These start
+  // undefined (= Vidstack default 100%) and are adopted from the remembered prefs
+  // once, then kept in sync with user changes via onVolumeChange (Bug #2).
+  const [playerVolume, setPlayerVolume] = useState<number | undefined>(undefined)
+  const [playerMuted, setPlayerMuted] = useState<boolean | undefined>(undefined)
+  const volumeAdoptedRef = useRef(false)
+  // The provider only accepts text-track requests once media metadata has loaded
+  // (set in onLoadedMetadata); gating keeps a pre-ready auto-apply from dropping
+  // its remote call while still consuming the per-field flag.
   const playerReadyRef = useRef(false)
 
   // Every HLS play gets a fresh session token (per-video), so each viewer keeps
@@ -139,14 +188,57 @@ export function VideoPlayer({
     (patch: PlaybackPrefsPatch) => {
       void putVideoPrefs(video.id, patch)
         .then(() => {
-          queryClient.invalidateQueries({ queryKey: ['prefs', video.id] })
           const seriesId = prefs.data?.series_id
+          // Update the local query cache immediately so the detail pages reflect
+          // the new memory without waiting for a refetch (Bug #3). The volume is
+          // stored in whatever row is effective, so we patch it in place.
+          queryClient.setQueryData<VideoPrefsResponse>(['prefs', video.id], (old) => {
+            if (!old) return old
+            return { ...old, prefs: old.prefs ? { ...old.prefs, ...patch } : { scope: 'video', ...patch } }
+          })
+          if (seriesId) {
+            queryClient.setQueryData<{ prefs: SeriesPlaybackPrefs | null }>(['series-prefs', seriesId], (old) => {
+              if (!old) return old
+              if (!old.prefs) {
+                return {
+                  ...old,
+                  prefs: {
+                    ...(patch as SeriesPlaybackPrefs),
+                    series_id: seriesId,
+                    updated_at: new Date().toISOString(),
+                  },
+                }
+              }
+              return { ...old, prefs: { ...old.prefs, ...(patch as SeriesPlaybackPrefs) } }
+            })
+          }
+          queryClient.invalidateQueries({ queryKey: ['prefs', video.id] })
           if (seriesId) queryClient.invalidateQueries({ queryKey: ['series-prefs', seriesId] })
         })
         .catch(() => {})
     },
     [video.id, queryClient, prefs.data?.series_id],
   )
+
+  // flushVolume persists the player's current volume/mute. Only a real user
+  // adjustment is ever saved (never an auto-applied remembered value); it is
+  // called as the unmount safety net and clears any pending debounce (Bug #4).
+  const flushVolume = useCallback(() => {
+    if (!userChangedVolumeRef.current) return
+    if (volumeTimerRef.current !== undefined) {
+      window.clearTimeout(volumeTimerRef.current)
+      volumeTimerRef.current = undefined
+    }
+    const el = playerRef.current
+    if (el && typeof el.volume === 'number') {
+      savePrefs({ volume: el.volume, muted: el.muted })
+    }
+  }, [savePrefs])
+
+  // saveHistory writes a resume position, swallowing the network error (history
+  // is best-effort). Used by the throttled progress save, the ended marker and
+  // the unmount safety net.
+  const saveHistory = useCallback((progress: number) => putHistory(video.id, progress).catch(() => {}), [video.id])
 
   useEffect(() => {
     lastSaveRef.current = 0
@@ -166,22 +258,17 @@ export function VideoPlayer({
       // query so it re-reads the fresh progress after leaving playback. A
       // series member also refreshes its series detail (series progress card /
       // member rows aggregate per-member progress there).
-      const save = posRef.current > 0 ? putHistory(video.id, posRef.current).catch(() => {}) : Promise.resolve()
+      const save = posRef.current > 0 ? saveHistory(posRef.current) : Promise.resolve()
       void save.then(() => {
         queryClient.invalidateQueries({ queryKey: ['history', video.id] })
         if (video.show_id) queryClient.invalidateQueries({ queryKey: ['series'] })
       })
-      // Flush a volume change made right before leaving (the 1s live throttle
-      // may have skipped it). Only a real user adjustment is saved, never an
+      // Flush a volume change made right before leaving (the 400ms debounce may
+      // not have fired yet). Only a real user adjustment is saved, never an
       // auto-applied remembered value.
-      if (userChangedVolumeRef.current) {
-        const el = playerRef.current
-        if (el && typeof el.volume === 'number') {
-          savePrefs({ volume: el.volume, muted: el.muted })
-        }
-      }
+      flushVolume()
     },
-    [video.id, video.show_id, queryClient, savePrefs],
+    [video.id, video.show_id, queryClient, savePrefs, flushVolume, saveHistory],
   )
 
   // Auto-pause when the user switches away from the library tab: the player's
@@ -209,22 +296,25 @@ export function VideoPlayer({
   // /api/stream/{id} has no extension, so Vidstack cannot infer the media type
   // and would fall back to a HEAD probe (which can fail on cancelled requests).
   // Provide the type explicitly to select the right loader.
-  const mediaSrc = useMemo<VideoSrc | { src: string; type: 'application/x-mpegurl' }>(() => {
+  const mediaSrc = useMemo<StreamSrc>(() => {
     if (mode === 'transcode') {
       return { src: hlsPlaylistUrl(video.id, hlsSession, audio), type: 'application/x-mpegurl' }
     }
     return { src: mode === 'remux' ? remuxUrl(video.id, audio) : streamUrl(video.id), type: 'video/mp4' }
   }, [mode, video.id, hlsSession, audio])
 
-  function onTimeUpdate(detail: { currentTime: number }) {
-    posRef.current = detail.currentTime
+  // persistProgress throttles history writes (every SAVE_INTERVAL) while playing.
+  // Writes stop in the final NEAR_END seconds so the ending is not treated as a
+  // resume point.
+  function persistProgress(currentTime: number) {
+    posRef.current = currentTime
     const dur = video.duration || 0
-    if (dur > 0 && detail.currentTime >= dur - NEAR_END) {
+    if (dur > 0 && currentTime >= dur - NEAR_END) {
       return
     }
-    if (detail.currentTime - lastSaveRef.current >= SAVE_INTERVAL) {
-      lastSaveRef.current = detail.currentTime
-      void putHistory(video.id, detail.currentTime).catch(() => {})
+    if (currentTime - lastSaveRef.current >= SAVE_INTERVAL) {
+      lastSaveRef.current = currentTime
+      void saveHistory(currentTime)
     }
   }
 
@@ -265,8 +355,6 @@ export function VideoPlayer({
       applied.src = mediaSrc
       applied.audio = false
       applied.subtitle = false
-      // volume is a player-level property that survives a src change; once is
-      // enough, re-applying it would re-dispatch volume-change for nothing.
     }
     const p = prefs.data?.prefs
     if (!p || !playerRef.current) return
@@ -311,13 +399,15 @@ export function VideoPlayer({
           }
         }
       }
-      if (!applied.volume && playerReadyRef.current && (typeof p.volume === 'number' || typeof p.muted === 'boolean')) {
-        applied.volume = true
-        if (typeof p.volume === 'number') remote.changeVolume(p.volume)
-        if (typeof p.muted === 'boolean') {
-          if (p.muted) remote.mute()
-          else remote.unmute()
-        }
+      // Volume/muted are applied by passing them as controlled props to
+      // <MediaPlayer> (Vidstack resets the media volume to 100% on can-play
+      // unless a volume prop is given, so remote.changeVolume alone loses the
+      // fight). Adopt the remembered values once; onVolumeChange then keeps the
+      // props in sync with user adjustments (Bug #2).
+      if (!volumeAdoptedRef.current && (typeof p.volume === 'number' || typeof p.muted === 'boolean')) {
+        volumeAdoptedRef.current = true
+        if (typeof p.volume === 'number') setPlayerVolume(p.volume)
+        if (typeof p.muted === 'boolean') setPlayerMuted(p.muted)
       }
     } finally {
       applyingPrefsRef.current = false
@@ -371,15 +461,22 @@ export function VideoPlayer({
   }
 
   // onVolumeChange persists a manual volume/mute adjustment. Auto-applied volume
-  // is suppressed by applyingPrefsRef; a 1s throttle keeps slider drags from
-  // spamming the API, and the unmount handler below flushes the final value.
+  // is suppressed by applyingPrefsRef. A debounce waits for the volume to settle
+  // (a slider drag changes it on every pointer move), then persists the final
+  // value — the value at press is not meaningful, and this does not depend on
+  // brittle pointer/class detection (Bug #4 修订).
   function onVolumeChange(detail: { volume: number; muted: boolean }) {
     if (applyingPrefsRef.current) return
     userChangedVolumeRef.current = true
-    const now = Date.now()
-    if (now - lastVolumeSaveRef.current < 1000) return
-    lastVolumeSaveRef.current = now
-    savePrefs({ volume: detail.volume, muted: detail.muted })
+    // Keep the controlled props in sync with the user's adjustment so the player
+    // never snaps back to the remembered value on the next prop application.
+    setPlayerVolume(detail.volume)
+    setPlayerMuted(detail.muted)
+    if (volumeTimerRef.current !== undefined) window.clearTimeout(volumeTimerRef.current)
+    volumeTimerRef.current = window.setTimeout(() => {
+      volumeTimerRef.current = undefined
+      savePrefs({ volume: detail.volume, muted: detail.muted })
+    }, 400)
   }
 
   return (
@@ -387,6 +484,8 @@ export function VideoPlayer({
       <MediaPlayer
         ref={playerRef}
         src={mediaSrc}
+        volume={playerVolume}
+        muted={playerMuted}
         poster={coverUrl(video.id)}
         title={video.title}
         playsInline
@@ -407,7 +506,7 @@ export function VideoPlayer({
         }}
         onTimeUpdate={(detail) => {
           ensurePendingSeek()
-          onTimeUpdate(detail)
+          persistProgress(detail.currentTime)
         }}
         onPlaying={() => {
           wasPlayingRef.current = true
@@ -416,8 +515,12 @@ export function VideoPlayer({
           wasPlayingRef.current = false
         }}
         onEnded={() => {
-          posRef.current = 0
-          void putHistory(video.id, 0).catch(() => {})
+          // Mark the video as fully watched by storing the full duration (Bug #3).
+          // progress == duration distinguishes "completed" from "never played"
+          // (progress 0, no row) everywhere, and resume logic skips it because it
+          // falls outside the RESUME window, so replay starts from the beginning.
+          posRef.current = video.duration || 0
+          void saveHistory(posRef.current)
           onEnded?.()
         }}
         onVolumeChange={onVolumeChange}
@@ -456,6 +559,7 @@ export function VideoPlayer({
               ) : null,
           }}
         />
+        <FullscreenClock />
       </MediaPlayer>
     </div>
   )

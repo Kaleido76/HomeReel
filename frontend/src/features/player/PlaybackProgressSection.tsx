@@ -19,6 +19,9 @@ export function PlaybackProgressSection({ videoId, duration }: { videoId: string
   })
 
   const h = history.data?.history
+  // A completed episode stores progress == duration (Bug #3); show it as a full
+  // 100% bar instead of collapsing to "no progress".
+  const completed = !!h && h.progress > 0 && duration > 0 && h.progress >= duration
   const historyPct = duration > 0 && h && h.progress > 0 ? Math.min(100, (h.progress / duration) * 100) : 0
 
   return (
@@ -35,7 +38,7 @@ export function PlaybackProgressSection({ videoId, duration }: { videoId: string
       ) : h.progress > 0 ? (
         <>
           <p className="mt-2 text-sm text-neutral-500">
-            上次播放到 {formatDuration(h.progress)}
+            {completed ? '已播放完毕' : `上次播放到 ${formatDuration(h.progress)}`}
             {duration > 0 ? ` / ${formatDuration(duration)}` : ''}
             {h.updated_at ? ` · ${h.updated_at.slice(0, 10)}` : ''}
           </p>

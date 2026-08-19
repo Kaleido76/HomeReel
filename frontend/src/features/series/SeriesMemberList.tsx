@@ -257,8 +257,11 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
               </div>
               <div className="min-w-0 flex-1 px-4 py-3.5">
                 <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
-                {member.duration > 0 && member.progress > 0 && member.progress < member.duration - RESUME_TAIL && (
-                  <ProgressBar value={(member.progress / member.duration) * 100} className="mt-2 h-1 w-full max-w-xs" />
+                {member.duration > 0 && (member.progress >= member.duration || (member.progress > 0 && member.progress < member.duration - RESUME_TAIL)) && (
+                  <ProgressBar
+                    value={Math.min(100, (member.progress / member.duration) * 100)}
+                    className="mt-2 h-1 w-full max-w-xs"
+                  />
                 )}
               </div>
               <span className="flex shrink-0 items-center pr-4 text-xs text-neutral-400">
@@ -273,7 +276,10 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
                     params={{ id: seriesId, videoId: member.video_id }}
                     className="flex shrink-0 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
                   >
-                    <Play className="size-3.5" /> <span className="hidden sm:inline">{member.progress > 0 ? '续播' : '播放'}</span>
+                    <Play className="size-3.5" />{' '}
+                    <span className="hidden sm:inline">
+                      {member.progress > 0 && member.progress < member.duration - RESUME_TAIL ? '续播' : '播放'}
+                    </span>
                   </Link>
                 ) : (
                   <Tooltip content="无法在线播放">
@@ -313,8 +319,11 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
           >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-neutral-800">{dragMember.episode_title || dragMember.title}</p>
-                {dragMember.duration > 0 && dragMember.progress > 0 && dragMember.progress < dragMember.duration - RESUME_TAIL && (
-                  <ProgressBar value={(dragMember.progress / dragMember.duration) * 100} className="mt-2 h-1 w-full max-w-xs" />
+                {dragMember.duration > 0 && (dragMember.progress >= dragMember.duration || (dragMember.progress > 0 && dragMember.progress < dragMember.duration - RESUME_TAIL)) && (
+                  <ProgressBar
+                    value={Math.min(100, (dragMember.progress / dragMember.duration) * 100)}
+                    className="mt-2 h-1 w-full max-w-xs"
+                  />
                 )}
               </div>
             <span className="shrink-0 text-xs text-neutral-400">
