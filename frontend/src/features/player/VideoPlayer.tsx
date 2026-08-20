@@ -41,6 +41,7 @@ import { type SeriesPlaybackPrefs } from '../../api/series'
 import { getActiveTab, subscribeTabs } from '../../tabs/manager'
 import { NEAR_END, RESUME_MIN, RESUME_TAIL, SAVE_INTERVAL } from '../../lib/playback'
 import type { PlayMode } from '../../lib/playability'
+import { useFakeFullscreen } from '../../lib/useFakeFullscreen'
 
 // StreamSrc is the media source handed to <MediaPlayer>: a plain MP4 (direct /
 // remux) or the transcode HLS playlist. /api/stream/{id} has no extension, so the
@@ -48,11 +49,11 @@ import type { PlayMode } from '../../lib/playability'
 type StreamSrc = VideoSrc | { src: string; type: 'application/x-mpegurl' }
 
 // FullscreenClock shows the current system time (HH:mm) in the player's top-right
-// corner while the media is fullscreen. It sits inside <MediaPlayer> so it can
-// read the fullscreen state; the clock is pointer-events-none so it never blocks
-// the controls underneath.
-function FullscreenClock() {
-  const fullscreen = useMediaState('fullscreen')
+// corner while the media is fullscreen (native or the mobile fake-fullscreen
+// overlay). It sits inside <MediaPlayer> so it can read the fullscreen state;
+// the clock is pointer-events-none so it never blocks the controls underneath.
+function FullscreenClock({ fakeActive }: { fakeActive: boolean }) {
+  const fullscreen = useMediaState('fullscreen') || fakeActive
   const [time, setTime] = useState(() => new Date())
 
   useEffect(() => {
@@ -68,6 +69,38 @@ function FullscreenClock() {
     <div className="pointer-events-none absolute right-2 top-2 z-[60] rounded bg-black/40 px-2 py-0.5 text-base font-semibold leading-tight text-white/90">
       {hh}:{mm}
     </div>
+  )
+}
+
+// PlayerFullscreenButton replaces the layout's native fullscreen button so the
+// same control routes to the right fullscreen mode per device (ADR-006 修订):
+// desktop keeps Vidstack's native fullscreen, touch/mobile uses the fake CSS
+// overlay (which native fullscreen would otherwise hide our controls/subtitles
+// behind, or be unavailable on iOS <div>). It reuses the default button's
+// classes and icon set so it looks and behaves identically to the original.
+function PlayerFullscreenButton({
+  fake,
+  onToggle,
+}: {
+  fake: { active: boolean; mobile: boolean }
+  onToggle: () => void
+}) {
+  const nativeFullscreen = useMediaState('fullscreen')
+  const active = nativeFullscreen || fake.active
+  const enterText = '全屏'
+  const exitText = '退出全屏'
+  const Icon = active ? defaultLayoutIcons.FullscreenButton.Exit : defaultLayoutIcons.FullscreenButton.Enter
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={active ? exitText : enterText}
+      data-media-tooltip="fullscreen"
+      data-active={active ? '' : undefined}
+      className="vds-fullscreen-button vds-button"
+    >
+      <Icon className="vds-icon" />
+    </button>
   )
 }
 
@@ -90,6 +123,38 @@ export function VideoPlayer({
   const playerRef = useRef<MediaPlayerInstance>(null)
   const remote = useMediaRemote(playerRef)
   const queryClient = useQueryClient()
+  // Mobile browsers get the fake (CSS) fullscreen (ADR-006 修订); desktop keeps
+  // native fullscreen. The fullscreen control routes to fake on mobile and to
+  // native remote otherwise. landscape tells the hook whether the video content
+  // is wide (width > height) so it can decide to force-rotate on portrait.
+  const fake = useFakeFullscreen((video.width ?? 0) > (video.height ?? 0))
+
+  // The layout's native fullscreen button is replaced by PlayerFullscreenButton
+  // (see below), so the "f" shortcut and the button both route here: native on
+  // desktop, fake on mobile.
+  const toggleFullscreen = useCallback(() => {
+    if (fake.mobile) fake.toggle()
+    else remote.toggleFullscreen()
+  }, [fake, remote])
+
+  // Restore the native "f" shortcut that the replaced default button used to
+  // own. Only handled when the player (or its descendant control) has focus so
+  // typing an "f" elsewhere is unaffected.
+  useEffect(() => {
+    const el = playerRef.current?.el
+    if (!el) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'f' || e.key === 'F') {
+        const t = e.target as Node | null
+        if (el.contains(t)) {
+          e.preventDefault()
+          toggleFullscreen()
+        }
+      }
+    }
+    el.addEventListener('keydown', onKeyDown)
+    return () => el.removeEventListener('keydown', onKeyDown)
+  }, [toggleFullscreen])
   const [resumeAt, setResumeAt] = useState(0)
   const posRef = useRef(0)
   const lastSaveRef = useRef(0)
@@ -480,7 +545,7 @@ export function VideoPlayer({
   }
 
   return (
-    <div className="relative h-full w-full">
+    <div ref={fake.attach} className="relative h-full w-full">
       <MediaPlayer
         ref={playerRef}
         src={mediaSrc}
@@ -492,6 +557,15 @@ export function VideoPlayer({
         className="h-full w-full bg-black"
         style={{ aspectRatio: 'auto' }}
         onProviderChange={onProviderChange}
+        onFullscreenChange={() => {
+          // If the browser managed to enter native fullscreen while the fake
+          // overlay is already up (e.g. the native "f" shortcut or double-tap),
+          // back out of native and restore the fake overlay so they never stack.
+          if (fake.active) {
+            remote.exitFullscreen()
+            fake.enter()
+          }
+        }}
         onCanPlay={() => {
           ensurePendingSeek()
           if (resumeAt > 0) {
@@ -544,6 +618,9 @@ export function VideoPlayer({
         <DefaultVideoLayout
           icons={defaultLayoutIcons}
           slots={{
+            fullscreenButton: (
+              <PlayerFullscreenButton fake={fake} onToggle={toggleFullscreen} />
+            ),
             settingsMenuItemsEnd:
               audioList.length > 1 ? (
                 <DefaultMenuSection label="音轨" value={currentAudioLabel ?? `音轨 ${audio + 1}`}>
@@ -559,7 +636,7 @@ export function VideoPlayer({
               ) : null,
           }}
         />
-        <FullscreenClock />
+        <FullscreenClock fakeActive={fake.active} />
       </MediaPlayer>
     </div>
   )

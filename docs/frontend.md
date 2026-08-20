@@ -259,8 +259,27 @@
 - 样式 import `@vidstack/react/player/styles/{base.css,default/theme.css,default/layouts/video.css}`，
   `DefaultVideoLayout` 从 `@vidstack/react/player/layouts/default` 导入。
 - **全屏时钟（2026-09）**：`FullscreenClock` 组件渲染在 `MediaPlayer` 内，`useMediaState('fullscreen')`
-  为真时在播放器**右上角贴角**（`right-2 top-2`）显示当前系统时间 `HH:mm`——半透明圆角底
-  （`bg-black/40`）、略放大（`text-base`），每 30s 刷新，`pointer-events-none` 不挡控制条。
+  为真（原生或伪全屏，见下）时在播放器**右上角贴角**（`right-2 top-2`）显示当前系统时间 `HH:mm`——
+  半透明圆角底（`bg-black/40`）、略放大（`text-base`），每 30s 刷新，`pointer-events-none` 不挡控制条。
+- **伪全屏（2026-09 修订，ADR-006）**：触摸/移动端浏览器原生全屏要么不可用（iOS Safari `<div>` 不支持
+  `requestFullscreen`），要么接管整个浏览器 UI 把我们自定义的控制条/WebVTT 字幕盖在下面。故移动端全屏按钮
+  **不调原生接口**，改走纯 CSS 伪全屏；桌面端保持原生全屏。实现：
+  - `lib/useFakeFullscreen.ts` 提供 `useFakeFullscreen(landscape)`——`isMobile` 用 `(pointer: coarse)` 判定
+    （触屏设备；触控笔记本因有精指针不误判）；`landscape` 是视频内容是否横屏（`video.width > video.height`），
+    用于决定是否**强制旋转**（见下）。暴露 `active / mobile / landscape / attach / enter / exit / toggle`。
+    `enter()` 给播放器外层包裹 div 加 `fake-fullscreen`（必要时加 `fake-fullscreen-rotate`）class，
+    `Escape` 退出。
+  - 样式在 `index.css`：`.fake-fullscreen` 用 `position: fixed; inset: 0; width: 100dvw; height: 100dvh;
+    z-index: 99999` 铺满动态视口并盖住应用（含顶栏 TabBar）；`.fake-fullscreen-rotate` 在**竖屏设备 +
+    横屏视频内容**时把容器 `rotate(90deg)`（`width: 100dvh; height: 100dvw; transform-origin: top left;
+    left: 100dvw`）让横屏视频铺满竖屏——这是**强制（CSS）旋转**，不依赖系统横屏。**前提**：播放器祖先不得带
+    CSS transform（否则成为 fixed 的包含块）。当前播放器 overlay 挂在 `LibraryLayout` 根部（不在带
+    `translateX` 的宽屏列内），满足该前提。
+  - `VideoPlayer` 用 `PlayerFullscreenButton` 覆盖 `DefaultVideoLayout` 的 `fullscreenButton` slot（复用
+    默认按钮的 `vds-fullscreen-button vds-button` class 与图标，观感一致）：移动端 `fake.toggle()`、
+    桌面端 `remote.toggleFullscreen()`；并自行恢复被替换掉的「f」快捷键（仅在播放器子树聚焦时生效）。
+    `onFullscreenChange` 兜底：若伪全屏期间浏览器仍进入了原生全屏则 `remote.exitFullscreen()` 后再
+    `fake.enter()`，避免两者叠加。`FullscreenClock` 在原生或伪全屏时均显示。
 - **`/api/stream/{id}` 无扩展名，`MediaPlayer` 的 `src` 必须显式带 `type`**（`VideoSrc`），否则
   回退 HEAD 探测失败即报 `could not find a loader`。
 - **播放器填满播放栏高度**：`MediaPlayer` 加 `className="h-full w-full bg-black"` +
