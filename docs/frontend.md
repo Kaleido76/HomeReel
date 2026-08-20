@@ -351,8 +351,15 @@
     （`DELETE /api/cache/subtitles/{videoId}/{track}`）、按视频清空（`DELETE /api/cache/subtitles/{videoId}`）、
     或一键清空全部字幕（`DELETE /api/cache?kind=subtitle`）。源文件更换/提取乱码时逐条删除，重播即重建。
   - **封面/缩略图**：正常使用中的**不提供删除**（扫描时重建，删无收益），仅当它们成为孤儿时经「清理孤儿」清掉。
-  - **孤儿缓存**（`DELETE /api/cache/orphans`）：库中已无对应视频的残留文件，打包显示总量并按类给明细，
-    一键整体清理。孤儿判定由后端按缓存文件名解析视频 ID 并与全部视频索引对比。所有清理不影响源文件。
+   - **孤儿缓存**（`DELETE /api/cache/orphans`）：库中已无对应视频的残留文件，打包显示总量并按类给明细，
+     一键整体清理。孤儿判定由后端按缓存文件名解析视频 ID 并与全部视频索引对比。所有清理不影响源文件。
+- **开发者工具**（`DevToolsPage`，2026-09）：在无法打开浏览器开发者工具的终端（手机等）上记录/查看/归档前端日志，
+  Android-Studio-logcat 式——可实时查看、按**级别**（log/info/warn/error/debug）与**模块**过滤、一键清除、归档到后端。
+  - **采集**（`lib/devlog.ts`）：App 启动 `initDevLog()` 按持久化开关（`localStorage 'devtools.enabled'`）安装
+    `console.*` 劫持（覆盖第三方库输出）+ 提供 `devLog(module, level, ...)` 带模块标记的 logger；**环形缓冲上限
+    2000 条**（超出丢弃最旧），仅开关开启时采集；订阅 `subscribeDevLog` 让页面响应式刷新。
+  - **归档**：把当前采集的日志 `POST /api/devlogs` 提交到后端（返回 ID，见 decisions.md §2.6）；归档浏览器列出
+    历史记录，选中后查看逐条日志（**复制全部**、`GET /api/devlogs/{id}/raw` 原始文本、删除）。
 - **后台任务按钮（JobsIndicator）**：header 右侧、退出登录旁。双鱼箭头图标（`RefreshCw`）在有长时任务
   时 `animate-spin` 并显示数量徽标；点击弹出任务面板（`features/jobs/JobsIndicator.tsx`，轮询
   `GET /api/jobs`，进行中 1s / 空闲 15s）。面板为 `absolute` 覆盖自身区域，**不因点击外部消失**，仅

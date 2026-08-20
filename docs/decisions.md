@@ -170,6 +170,18 @@ CREATE TABLE series_playback_prefs (
   PRIMARY KEY (series_id, user)
 );
 
+-- 开发者工具日志归档（2026-09）：前端「开发者工具」提交的日志快照（移动端等无
+-- 开发者工具处采集），供 PC 端选择查看/复制。entries 为 JSON 数组（每条含
+-- timestamp/level/module/message），原样存储以便取回逐字还原。
+CREATE TABLE devlogs (
+  id         TEXT PRIMARY KEY,      -- ULID
+  source     TEXT NOT NULL DEFAULT '',  -- 提交设备/来源描述（如「Android（移动端）」）
+  note       TEXT NOT NULL DEFAULT '',  -- 用户备注（可选）
+  entries    TEXT NOT NULL,         -- JSON 数组，日志条目
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_devlogs_created ON devlogs(created_at);
+
 -- 会话（登录后签发）
 CREATE TABLE sessions (
   token      TEXT PRIMARY KEY,
@@ -327,6 +339,20 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 | GET | `/api/search?q=` | 统一搜索（文件名 / 标签 / 剧名，FTS5；单集简介已移除 2026-09） |
 | GET | `/api/jobs` | 任务队列状态（索引进度） |
 | GET | `/api/health` | 健康检查 |
+
+### 2.6 开发者工具日志归档
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/devlogs` | 提交一份前端日志归档 `{ source?, note?, entries: [{timestamp, level, module, message}] }` → `{ id }`（移动端把当前采集的日志传到后端保存） |
+| GET | `/api/devlogs` | 归档记录列表（`{ items: [{id, source, note, count, created_at}] }`，不含 entries） |
+| GET | `/api/devlogs/:id` | 取回一份归档（含 `entries` 逐字还原） |
+| GET | `/api/devlogs/:id/raw` | 归档日志的纯文本（`text/plain`，每行一条）——非 GUI 方式，开发时按 ID 快速抓取日志 |
+| DELETE | `/api/devlogs/:id` | 删除一份归档 |
+
+> 数据模型：`devlogs` 表（见 §1.2）。前端采集采用「全局劫持 `console.*` + 带模块标记的
+> `devLog()` logger」，环形缓冲上限 2000 条，仅在开关开启时采集（localStorage 持久化开关，App
+> 启动即安装 hook）；归档接口只负责保存/取回，采集状态与缓冲为前端内存态。
 
 ## 3. 配置（config.yaml 示例）
 

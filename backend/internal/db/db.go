@@ -418,6 +418,16 @@ var migrations = []string{
 	// 展示一并去掉（前端不再发送 genre 参数）。列未被索引/约束/触发器引用，DROP 安全。
 	`ALTER TABLE videos DROP COLUMN genre;
 	ALTER TABLE shows DROP COLUMN genre`,
+	// 开发者工具日志归档（2026-09）：前端「开发者工具」提交的日志快照。entries
+	// 为 JSON 数组（每条含 timestamp/level/module/message），原样存储以便取回还原。
+	`CREATE TABLE devlogs (
+		id         TEXT PRIMARY KEY,
+		source     TEXT NOT NULL DEFAULT '',
+		note       TEXT NOT NULL DEFAULT '',
+		entries    TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX idx_devlogs_created ON devlogs(created_at)`,
 }
 
 // Migrate applies pending migrations in order, tracking applied versions in

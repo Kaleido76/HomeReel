@@ -34,6 +34,7 @@ type Server struct {
 	series    domain.SeriesRepo
 	history   domain.HistoryRepo
 	prefs     domain.PlaybackPrefsRepo
+	devlogs   domain.DevLogRepo
 	streaming *streaming.Service
 	search    search.Provider
 	bus       *events.Bus
@@ -47,14 +48,16 @@ type Server struct {
 // refresh.
 func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Service, fsvc *fservice.Service,
 	videosRepo domain.VideoRepo, showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
-	historyRepo domain.HistoryRepo, prefsRepo domain.PlaybackPrefsRepo, streamingSvc *streaming.Service,
+	historyRepo domain.HistoryRepo, prefsRepo domain.PlaybackPrefsRepo, devLogRepo domain.DevLogRepo,
+	streamingSvc *streaming.Service,
 	searchProvider search.Provider, bus *events.Bus,
 	dataDir string, staticDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, fsvc: fsvc, jobs: jobsSvc, scanner: scannerSvc,
 		videos: videosRepo, shows: showsRepo, series: seriesRepo,
-		history: historyRepo, prefs: prefsRepo, streaming: streamingSvc,
-		search: searchProvider, bus: bus, dataDir: dataDir,
+		history: historyRepo, prefs: prefsRepo, devlogs: devLogRepo,
+		streaming: streamingSvc,
+		search:    searchProvider, bus: bus, dataDir: dataDir,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -127,6 +130,11 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.Handle("DELETE /api/cache/subtitles/{videoId}/{track}", s.requireAuth(http.HandlerFunc(s.handleCacheSubtitleTrackClear)))
 	mux.Handle("DELETE /api/cache/prefs", s.requireAuth(http.HandlerFunc(s.handleCachePrefsClear)))
 	mux.Handle("DELETE /api/cache/prefs/{videoId}", s.requireAuth(http.HandlerFunc(s.handleCachePrefsVideoClear)))
+	mux.Handle("POST /api/devlogs", s.requireAuth(http.HandlerFunc(s.handleDevLogCreate)))
+	mux.Handle("GET /api/devlogs", s.requireAuth(http.HandlerFunc(s.handleDevLogList)))
+	mux.Handle("GET /api/devlogs/{id}", s.requireAuth(http.HandlerFunc(s.handleDevLogGet)))
+	mux.Handle("GET /api/devlogs/{id}/raw", s.requireAuth(http.HandlerFunc(s.handleDevLogRaw)))
+	mux.Handle("DELETE /api/devlogs/{id}", s.requireAuth(http.HandlerFunc(s.handleDevLogDelete)))
 	if staticDir != "" {
 		mux.Handle("GET /", staticHandler(staticDir))
 	}
