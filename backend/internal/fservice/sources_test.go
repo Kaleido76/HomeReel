@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"homereel/backend/internal/db"
+	"homereel/backend/internal/media"
 	"homereel/backend/internal/store"
 )
 
@@ -21,7 +22,7 @@ func sourceService(t *testing.T) *Service {
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
-	return New(nil, store.NewSettingsRepo(database), store.NewSourceRepo(database), "ffmpeg", "ffprobe")
+	return New(nil, store.NewSettingsRepo(database), store.NewSourceRepo(database), media.Paths{})
 }
 
 // TestAddSourceRejectsNesting verifies media sources cannot overlap: marking a

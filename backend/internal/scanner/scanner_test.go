@@ -40,16 +40,15 @@ func newTestScanner(t *testing.T) (*Service, *jobs.Service, *scanCalls) {
 		store.NewSeriesRepo(database),
 		jobsSvc,
 		events.New(),
-		"ffprobe",
-		"ffmpeg",
+		media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"},
 		t.TempDir(),
 	)
 	calls := &scanCalls{}
-	svc.probe = func(context.Context, string, string) (media.Info, error) {
+	svc.probe = func(context.Context, media.Paths, string) (media.Info, error) {
 		calls.probes++
 		return media.Info{Duration: 90, Codec: "h264", AudioCodec: "aac", Container: "mp4", Width: 1920, Height: 1080}, nil
 	}
-	svc.thumbnail = func(context.Context, string, string, string, string, float64) error {
+	svc.thumbnail = func(context.Context, media.Paths, string, string, string, float64) error {
 		calls.thumbs++
 		return nil
 	}
@@ -248,7 +247,7 @@ func TestReProbeWhenMetadataMissing(t *testing.T) {
 	mkVideo(t, filepath.Join(root, "a.mp4"))
 
 	failProbe := true
-	svc.probe = func(context.Context, string, string) (media.Info, error) {
+	svc.probe = func(context.Context, media.Paths, string) (media.Info, error) {
 		calls.probes++
 		if failProbe {
 			return media.Info{}, errors.New("probe failed")

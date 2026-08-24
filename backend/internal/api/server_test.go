@@ -15,6 +15,7 @@ import (
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/media"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/store"
@@ -67,14 +68,13 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 		seriesRepo,
 		jobsSvc,
 		events.New(),
-		"ffprobe",
-		"ffmpeg",
+		media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"},
 		t.TempDir(),
 	)
-	streamingSvc := streaming.New(videosRepo, t.TempDir(), "ffmpeg", "ffprobe")
+	streamingSvc := streaming.New(videosRepo, t.TempDir(), media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
 	dataDir := t.TempDir()
 	bus := events.New()
-	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, "ffmpeg", "ffprobe")
+	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
 	fsvc.SetLibraryNotifier(scannerSvc.IngestPaths, scannerSvc.EvictPaths)
 	handler := New(authSvc, jobsSvc, scannerSvc, fsvc,
 		videosRepo, showsRepo, seriesRepo, historyRepo, prefsRepo,

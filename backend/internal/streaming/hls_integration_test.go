@@ -21,7 +21,7 @@ import (
 func TestHLSTranscodeSegmentsPlayable(t *testing.T) {
 	base := t.TempDir()
 	src := makeHLSMkv(t, base, "hevc.mkv", "hevc")
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v2", Path: src, Duration: 30, Codec: "hevc", AudioCodec: "aac"}
 
 	hs := s.hls.session(v, "tok", 0)
@@ -73,7 +73,7 @@ haveVideo:
 func TestRemuxMkvToPlayableMp4(t *testing.T) {
 	base := t.TempDir()
 	src := makeHLSMkv(t, base, "h264aac.mkv", "h264")
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v1", Path: src, Duration: 30, Codec: "h264", AudioCodec: "aac"}
 
 	if !s.RemuxPlayable(v) {
@@ -117,7 +117,7 @@ func TestRemuxMkvToPlayableMp4(t *testing.T) {
 func TestHLSReencodesNonCopyableAudio(t *testing.T) {
 	base := t.TempDir()
 	src := makeMkvWithAudio(t, base, "h264ac3.mkv", "h264", "ac3")
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v1", Path: src, Duration: 30, Codec: "h264", AudioCodec: "ac3"}
 
 	if s.RemuxPlayable(v) {
@@ -182,7 +182,7 @@ func makeDualAudioMkv(t *testing.T, dir, name, vcodec, acodec0, acodec1, title0,
 func TestAudioTrackListLabels(t *testing.T) {
 	base := t.TempDir()
 	src := makeDualAudioMkv(t, base, "dual.mkv", "h264", "aac", "mp3", "国语", "粤语")
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v1", Path: src}
 
 	tracks := s.ListAudioTracks(context.Background(), v)
@@ -202,7 +202,7 @@ func TestAudioTrackListLabels(t *testing.T) {
 func TestRemuxSelectsAudioTrack(t *testing.T) {
 	base := t.TempDir()
 	src := makeDualAudioMkv(t, base, "dual.mkv", "h264", "aac", "mp3", "A", "B")
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v1", Path: src, Duration: 30, Codec: "h264", AudioCodec: "aac"}
 
 	if !s.RemuxPlayable(v) {
@@ -247,7 +247,7 @@ func TestRemuxSelectsAudioTrack(t *testing.T) {
 func TestHLSSelectsAudioTrack(t *testing.T) {
 	base := t.TempDir()
 	src := makeDualAudioMkv(t, base, "dual.mkv", "h264", "aac", "mp3", "A", "B")
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v1", Path: src, Duration: 30, Codec: "h264", AudioCodec: "aac"}
 
 	for _, want := range []int{0, 1} {

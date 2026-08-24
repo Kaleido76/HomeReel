@@ -13,7 +13,14 @@ import (
 	"testing"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/media"
 )
+
+// testMediaPaths returns the binary paths used by tests that must exercise the
+// ffmpeg/ffprobe invocation paths without actually resolving them.
+func testMediaPaths() media.Paths {
+	return media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"}
+}
 
 func TestDirectPlayable(t *testing.T) {
 	s := &Service{}
@@ -135,7 +142,7 @@ func TestCoverPathTraversalRejected(t *testing.T) {
 }
 
 func TestSubtitleServesEmbeddedTrack(t *testing.T) {
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	v := domain.Video{ID: "v1", Path: filepath.Join("C:\\", "Media", "a.mkv")}
 	calls := 0
 	s.extractSubtitle = func(_ context.Context, src string, streamIndex int, out string) error {
@@ -174,7 +181,7 @@ func TestSubtitleServesEmbeddedTrack(t *testing.T) {
 
 func TestSubtitleSidecarWinsAndSkipsExtract(t *testing.T) {
 	dataDir := t.TempDir()
-	s := New(nil, dataDir, "ffmpeg", "ffprobe")
+	s := New(nil, dataDir, testMediaPaths())
 	src := filepath.Join(dataDir, "clip.mkv")
 	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -201,7 +208,7 @@ func TestSubtitleSidecarWinsAndSkipsExtract(t *testing.T) {
 }
 
 func TestSubtitleNotFoundWithoutTrack(t *testing.T) {
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	s.extractSubtitle = func(context.Context, string, int, string) error { return errors.New("no such stream") }
 	v := domain.Video{ID: "v1", Path: filepath.Join("C:\\", "Media", "a.mkv")}
 	rec := httptest.NewRecorder()
@@ -221,7 +228,7 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 
 func TestCacheOverviewAndClear(t *testing.T) {
-	s := New(nil, t.TempDir(), "", "")
+	s := New(nil, t.TempDir(), media.Paths{})
 	writeTestFile(t, filepath.Join(s.dataDir, "covers", "v1.jpg"), "jpg")
 	writeTestFile(t, filepath.Join(s.dataDir, "covers", "gone.webp"), "webp")
 	writeTestFile(t, filepath.Join(s.dataDir, "thumbs", "v1.thumb.jpg"), "thumb")
@@ -247,7 +254,7 @@ func TestCacheOverviewAndClear(t *testing.T) {
 }
 
 func TestListSubtitleCacheAndClearTracks(t *testing.T) {
-	s := New(nil, t.TempDir(), "", "")
+	s := New(nil, t.TempDir(), media.Paths{})
 	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1-1.vtt"), "vtt")
 	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1-3.vtt"), "vtt")
 	writeTestFile(t, filepath.Join(s.dataDir, "subtitles", "v1.vtt"), "vtt-old")
@@ -283,7 +290,7 @@ func TestListSubtitleCacheAndClearTracks(t *testing.T) {
 }
 
 func TestClearOrphans(t *testing.T) {
-	s := New(nil, t.TempDir(), "", "")
+	s := New(nil, t.TempDir(), media.Paths{})
 	writeTestFile(t, filepath.Join(s.dataDir, "covers", "v1.jpg"), "jpg")
 	writeTestFile(t, filepath.Join(s.dataDir, "covers", "gone.jpg"), "jpg")
 	writeTestFile(t, filepath.Join(s.dataDir, "thumbs", "v1.thumb.jpg"), "thumb")
@@ -307,7 +314,7 @@ func TestClearOrphans(t *testing.T) {
 }
 
 func TestRemuxPlayable(t *testing.T) {
-	withFFmpeg := &Service{ffmpegPath: "ffmpeg"}
+	withFFmpeg := &Service{media: media.Paths{FFmpeg: "ffmpeg"}}
 	cases := []struct {
 		name string
 		v    domain.Video
@@ -335,7 +342,7 @@ func TestRemuxPlayable(t *testing.T) {
 }
 
 func TestTranscodePlayable(t *testing.T) {
-	withFFmpeg := &Service{ffmpegPath: "ffmpeg"}
+	withFFmpeg := &Service{media: media.Paths{FFmpeg: "ffmpeg"}}
 	noFFmpeg := &Service{}
 	if !withFFmpeg.TranscodePlayable(domain.Video{Duration: 100}) {
 		t.Fatal("ffmpeg + duration should be transcodeable")
@@ -353,7 +360,7 @@ func TestTranscodePlayable(t *testing.T) {
 // changes (a replaced file must never serve stale bytes).
 func TestRemuxCacheReusedAndFingerprintInvalidates(t *testing.T) {
 	base := t.TempDir()
-	s := New(nil, base, "ffmpeg", "ffprobe")
+	s := New(nil, base, testMediaPaths())
 	remuxed := 0
 	s.remuxVideo = func(_ context.Context, _ domain.Video, out string, _ int) error {
 		remuxed++
@@ -404,7 +411,7 @@ func TestRemuxCacheReusedAndFingerprintInvalidates(t *testing.T) {
 // HTTP Range support and video/mp4 content type.
 func TestRemuxServesRange(t *testing.T) {
 	base := t.TempDir()
-	s := New(nil, base, "ffmpeg", "ffprobe")
+	s := New(nil, base, testMediaPaths())
 	content := []byte("0123456789")
 	s.remuxVideo = func(_ context.Context, _ domain.Video, out string, _ int) error {
 		return os.WriteFile(out, content, 0o644)
@@ -437,7 +444,7 @@ func TestRemuxServesRange(t *testing.T) {
 // TestRemuxUnavailable gates the remux endpoint for files that must transcode
 // instead (codec incompatible) and when no ffmpeg is configured.
 func TestRemuxUnavailable(t *testing.T) {
-	s := New(nil, t.TempDir(), "", "")
+	s := New(nil, t.TempDir(), media.Paths{})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/stream/v1/remux", nil)
 	if err := s.Remux(rec, req, domain.Video{ID: "v1", Codec: "hevc", AudioCodec: "aac"}, 0); err != ErrUnavailable {
@@ -469,7 +476,7 @@ func TestHLSSegmentBounds(t *testing.T) {
 // timeline with an ENDLIST (so hls.js renders a draggable progress bar, not a
 // live window) and declares one entry per keyframe-aligned segment.
 func TestHLSPlaylistContent(t *testing.T) {
-	s := New(nil, t.TempDir(), "ffmpeg", "ffprobe")
+	s := New(nil, t.TempDir(), testMediaPaths())
 	keyframes := []float64{0, 2, 4, 6, 8}
 	v := domain.Video{ID: "v1", Path: "x.mkv", Duration: 10, Codec: "hevc", AudioCodec: "aac"}
 	// Playlist uses the session's cached keyframes directly via ensureKeyframes,
@@ -500,7 +507,7 @@ func TestHLSPlaylistContent(t *testing.T) {
 }
 
 func TestHLSUnavailable(t *testing.T) {
-	s := New(nil, t.TempDir(), "", "")
+	s := New(nil, t.TempDir(), media.Paths{})
 	v := domain.Video{ID: "v1", Path: "x.mkv", Duration: 10}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/stream/v1/hls/playlist.m3u8?session=tok", nil)

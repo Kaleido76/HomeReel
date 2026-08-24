@@ -22,6 +22,7 @@ import (
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/files"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/media"
 )
 
 // ErrInvalidName is returned for a user-supplied name that is not a plain
@@ -62,23 +63,23 @@ type OpResult struct {
 
 // Service implements the generic file browser operations.
 type Service struct {
-	jobs        *jobs.Service
-	pins        domain.SettingsRepo
-	sources     domain.SourceRepo
-	ffmpegPath  string
-	ffprobePath string
-	ingest      func(ctx context.Context, paths []string) error
-	evict       func(ctx context.Context, paths []string) error
+	jobs    *jobs.Service
+	pins    domain.SettingsRepo
+	sources domain.SourceRepo
+	media   media.Paths
+	ingest  func(ctx context.Context, paths []string) error
+	evict   func(ctx context.Context, paths []string) error
 }
 
 // New builds the generic file service. jobsSvc backs background copy/move and
 // format-factory conversions; pins persists favorite paths and sources the
-// multimedia-source markers, both in the settings/DB layer. ffmpegPath /
-// ffprobePath are the binaries used by the format-factory convert jobs (empty
-// → rely on PATH). The library notifier (SetLibraryNotifier) is wired by the
-// server; without it every operation stays a pure filesystem action.
-func New(jobsSvc *jobs.Service, pins domain.SettingsRepo, sources domain.SourceRepo, ffmpegPath, ffprobePath string) *Service {
-	return &Service{jobs: jobsSvc, pins: pins, sources: sources, ffmpegPath: ffmpegPath, ffprobePath: ffprobePath}
+// multimedia-source markers, both in the settings/DB layer. mp carries the
+// resolved ffmpeg/ffprobe binaries used by the format-factory convert jobs
+// (empty → those features are disabled). The library notifier
+// (SetLibraryNotifier) is wired by the server; without it every operation stays
+// a pure filesystem action.
+func New(jobsSvc *jobs.Service, pins domain.SettingsRepo, sources domain.SourceRepo, mp media.Paths) *Service {
+	return &Service{jobs: jobsSvc, pins: pins, sources: sources, media: mp}
 }
 
 // SetLibraryNotifier wires the unified ingest/evict pipeline (ADR-017): after a

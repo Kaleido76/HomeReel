@@ -6,8 +6,17 @@
 ## 1. ffprobe / ffmpeg
 
 - 探测、缩略图、字幕、格式工厂转换均依赖 FFmpeg / ffprobe。
-- 进程 PATH 找不到时在 `config.yaml` 显式配置 `media.ffmpeg_path` / `media.ffprobe_path`
-  （YAML `\\` 转义），改后重启。
+- **所有 ffmpeg/ffprobe 命令构建与执行统一收口在 `backend/internal/media` 包（ADR-020）**：
+  探测（`Probe` / `ProbeStreams` / `ProbeSubtitles` / `ProbeAudioStreams` / `ProbeAudioChannels` /
+  `ScanKeyframes`）、缩略图（`Thumbnail`）、字幕提取（`ExtractTextSubtitle`）、Remux 流拷贝
+  （`RemuxVideo`）、HLS 分片转码（`TranscodeSegment`）、格式工厂（`ConvertToMp4`）。调用方
+  （streaming/scanner/fservice）只传结构化参数，**不拼命令行**；`-nostdin -hide_banner -loglevel error -y`
+  基础头、`-map 0:v:0 -map 0:a:N?` 映射模式、「全设备通用音频」白名单（`media.UniversalAudioCodecs`，
+  同时供 Remux 门槛与格式工厂使用）与可流拷贝视频编码（`media.RemuxVideoCodecs`）均只此一处定义。
+- **二进制路径启动时统一解析**（`media.ResolvePaths`，main.go 装配）：配置为绝对路径直接用，裸名（默认
+  `ffmpeg` / `ffprobe`）走 PATH（`exec.LookPath`），缺失则**启动即报错**（不等到运行中途）；显式空值表示
+  未配置对应能力（remux/transcode/字幕提取/格式工厂随之禁用）。进程 PATH 找不到时在 `config.yaml` 显式
+  配置 `media.ffmpeg_path` / `media.ffprobe_path`（YAML `\\` 转义），改后重启。
 
 ## 2. 容器判定
 
@@ -32,7 +41,10 @@
 
 ## 3.1 格式工厂（2026-09，替代原「重封」页签）
 
-把任意本地视频/文件夹转换为**浏览器可直接 Range 播放的 Faststart MP4 副本**（`fservice/convert.go`）。
+把任意本地视频/文件夹转换为**浏览器可直接 Range 播放的 Faststart MP4 副本**（`fservice/convert.go` +
+`media.ConvertToMp4`）。fservice 层负责入队、命名（`freeName`/`intendedOutput`）与参数归一化
+（`ConvertParams.norm`）；转换策略（流探测 → 无损流拷贝 → 烧录降级）、ffprobe 探测与进度解析全部在
+`media.ConvertToMp4` 内部。
 2026-08 起播放走**三层动态流**（§4）：Direct / Remux / Transcode 三者皆不可的资源（编码与容器都不兼容、
 且 ffmpeg 未配置等）才播放按钮禁用并引导格式工厂转换，转换产物即可直连播放、可拖动进度条。
 
@@ -56,14 +68,14 @@
 | **H.264 MP4** | h264 | 19 | smart | 可勾选 | 重编码 libx264，文本字幕转 mov_text 保留，位图字幕无法承载时 `-sn` 丢弃；勾选烧录则首选字幕烧进画面 |
 | **H.265 MP4** | h265 | 23 | smart | 可勾选 | 同上，`libx265`（产物为 HEVC），同等画质更小、需较新设备支持 |
 
-`audio=smart`：仅**全设备通用**的 aac/mp3（`universalMp4Audio` 白名单）走 `-c:a copy`，其余一律 AAC；
+`audio=smart`：仅**全设备通用**的 aac/mp3（`media.UniversalAudioCodecs` 白名单）走 `-c:a copy`，其余一律 AAC；
 `copy` 强制保留原音轨（可能产出 Windows 播放器不认的 AC3）；`aac` 强制按 `akbps` 重编码。
 `vcrf`/`akbps` 越界值在 `norm()` 中被钳制到安全区间。
 
-**两级策略（快速 MP4，ffprobe 探测流 → 自动选择）**：
+**两级策略（快速 MP4，`media.ConvertToMp4` 内 ffprobe 探测流 → 自动选择）**：
 1. **无损流拷贝（首选）**：`-map 0 -c copy -c:s mov_text -f mp4 -movflags +faststart`——视频/音频帧
    **逐比特拷贝**，码率/画质/所有音轨不变；文本字幕转 mov_text 保留。唯一例外：**按首个音轨编码**判定——
-   仅当首轨是**全设备通用**的 aac/mp3（`universalMp4Audio` 白名单）才拷贝，否则（**AC3/EAC3**、dts、vorbis、opus、
+   仅当首轨是**全设备通用**的 aac/mp3（`media.UniversalAudioCodecs` 白名单）才拷贝，否则（**AC3/EAC3**、dts、vorbis、opus、
    flac、truehd、pcm…）一律转 AAC 192k——AC3/EAC3 浏览器通常无 Dolby 解码器会无声、Windows 播放器也报
    「不支持的 AC3 编码」，拷贝会产出「换个设备就无声」的文件。视频永远无损。**注意**：判定只看首个音轨，
    混装「aac 首轨 + AC3 次轨」时 `-map 0` 会把非通用轨一并拷贝（罕见场景，见 §6 已知限制）。
@@ -74,20 +86,20 @@
    结果字幕以「始终显示、不可关闭」的形式保留，视频为有损重编码。仍失败则该文件报错跳过（不做其它兜底）。
 
 **细节陷阱**：输出为 `*.tmp` 无扩展名，**必须显式 `-f mp4`**（否则无法推断 muxer）；字幕滤镜路径用
-正斜杠 + `\:` 转义盘符冒号（`escapeFilterPath`）；烧录路径只映射首选音轨（`-map 0:a?`）。
+正斜杠 + `\:` 转义盘符冒号（`media` 内部 `escapeFilterPath`）；烧录路径只映射首选音轨（`-map 0:a?`）。
 
-- 后台任务：`jobs` 的 `convert` 类型（`fservice` 包）。**进度与剩余时间**：解析 ffmpeg `-progress pipe:1` 的
-  `out_time_us` 与 `total_size`，按优先级取进度——① **`out_time/ffprobe 真实时长`（精确，主路径）**；
-  ② 时长缺失且是流拷贝时用 **`total_size/源大小`**（产物≈源大小，1:1 无任意系数）；③ 最后才用按文件大小估算的
-  时长（假设约 8 Mbps 平均码率）兜底。剩余时间由 `jobs.Reporter` 按「进度 × 已耗时」推算写入
+- 后台任务：`jobs` 的 `convert` 类型（`fservice` 包）。**进度与剩余时间**：`media.ConvertToMp4` 解析 ffmpeg
+  `-progress pipe:1` 的 `out_time_us` 与 `total_size`，按优先级取进度——① **`out_time/ffprobe 真实时长`（精确，
+  主路径）**；② 时长缺失且是流拷贝时用 **`total_size/源大小`**（产物≈源大小，1:1 无任意系数）；③ 最后才用按文件大小
+  估算的时长（假设约 8 Mbps 平均码率）兜底。剩余时间由 `jobs.Reporter` 按「进度 × 已耗时」推算写入
   `job.eta_seconds`，前端任务面板与格式工厂面板以「预计还需 X」展示（扫描/复制/移动等确定进度任务同样受益）。
 - 前端：文件页签工具栏「格式工厂」按钮把勾选（或含可转换文件的当前目录）移交到「工具」页签的格式工厂工具
   （`features/tools/format/FormatFactoryPage.tsx`）。面板自上而下：**操作面板**（预设工具 + 可微调参数表单）、
   **待转换队列**（勾选的文件/文件夹 + 「开始转换」；再次从文件页移交会**替换**当前待转换批次，非追加）、
   **转换队列**（所有 convert 任务：进行中在前带进度条与 ETA，历史在后分成功/失败，每行标注所用预设）。
 - **探测信息（`POST /api/convert/probe`，`fservice/convert_probe.go`）**：为所选文件逐个 ffprobe
-  （`probeStreams` 复用转换引擎的探测），目录展开为直接一级视频，返回 `video_codec` / `audio_codecs` /
-  `subtitle_codecs` / `duration` / `has_bitmap_subtitle`（`bitmapSubtitleCodecs`：PGS/VobSub/DVB 等位图字幕）。
+  （`media.ProbeStreams`，转换引擎同源探测），目录展开为直接一级视频，返回 `video_codec` / `audio_codecs` /
+  `subtitle_codecs` / `duration` / `has_bitmap_subtitle`（`media.BitmapSubtitleCodecs`：PGS/VobSub/DVB 等位图字幕）。
   前端据此在操作面板给出**检测信息**与禁用规则：含位图字幕 → 提示「快速 MP4 将自动降级为烧录」；检测到
   非通用音频（AC3 等）→ **禁用「保留原音」选项**（否则产出 Windows 播放器无声文件）、提示将自动转 AAC；
   均无字幕轨 → 禁用烧录字幕复选框；无损流拷贝 → 禁用清晰度 CRF；保留原音 → 禁用音频码率。待转换清单每行
@@ -109,7 +121,8 @@
   原生容器 + h264/vp8/vp9/av1/theora + aac/mp3/opus/vorbis/flac，不含 MKV/HEVC/fMP4/**AC3/EAC3**——Chromium
   与 Firefox 均无 Dolby 解码器，AC3 音轨会无声），仅在 `canPlayType` 探测不可用时兜底，不作为主判据。
 - 后端另提供两个**动态流门槛**：`remux_playable`（`streaming.RemuxPlayable`：ffmpeg 已配置 且 视频
-  ∈{h264,avc1,avc3} 且 音频为空 或 ∈{aac,mp3}（可流拷贝））与 `transcode_playable`（`streaming.TranscodePlayable`：
+  ∈{h264,avc1,avc3}（`media.RemuxVideoCodecs`）且 音频为空 或 ∈{aac,mp3}（`media.UniversalAudioCodecs`，
+  可流拷贝））与 `transcode_playable`（`streaming.TranscodePlayable`：
   ffmpeg 已配置 且 时长已知）。音频不可拷贝（AC3/EAC3/DTS/PCM——浏览器无 Dolby 解码器/无损 PCM）的文件
   **不判 remux_playable**，落入 Transcode：整条音频重编码要 ~70× 实时（一部 100 分钟影片约 80 秒），
   Remux 整片阻塞生成会卡死首播，而 HLS 按分片转码几秒即起播。Remux 优先于 Transcode（对可流拷贝的文件成本低）。
@@ -126,7 +139,7 @@
 
 - 适用：视频编码浏览器可解但容器不兼容（典型 MKV h264+aac），音频亦须可流拷贝（aac/mp3 或无声）。
   音频不可拷贝（AC3/EAC3/DTS/PCM）的文件**不走此层**，见 §4.2 Transcode。
-- 实现：`streaming.Remux` → `remuxPath`。首次请求把源**整片流拷贝**成缓存 MP4
+- 实现：`streaming.Remux` → `remuxPath`，命令构建在 `media.RemuxVideo`。首次请求把源**整片流拷贝**成缓存 MP4
   （`-i src -map 0:v:0 -map 0:a:N? -c:v copy -c:a copy`；`-movflags +faststart -f mp4`；`?audio=N` 选音轨，
   默认 0），落盘 `data_dir/remux/<id>.mp4`（默认轨）或 `<id>-a<N>.mp4`（其它轨）+ 同名 `.meta`
   （`size mtime` 指纹，源变化即重封装），随后经 `http.ServeContent` 走 HTTP Range，浏览器原生全片可拖。
@@ -144,7 +157,8 @@
 
 - 适用：编码不兼容（HEVC/rmvb/MPEG2/DTS 等）**或音频不可拷贝**（AC3/EAC3/DTS/PCM——浏览器无 Dolby 解码器，
   且整条音频重编码太慢不宜在 Remux 整片生成），`streaming.TranscodePlayable`。
-- 实现：`streaming.Playlist` / `Segment`（`hls.go`）。VOD 全量播放列表（关键帧对齐分片、`#EXT-X-ENDLIST`）
+- 实现：`streaming.Playlist` / `Segment`（`hls.go`），单分片转码命令构建在 `media.TranscodeSegment`。
+  VOD 全量播放列表（关键帧对齐分片、`#EXT-X-ENDLIST`）
   + 按需生成分片 `seg-{n}.ts`。播放列表内嵌**携带 `?session=` 的绝对分片 URL**（hls.js 相对解析会丢 query）。
 - 单分片命令：`-ss <kf[n]> -i src -map 0:v:0 -map 0:a:N? -c:v libx264 -preset veryfast -crf 23
   -pix_fmt yuv420p` + 音频参数（见下）+ `-mpegts_copyts 1 -output_ts_offset <kf[n]> -t <len> -f mpegts`

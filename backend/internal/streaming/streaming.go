@@ -31,14 +31,13 @@ var (
 // (canPlayType against the probe metadata it receives); DirectPlayable here is a
 // conservative fallback for browsers where that probe is unavailable.
 type Service struct {
-	videos      domain.VideoRepo
-	dataDir     string
-	ffmpegPath  string
-	ffprobePath string
-	subDir      string
-	remuxDir    string
-	remuxLocks  remuxLock
-	hls         *hlsManager
+	videos     domain.VideoRepo
+	dataDir    string
+	media      media.Paths
+	subDir     string
+	remuxDir   string
+	remuxLocks remuxLock
+	hls        *hlsManager
 	// extractSubtitle extracts the subtitle stream streamIndex of src into out
 	// (WebVTT). Injected for tests.
 	extractSubtitle func(ctx context.Context, src string, streamIndex int, out string) error
@@ -47,20 +46,20 @@ type Service struct {
 }
 
 // New builds the streaming service. dataDir hosts covers/, thumbs/, remux/,
-// hls/ and the extracted-subtitle cache (subtitles/).
-func New(videos domain.VideoRepo, dataDir, ffmpegPath, ffprobePath string) *Service {
+// hls/ and the extracted-subtitle cache (subtitles/). mp carries the resolved
+// ffmpeg/ffprobe binary paths.
+func New(videos domain.VideoRepo, dataDir string, mp media.Paths) *Service {
 	s := &Service{
-		videos:      videos,
-		dataDir:     dataDir,
-		ffmpegPath:  ffmpegPath,
-		ffprobePath: ffprobePath,
-		subDir:      filepath.Join(dataDir, "subtitles"),
-		remuxDir:    filepath.Join(dataDir, "remux"),
-		remuxLocks:  remuxLock{m: map[string]*sync.Mutex{}},
-		hls:         newHLSManager(dataDir),
+		videos:     videos,
+		dataDir:    dataDir,
+		media:      mp,
+		subDir:     filepath.Join(dataDir, "subtitles"),
+		remuxDir:   filepath.Join(dataDir, "remux"),
+		remuxLocks: remuxLock{m: map[string]*sync.Mutex{}},
+		hls:        newHLSManager(dataDir),
 	}
 	s.extractSubtitle = func(ctx context.Context, src string, streamIndex int, out string) error {
-		return media.ExtractTextSubtitle(ctx, ffmpegPath, src, streamIndex, out)
+		return media.ExtractTextSubtitle(ctx, mp, src, streamIndex, out)
 	}
 	s.remuxVideo = s.defaultRemuxVideo
 	return s
@@ -168,7 +167,7 @@ func (s *Service) ListSubtitles(ctx context.Context, v domain.Video) []SubtitleT
 			Label:    strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)),
 		})
 	}
-	subs, err := media.ProbeSubtitles(ctx, s.ffprobePath, v.Path)
+	subs, err := media.ProbeSubtitles(ctx, s.media, v.Path)
 	if err != nil {
 		slog.Warn("probe subtitles", "video_id", v.ID, "err", err)
 		return out
@@ -205,7 +204,7 @@ type AudioTrack struct {
 // uses today). A single track is still returned so the UI can show it (or hide
 // the menu when the length is 1).
 func (s *Service) ListAudioTracks(ctx context.Context, v domain.Video) []AudioTrack {
-	tracks, err := media.ProbeAudioStreams(ctx, s.ffprobePath, v.Path)
+	tracks, err := media.ProbeAudioStreams(ctx, s.media, v.Path)
 	if err != nil {
 		slog.Warn("probe audio tracks", "video_id", v.ID, "err", err)
 		return nil
@@ -258,7 +257,7 @@ func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Vide
 	}
 	index := trackIndex
 	if index < 0 {
-		subs, err := media.ProbeSubtitles(r.Context(), s.ffprobePath, v.Path)
+		subs, err := media.ProbeSubtitles(r.Context(), s.media, v.Path)
 		if err != nil {
 			slog.Warn("probe subtitles", "video_id", v.ID, "err", err)
 			return ErrNotFound
@@ -273,7 +272,7 @@ func (s *Service) Subtitle(w http.ResponseWriter, r *http.Request, v domain.Vide
 			return ErrNotFound
 		}
 	}
-	if s.ffmpegPath == "" {
+	if s.media.FFmpeg == "" {
 		return ErrNotFound
 	}
 	cached := filepath.Join(s.subDir, fmt.Sprintf("%s-%d.vtt", v.ID, index))

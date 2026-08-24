@@ -20,48 +20,47 @@ import (
 )
 
 // ProbeFn and ThumbnailFn are injectable for tests.
-type ProbeFn func(ctx context.Context, ffprobePath, path string) (media.Info, error)
-type ThumbnailFn func(ctx context.Context, ffmpegPath, src, cover, thumb string, duration float64) error
+type ProbeFn func(ctx context.Context, p media.Paths, path string) (media.Info, error)
+type ThumbnailFn func(ctx context.Context, p media.Paths, src, cover, thumb string, duration float64) error
 
 // Service owns scanning, importing and job handling (ADR-012): everything that
 // turns files on disk into indexed videos. Videos enter the library through
 // media sources — lightweight user-declared scan units — rather than managed
 // storage volumes.
 type Service struct {
-	mu          sync.Mutex // 库写长任务串行化：scan/mark/probe/sync 互斥执行
-	videos      domain.VideoRepo
-	sources     domain.SourceRepo
-	shows       domain.ShowRepo
-	series      domain.SeriesRepo
-	jobs        *jobs.Service
-	bus         *events.Bus
-	ffprobePath string
-	ffmpegPath  string
-	coversDir   string
-	thumbsDir   string
-	probe       ProbeFn
-	thumbnail   ThumbnailFn
-	now         func() time.Time
+	mu        sync.Mutex // 库写长任务串行化：scan/mark/probe/sync 互斥执行
+	videos    domain.VideoRepo
+	sources   domain.SourceRepo
+	shows     domain.ShowRepo
+	series    domain.SeriesRepo
+	jobs      *jobs.Service
+	bus       *events.Bus
+	media     media.Paths
+	coversDir string
+	thumbsDir string
+	probe     ProbeFn
+	thumbnail ThumbnailFn
+	now       func() time.Time
 }
 
-// New builds the scanner service. dataDir hosts covers/ and thumbs/.
+// New builds the scanner service. dataDir hosts covers/ and thumbs/. mp carries
+// the resolved ffmpeg/ffprobe binary paths.
 func New(videos domain.VideoRepo, sources domain.SourceRepo,
 	shows domain.ShowRepo, seriesRepo domain.SeriesRepo, jobsSvc *jobs.Service, bus *events.Bus,
-	ffprobePath, ffmpegPath, dataDir string) *Service {
+	mp media.Paths, dataDir string) *Service {
 	return &Service{
-		videos:      videos,
-		sources:     sources,
-		shows:       shows,
-		series:      seriesRepo,
-		jobs:        jobsSvc,
-		bus:         bus,
-		ffprobePath: ffprobePath,
-		ffmpegPath:  ffmpegPath,
-		coversDir:   filepath.Join(dataDir, "covers"),
-		thumbsDir:   filepath.Join(dataDir, "thumbs"),
-		probe:       media.Probe,
-		thumbnail:   media.Thumbnail,
-		now:         time.Now,
+		videos:    videos,
+		sources:   sources,
+		shows:     shows,
+		series:    seriesRepo,
+		jobs:      jobsSvc,
+		bus:       bus,
+		media:     mp,
+		coversDir: filepath.Join(dataDir, "covers"),
+		thumbsDir: filepath.Join(dataDir, "thumbs"),
+		probe:     media.Probe,
+		thumbnail: media.Thumbnail,
+		now:       time.Now,
 	}
 }
 
@@ -226,7 +225,7 @@ func (s *Service) processInline(ctx context.Context, videoID string, subtask sub
 	if subtask != nil {
 		subtask("探测 "+name, 5)
 	}
-	info, err := s.probe(ctx, s.ffprobePath, v.Path)
+	info, err := s.probe(ctx, s.media, v.Path)
 	if err != nil {
 		slog.Warn("inline probe", "video_id", videoID, "err", err)
 		return
@@ -261,7 +260,7 @@ func (s *Service) processInline(ctx context.Context, videoID string, subtask sub
 func (s *Service) thumbnailFor(ctx context.Context, videoID, src string, duration float64) {
 	cover := filepath.Join(s.coversDir, videoID+".jpg")
 	thumb := filepath.Join(s.thumbsDir, videoID+".thumb.jpg")
-	if err := s.thumbnail(ctx, s.ffmpegPath, src, cover, thumb, duration); err != nil {
+	if err := s.thumbnail(ctx, s.media, src, cover, thumb, duration); err != nil {
 		slog.Warn("inline thumbnail", "video_id", videoID, "err", err)
 		return
 	}
@@ -368,7 +367,7 @@ func (s *Service) handleProbe(ctx context.Context, j jobs.Job, _ jobs.Reporter) 
 	if _, err := os.Stat(v.Path); err != nil {
 		return fmt.Errorf("source missing: %w", err)
 	}
-	info, err := s.probe(ctx, s.ffprobePath, v.Path)
+	info, err := s.probe(ctx, s.media, v.Path)
 	if err != nil {
 		return err
 	}

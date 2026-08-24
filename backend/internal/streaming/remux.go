@@ -6,33 +6,18 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/media"
 )
 
-// remuxVideoCodecs can be stream-copied out of a foreign container (MKV/AVI/…)
-// into an MP4 the browser plays natively. Anything else (HEVC without a browser
-// extension, RV40, MPEG2, …) must be re-encoded by the HLS transcode path.
-var remuxVideoCodecs = map[string]bool{
-	"h264": true, "avc1": true, "avc3": true,
-}
-
-// remuxAudioCodecs can be stream-copied into an MP4 and decoded by every
-// browser. This is deliberately the same "universal" set as the format factory's
-// universalMp4Audio. Audio outside this set (AC3/EAC3/DTS/PCM — no Dolby decoder
-// in Chromium/Firefox, or lossless PCM) cannot be copied into a playable MP4,
-// and re-encoding a whole feature-length audio track is far too slow for the
-// whole-file remux tier (the native AAC encoder runs ~70× realtime). Such files
-// are therefore not remuxable and fall through to the HLS transcode tier, whose
-// per-segment audio re-encode starts playback in seconds.
-var remuxAudioCodecs = map[string]bool{
-	"aac": true, "mp3": true,
-}
+// remuxVideoCodecs / remuxAudioCodecs live in the media package
+// (media.RemuxVideoCodecs / media.UniversalAudioCodecs) as the single shared
+// white lists also used by the format factory.
 
 // RemuxPlayable reports whether a video the frontend could not play directly
 // can be made playable by a container remux to MP4 (e.g. MKV h264+aac → MP4).
@@ -41,20 +26,20 @@ var remuxAudioCodecs = map[string]bool{
 // transcode tier instead. The remuxed MP4 is served over HTTP Range like a
 // native file.
 func (s *Service) RemuxPlayable(v domain.Video) bool {
-	if s.ffmpegPath == "" || !remuxVideoCodecs[v.Codec] {
+	if s.media.FFmpeg == "" || !media.RemuxVideoCodecs[v.Codec] {
 		return false
 	}
 	if v.AudioCodec == "" {
 		return true
 	}
-	return remuxAudioCodecs[v.AudioCodec]
+	return media.UniversalAudioCodecs[v.AudioCodec]
 }
 
 // TranscodePlayable reports whether the HLS transcode endpoint can serve the
 // video: an ffmpeg is configured and the duration is known (the VOD playlist
 // needs the full timeline). Transcoding re-encodes incompatible streams.
 func (s *Service) TranscodePlayable(v domain.Video) bool {
-	return s.ffmpegPath != "" && v.Duration > 0
+	return s.media.FFmpeg != "" && v.Duration > 0
 }
 
 // remuxLocks serializes remux generation per video so two concurrent play
@@ -143,19 +128,8 @@ func (s *Service) generateRemux(ctx context.Context, v domain.Video, out string,
 // audio selects which of the container's audio tracks is mapped. Injected for
 // tests.
 func (s *Service) defaultRemuxVideo(ctx context.Context, v domain.Video, out string, audio int) error {
-	args := []string{
-		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-		"-i", v.Path,
-		"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d?", audio),
-		"-c:v", "copy",
-		"-c:a", "copy",
-		"-movflags", "+faststart",
-		"-f", "mp4",
-		out,
-	}
-	cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("remux failed", "video_id", v.ID, "err", err, "ffmpeg", truncate(string(output), 300))
+	if err := media.RemuxVideo(ctx, s.media, media.RemuxOpts{Src: v.Path, Out: out, Audio: audio}); err != nil {
+		slog.Warn("remux failed", "video_id", v.ID, "err", err)
 		return fmt.Errorf("remux %s: %w", v.Path, err)
 	}
 	return nil

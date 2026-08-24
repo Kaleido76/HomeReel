@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,12 +13,12 @@ import (
 
 // Info is the subset of ffprobe output the library needs.
 type Info struct {
-	Duration  float64
-	Container string
-	Codec     string
+	Duration   float64
+	Container  string
+	Codec      string
 	AudioCodec string
-	Width     int
-	Height    int
+	Width      int
+	Height     int
 	// Segmented marks MP4-family files whose media data is split across
 	// multiple top-level mdat boxes or uses moof fragments (hls.js-downloaded
 	// files, fragmented MP4). Chrome's <video src> demuxer downloads such files
@@ -34,8 +33,8 @@ type Info struct {
 }
 
 // Probe runs ffprobe on path and returns media metadata.
-func Probe(ctx context.Context, ffprobePath, path string) (Info, error) {
-	cmd := exec.CommandContext(ctx, ffprobePath,
+func Probe(ctx context.Context, p Paths, path string) (Info, error) {
+	cmd := ffprobeCmd(ctx, p,
 		"-v", "quiet",
 		"-print_format", "json",
 		"-show_format",
@@ -207,23 +206,22 @@ func isFastStart(path string) bool {
 
 // Thumbnail extracts a cover frame (320px wide) and a small thumb (160px)
 // into the given output paths. position is the seek point in seconds.
-func Thumbnail(ctx context.Context, ffmpegPath, src, coverPath, thumbPath string, duration float64) error {
+func Thumbnail(ctx context.Context, p Paths, src, coverPath, thumbPath string, duration float64) error {
 	pos := 1.0
 	if duration > 0 && duration < 2 {
 		pos = duration / 2
 	}
-	if err := extractFrame(ctx, ffmpegPath, src, coverPath, pos, "scale=320:-2"); err != nil {
+	if err := extractFrame(ctx, p, src, coverPath, pos, "scale=320:-2"); err != nil {
 		return err
 	}
-	return extractFrame(ctx, ffmpegPath, src, thumbPath, pos, "scale=160:-2")
+	return extractFrame(ctx, p, src, thumbPath, pos, "scale=160:-2")
 }
 
-func extractFrame(ctx context.Context, ffmpegPath, src, outPath string, pos float64, vf string) error {
+func extractFrame(ctx context.Context, p Paths, src, outPath string, pos float64, vf string) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, ffmpegPath,
-		"-y",
+	cmd := ffmpegCmd(ctx, p,
 		"-ss", strconv.FormatFloat(pos, 'f', 3, 64),
 		"-i", src,
 		"-frames:v", "1",
@@ -253,8 +251,8 @@ var TextSubtitleCodecs = map[string]bool{
 }
 
 // ProbeSubtitles lists the subtitle tracks of src via ffprobe.
-func ProbeSubtitles(ctx context.Context, ffprobePath, src string) ([]SubtitleStream, error) {
-	cmd := exec.CommandContext(ctx, ffprobePath,
+func ProbeSubtitles(ctx context.Context, p Paths, src string) ([]SubtitleStream, error) {
+	cmd := ffprobeCmd(ctx, p,
 		"-v", "quiet",
 		"-select_streams", "s",
 		"-show_entries", "stream=index,codec_name:stream_tags=language,title",
@@ -291,10 +289,9 @@ func ProbeSubtitles(ctx context.Context, ffprobePath, src string) ([]SubtitleStr
 
 // ExtractTextSubtitle extracts the subtitle stream with the given stream index
 // into a WebVTT file at outVTT (written via a temp file + rename).
-func ExtractTextSubtitle(ctx context.Context, ffmpegPath, src string, streamIndex int, outVTT string) error {
+func ExtractTextSubtitle(ctx context.Context, p Paths, src string, streamIndex int, outVTT string) error {
 	tmp := outVTT + ".tmp"
-	cmd := exec.CommandContext(ctx, ffmpegPath,
-		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+	cmd := ffmpegCmd(ctx, p,
 		"-i", src,
 		"-map", fmt.Sprintf("0:%d", streamIndex),
 		"-c:s", "webvtt",
@@ -341,8 +338,8 @@ type AudioStream struct {
 }
 
 // ProbeAudioStreams lists the audio tracks of src via ffprobe, in stream order.
-func ProbeAudioStreams(ctx context.Context, ffprobePath, src string) ([]AudioStream, error) {
-	cmd := exec.CommandContext(ctx, ffprobePath,
+func ProbeAudioStreams(ctx context.Context, p Paths, src string) ([]AudioStream, error) {
+	cmd := ffprobeCmd(ctx, p,
 		"-v", "quiet",
 		"-select_streams", "a",
 		"-show_entries", "stream=index,codec_name,channels:stream_tags=language,title",
@@ -385,8 +382,8 @@ func ProbeAudioStreams(ctx context.Context, ffprobePath, src string) ([]AudioStr
 // standard 5.1 layout so the native AAC encoder emits an ADTS chanCfg != 0
 // stream (it writes chanCfg=0 + PCE for non-standard layouts like 5.1(side),
 // and hls.js turns that into a 0-channel esds that Chromium's MSE rejects).
-func ProbeAudioChannels(ctx context.Context, ffprobePath, src string, streamIndex int) int {
-	out, err := exec.CommandContext(ctx, ffprobePath,
+func ProbeAudioChannels(ctx context.Context, p Paths, src string, streamIndex int) int {
+	out, err := ffprobeCmd(ctx, p,
 		"-v", "error",
 		"-select_streams", fmt.Sprintf("a:%d", streamIndex),
 		"-show_entries", "stream=channels",
@@ -407,8 +404,8 @@ func ProbeAudioChannels(ctx context.Context, ffprobePath, src string, streamInde
 // even for large files — no frames are decoded. The result feeds the on-demand
 // HLS segmenter (streaming package), which needs each segment to start exactly
 // at a keyframe so a stream copy is frame-exact.
-func ScanKeyframes(ctx context.Context, ffprobePath, src string) ([]float64, error) {
-	out, err := exec.CommandContext(ctx, ffprobePath,
+func ScanKeyframes(ctx context.Context, p Paths, src string) ([]float64, error) {
+	out, err := ffprobeCmd(ctx, p,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "packet=pts_time,flags",

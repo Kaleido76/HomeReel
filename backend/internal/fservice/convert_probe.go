@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"homereel/backend/internal/files"
+	"homereel/backend/internal/media"
 )
 
 // ConvertProbe describes one probed video for the operations panel: its codecs
@@ -21,13 +22,9 @@ type ConvertProbe struct {
 	HasBitmapSubtitle bool     `json:"has_bitmap_subtitle"`
 }
 
-// bitmapSubtitleCodecs are the subtitle encodings stored as pictures (PGS/
-// VobSub/…) that mp4 cannot carry — exactly the files that force the burn-in
-// re-encode fallback.
-var bitmapSubtitleCodecs = map[string]bool{
-	"hdmv_pgs_subtitle": true, "dvd_subtitle": true, "dvdsub": true,
-	"dvb_subtitle": true, "dvb_teletext": true, "xsub": true,
-}
+// bitmapSubtitleCodecs live in the media package (media.BitmapSubtitleCodecs):
+// the subtitle encodings stored as pictures (PGS/VobSub/…) that mp4 cannot
+// carry — exactly the files that force the burn-in re-encode fallback.
 
 // ProbeConvert probes every video selected in the format factory and returns
 // per-file stream facts so the operations panel can guide the user and disable
@@ -71,16 +68,16 @@ func (s *Service) probeOne(ctx context.Context, path, kind string) ConvertProbe 
 		AudioCodecs:    []string{},
 		SubtitleCodecs: []string{},
 	}
-	st, err := s.probeStreams(ctx, path)
+	st, err := media.ProbeStreams(ctx, s.media, path)
 	if err != nil {
 		return p
 	}
-	p.VideoCodec = st.videoCodec
-	p.AudioCodecs = st.audioCodecs
-	p.SubtitleCodecs = st.subtitleCodecs
-	p.Duration = st.duration
-	for _, c := range st.subtitleCodecs {
-		if bitmapSubtitleCodecs[c] {
+	p.VideoCodec = st.VideoCodec
+	p.AudioCodecs = st.AudioCodecs
+	p.SubtitleCodecs = st.SubtitleCodecs
+	p.Duration = st.Duration
+	for _, c := range st.SubtitleCodecs {
+		if media.BitmapSubtitleCodecs[c] {
 			p.HasBitmapSubtitle = true
 			break
 		}

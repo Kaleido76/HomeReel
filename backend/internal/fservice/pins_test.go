@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"homereel/backend/internal/db"
+	"homereel/backend/internal/media"
 	"homereel/backend/internal/store"
 )
 
@@ -20,7 +21,7 @@ func TestGetPinsNeverNil(t *testing.T) {
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(nil, store.NewSettingsRepo(database), nil, "ffmpeg", "ffprobe")
+	svc := New(nil, store.NewSettingsRepo(database), nil, media.Paths{})
 
 	ctx := context.Background()
 	pins, err := svc.GetPins(ctx)
@@ -43,7 +44,7 @@ func TestGetPinsMigratesLegacyKey(t *testing.T) {
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(nil, store.NewSettingsRepo(database), nil, "ffmpeg", "ffprobe")
+	svc := New(nil, store.NewSettingsRepo(database), nil, media.Paths{})
 
 	ctx := context.Background()
 	want := []string{`C:\a`, `D:\b`}

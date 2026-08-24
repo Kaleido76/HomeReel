@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"homereel/backend/internal/media"
 )
 
 func ffmpegBin() string {
@@ -27,8 +29,8 @@ func ffprobeBin() string {
 
 type noopReporter struct{}
 
-func (noopReporter) Progress(float64)      {}
-func (noopReporter) Subtask(string)        {}
+func (noopReporter) Progress(float64)        {}
+func (noopReporter) Subtask(string)          {}
 func (noopReporter) SubtaskProgress(float64) {}
 
 func makeSampleMkv(t *testing.T, dir, name string) string {
@@ -85,7 +87,7 @@ func streamCodecs(t *testing.T, path string) []string {
 }
 
 func testService() *Service {
-	return &Service{ffmpegPath: ffmpegBin(), ffprobePath: ffprobeBin()}
+	return &Service{media: media.Paths{FFmpeg: ffmpegBin(), FFprobe: ffprobeBin()}}
 }
 
 // TestConvertFileProducesFaststartMp4 verifies a single file is re-wrapped

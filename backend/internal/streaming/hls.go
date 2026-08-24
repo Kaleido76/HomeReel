@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -100,11 +99,11 @@ func (m *hlsManager) session(v domain.Video, token string, audio int) *hlsSessio
 		return s2
 	}
 	s := &hlsSession{
-		videoID:   v.ID,
-		dir:       m.sessionDir(token),
-		duration:  v.Duration,
-		audio:     audio,
-		inflight:  map[int]*sync.Mutex{},
+		videoID:  v.ID,
+		dir:      m.sessionDir(token),
+		duration: v.Duration,
+		audio:    audio,
+		inflight: map[int]*sync.Mutex{},
 	}
 	s.touch()
 	m.sessions[token] = s
@@ -269,64 +268,39 @@ func (s *Service) ensureKeyframes(ctx context.Context, hs *hlsSession, v domain.
 	if len(hs.keyframes) > 0 {
 		return nil
 	}
-	kfs, err := media.ScanKeyframes(ctx, s.ffprobePath, v.Path)
+	kfs, err := media.ScanKeyframes(ctx, s.media, v.Path)
 	if err != nil {
 		return err
 	}
 	hs.mu.Lock()
 	hs.keyframes = kfs
 	hs.duration = v.Duration
-	hs.channels = media.ProbeAudioChannels(ctx, s.ffprobePath, v.Path, hs.audio)
+	hs.channels = media.ProbeAudioChannels(ctx, s.media, v.Path, hs.audio)
 	hs.mu.Unlock()
 	return nil
 }
 
-// generateSegment runs ffmpeg to produce one transcode segment covering exactly
-// the segment's GOP [kf[n], kf[n+1]). The input -ss target is the keyframe
-// itself: for re-encodes ffmpeg seeks accurately (decodes the source from the
-// previous keyframe and discards frames to the target), so the output always
-// starts exactly at kf[n] regardless of container seek quirks. The mpegts
-// copyts + output_ts_offset pair keeps the output PTS on the source timeline so
-// hls.js can seek across segments.
+// generateSegment re-encodes one keyframe-aligned GOP into the mpegts segment
+// at out. The transcode itself lives in media.TranscodeSegment; this method
+// owns the session's boundary math and the error log.
 func (s *Service) generateSegment(ctx context.Context, v domain.Video, hs *hlsSession, n int, out string) error {
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
 	start := hs.keyframes[n]
 	end := hs.duration
 	if n+1 < len(hs.keyframes) {
 		end = hs.keyframes[n+1]
 	}
-	// Audio: a >2-channel source is remapped to the standard 5.1 layout (with a
-	// bit more headroom) so the native AAC encoder writes an ADTS chanCfg=6
-	// stream instead of chanCfg=0+PCE. hls.js derives a 0-channel esds from the
-	// latter, which Chromium's MSE rejects with a bufferAppendError that stalls
-	// the player and loops the same fragment forever.
-	audioArgs := []string{"-c:a", "aac", "-b:a", "128k"}
-	if hs.channels > 2 {
-		audioArgs = []string{"-c:a", "aac", "-b:a", "192k", "-channel_layout", "5.1"}
-	}
-	args := []string{
-		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-		"-ss", strconv.FormatFloat(start, 'f', 3, 64),
-		"-i", v.Path,
-		"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d?", hs.audio),
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-	}
-	args = append(args, audioArgs...)
-	args = append(args,
-		"-mpegts_copyts", "1",
-		"-output_ts_offset", strconv.FormatFloat(start, 'f', 3, 64),
-		"-t", strconv.FormatFloat(end-start, 'f', 3, 64),
-		"-f", "mpegts",
-		out+".tmp",
-	)
-	cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("hls segment failed", "video_id", v.ID, "seg", n, "err", err, "ffmpeg", truncate(string(output), 300))
+	if err := media.TranscodeSegment(ctx, s.media, media.SegmentOpts{
+		Src:      v.Path,
+		Out:      out,
+		Start:    start,
+		End:      end,
+		Audio:    hs.audio,
+		Channels: hs.channels,
+	}); err != nil {
+		slog.Warn("hls segment failed", "video_id", v.ID, "seg", n, "err", err)
 		return fmt.Errorf("hls segment %d: %w", n, err)
 	}
-	return os.Rename(out+".tmp", out)
+	return nil
 }
 
 // Sweep runs the HLS session sweeper until ctx is cancelled (called from the
@@ -349,11 +323,3 @@ func (s *Service) Sweep(ctx context.Context) {
 
 // errHLSUnsupported reports a video that cannot be streamed dynamically.
 var errHLSUnsupported = errors.New("hls unavailable")
-
-// truncate shortens a long string (ffmpeg stderr) for log readability.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}

@@ -19,6 +19,7 @@ import (
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/media"
 	"homereel/backend/internal/netutil"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
@@ -58,6 +59,15 @@ func run() error {
 		slog.Warn("未配置 auth.password，已生成随机访问口令（仅本次显示一次）", "password", generated)
 	}
 
+	// Resolve ffmpeg/ffprobe once at startup: an absolute config path is used
+	// as-is, a bare name is looked up on PATH, and a missing binary fails fast
+	// here instead of surfacing mid-request.
+	mp, err := media.ResolvePaths(cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
+	if err != nil {
+		return err
+	}
+	slog.Info("media binaries", "ffmpeg", mp.FFmpeg, "ffprobe", mp.FFprobe)
+
 	live := jobs.NewLiveStatus()
 	jobsSvc := jobs.NewService(store.NewJobRepo(database), live)
 	bus := events.New()
@@ -68,7 +78,7 @@ func run() error {
 	historyRepo := store.NewHistoryRepo(database)
 	prefsRepo := store.NewPlaybackPrefsRepo(database)
 	devLogRepo := store.NewDevLogRepo(database)
-	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir, cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
+	streamingSvc := streaming.New(videosRepo, cfg.Server.DataDir, mp)
 	scannerSvc := scanner.New(
 		videosRepo,
 		sourcesRepo,
@@ -76,16 +86,14 @@ func run() error {
 		seriesRepo,
 		jobsSvc,
 		bus,
-		cfg.Media.FFprobePath,
-		cfg.Media.FFmpegPath,
+		mp,
 		cfg.Server.DataDir,
 	)
 	// Generic machine-wide file browser (文件 tab): absolute-path listing,
 	// clipboard-style copy/move behind its own background jobs, format-factory
 	// conversions, and the multimedia-source + manual-resource markers that
 	// feed the video library.
-	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo,
-		cfg.Media.FFmpegPath, cfg.Media.FFprobePath)
+	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, mp)
 	// Every file operation in the browser feeds the unified library pipeline
 	// (ADR-017): after a copy/move/rename/delete/convert, the scanner ingests
 	// or evicts the affected paths so the library is never left stale.

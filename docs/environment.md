@@ -27,9 +27,10 @@
 ## 3. 运行时注意（FFmpeg PATH 陷阱）
 
 - winget 装的 FFmpeg 需新开终端 PATH 才生效。
-- 若服务进程 PATH 里找不到 `ffprobe`（probe 任务报 `executable file not found in %PATH%`），在
-  `config.yaml` 的 `media.ffmpeg_path` / `media.ffprobe_path` 显式指定绝对路径（YAML 双引号内用
-  `\\` 转义），改后需重启服务。
+- 服务启动时统一解析 ffmpeg/ffprobe（`media.ResolvePaths`，ADR-020）：配置的绝对路径直接用，裸名走 PATH；
+  **找不到会启动即报错**。若 PATH 里缺 `ffprobe`/`ffmpeg`（报 `resolve ffmpeg/ffprobe: executable file not
+  found in %PATH%`），在 `config.yaml` 的 `media.ffmpeg_path` / `media.ffprobe_path` 显式指定绝对路径
+  （YAML 双引号内用 `\\` 转义），改后需重启服务。若希望显式禁用媒体能力（remux/转码/格式工厂），将对应项置空。
 - 媒体管线自身的约定见 [media.md](media.md)。
 
 ## 4. 前端包管理器

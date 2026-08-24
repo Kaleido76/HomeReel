@@ -192,7 +192,7 @@ func (s *Service) normalizeCandidate(ctx context.Context, c candidate, srcID str
 		UpdatedAt:     now,
 		LastScannedAt: now,
 	}
-	if info, perr := s.probe(ctx, s.ffprobePath, c.path); perr == nil {
+	if info, perr := s.probe(ctx, s.media, c.path); perr == nil {
 		v.Duration = info.Duration
 		v.Codec = info.Codec
 		v.AudioCodec = info.AudioCodec
