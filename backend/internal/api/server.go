@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -16,6 +18,7 @@ import (
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/realtime"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/streaming"
@@ -38,6 +41,7 @@ type Server struct {
 	streaming *streaming.Service
 	search    search.Provider
 	bus       *events.Bus
+	rt        *realtime.Hub
 	dataDir   string
 }
 
@@ -50,14 +54,14 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	videosRepo domain.VideoRepo, showsRepo domain.ShowRepo, seriesRepo domain.SeriesRepo,
 	historyRepo domain.HistoryRepo, prefsRepo domain.PlaybackPrefsRepo, devLogRepo domain.DevLogRepo,
 	streamingSvc *streaming.Service,
-	searchProvider search.Provider, bus *events.Bus,
+	searchProvider search.Provider, bus *events.Bus, rt *realtime.Hub,
 	dataDir string, staticDir string) http.Handler {
 	s := &Server{
 		auth: authSvc, fsvc: fsvc, jobs: jobsSvc, scanner: scannerSvc,
 		videos: videosRepo, shows: showsRepo, series: seriesRepo,
 		history: historyRepo, prefs: prefsRepo, devlogs: devLogRepo,
 		streaming: streamingSvc,
-		search:    searchProvider, bus: bus, dataDir: dataDir,
+		search:    searchProvider, bus: bus, rt: rt, dataDir: dataDir,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -65,6 +69,7 @@ func New(authSvc *auth.Service, jobsSvc *jobs.Service, scannerSvc *scanner.Servi
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.Handle("GET /api/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
+	mux.Handle("GET /api/ws", s.requireAuth(http.HandlerFunc(s.rt.HandleConnection)))
 	mux.Handle("GET /api/disks", s.requireAuth(http.HandlerFunc(s.handleDisksList)))
 	mux.Handle("GET /api/files/list", s.requireAuth(http.HandlerFunc(s.handleFilesList)))
 	mux.Handle("POST /api/files/copy", s.requireAuth(http.HandlerFunc(s.handleFilesCopy)))
@@ -287,6 +292,24 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 	n, err := r.ResponseWriter.Write(p)
 	r.bytes += int64(n)
 	return n, err
+}
+
+// Unwrap lets http.ResponseController reach the underlying response writer.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// Flush/Hijack forward to the underlying writer so middleware (logging) does
+// not break streaming responses or the WebSocket upgrade.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("response writer does not support hijacking")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

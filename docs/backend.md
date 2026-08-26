@@ -1,6 +1,6 @@
 # backend.md — 后端与数据层约定
 
-> 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config}` 等后端代码前必读。
+> 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config,realtime}` 等后端代码前必读。
 > 架构级背景见 [AGENTS.md](../AGENTS.md) §4 ADR；媒体管线见 [media.md](media.md)。
 
 ## 1. 时间戳
@@ -136,7 +136,17 @@
   为任务错误；`convertMeta` 携带操作面板的 `ConvertParams`（video/crf/audio/akbps/burn，`norm()` 归一化）。
   预设、两级尝试链与进度算法详见 [media.md](media.md) §3.1。转换完成后把**实际产物路径**交给统一
   `Ingest`，产物立即入库。
-- 事件总线（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
+- **事件总线**（ADR-010）：`VideoImported` 等事件，AI/OCR/转写作为 Listener，事件监听逻辑与主流程解耦。
+- **实时双向通道**（ADR-021）：`realtime` 包提供 WebSocket Hub（`GET /api/ws`，cookie 鉴权）——
+  `Hub.Broadcast` 全量推送、`Hub.Handle(type, fn)` 让任意模块注册 RPC 处理器（响应
+  `<type>.result`/`<type>.error`）。**事件桥**：`events.Bus.SubscribeAll()` 把全部域事件转发为
+  `events.<type>` 推送，发布方零改动；慢客户端（写队列满）直接丢弃不阻塞全局。实现细节见
+  [realtime.md](realtime.md)。**任务进度推送**：`jobs` 在三个时机经 `SetProgressPublisher` 把
+  **用户任务**（`internal=false`）的完整快照以 `jobs.progress` 推给 Hub（内存态、不落库；内部
+  probe/thumbnail 不推送以免刷屏）：① 入队即推（新任务立即出现）；② reporter 每次节流上报（运行
+  进度/子任务/ETA）；③ Worker 收尾 `MarkDone/Failed` 后推最终态（含 `status`/`error`）。前端据此
+  就地刷新任务面板、**运行期零 `GET /api/jobs` 轮询**（仅首次快照与（重）连补拉），见
+  [realtime.md §6](realtime.md)。
 
 ## 10. 泛用文件浏览器（fservice，2026-08 增量）
 

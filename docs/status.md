@@ -72,8 +72,15 @@
   （genre）项与排序下拉全部删除，**高级筛选仅剩标签**；`videos.year`/`shows.year` 与 `videos.genre`/
   `shows.genre` 四列及全部后端过滤/PATCH 支持删除（迁移 30/31）；列表排序固定「最近添加」，无 UI 可改。
 - **前端**：多 Router 页签 keep-alive、栏位栈视频库、Vidstack 播放器、响应式 UI、工具页签（格式工厂 / 缓存
-  管理，**2026-09 窄屏导航重构**：桌面左栏圆角工具栏、窄屏顶栏上下文行 + 向下展开全宽抽屉）——详见
-  [frontend.md](frontend.md)。
+   管理，**2026-09 窄屏导航重构**：桌面左栏圆角工具栏、窄屏顶栏上下文行 + 向下展开全宽抽屉）——详见
+   [frontend.md](frontend.md)。
+- **实时双向通道（2026-09，ADR-021）**：单条 WebSocket（gorilla/websocket）承载「服务端→客户端推送」
+  与「客户端→服务端 RPC」。后端 `realtime` 包（Hub 连接注册表 + `Broadcast` + `Handle(type, fn)`
+  处理器注册表 + 读/写泵 + 心跳 + 慢客户端丢弃），挂 `GET /api/ws`（cookie 鉴权）；**事件桥**
+  `events.Bus.SubscribeAll()` 把全部域事件转发为 `events.<type>` 推送，发布方零改动。前端
+  `RealtimeClient` 单例（自动重连/指数退避、页面可见唤醒、`on()`/`send()`/`request()`）、
+  `RealtimeProvider` 随登录态建连、`invalidateOnMessage` 把推送映射到 TanStack Query 失效。
+  详见 [realtime.md](realtime.md)。现有轮询尚未迁移（见 §2）。
 
 ## 2. 遗留 / 待办
 
@@ -89,6 +96,16 @@
 - 前端无 Vitest 测试（`package.json` 无 test script）。
 - 单集/系列**手动归组 UI 已移除**（2026-08 管理面定稿）：归属由路径决定、不再允许任意 PATCH
   `show_id`/`episode_number`；系列关联增删仍在 `SeriesDetailPage`。
+- **实时通道（ADR-021）**：`realtime` 包 + `GET /api/ws` + 事件桥（`events.*` 推送）+ 前端
+  `RealtimeClient`/`RealtimeProvider` 均已落地；迁移模式 =「初始 REST 快照 + 实时推送失效」，
+  详见 [realtime.md](realtime.md) §6。轮询迁移进度——
+  ① **jobs**（原 `useJobs` 1s/15s）：✅ 已迁移（2026-09）。reporter 经 Hub 节流发布 `jobs.progress`
+  （内存态、不落库；`internal` 任务不发），`JobDone/Failed` 经 `events.jobs.*` 推送；前端 `useJobs`
+  改为「初始 REST 快照 + 实时合并/失效」，已无轮询。
+  ② **文件页**（源列表与目录列表各 5s）：**部分迁移**（2026-09）——扫描完成已实时化（前端监听
+  `events.jobs.done|failed` 且 `type==='scan_source'` 即时失效 `['files-sources']`，源行旋转标识与
+  任务面板同步消失）；目录列表内容变化与离线徽标仍走 5s 轮询，待改为 fservice 操作完成后经 Hub
+  发布变更推送。
 
 ## 3. 人工验证清单（需用户执行，浏览器体验）
 

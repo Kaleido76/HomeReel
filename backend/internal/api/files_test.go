@@ -26,7 +26,7 @@ func mustJSON(t *testing.T, v any) string {
 // list (on Windows this reflects the actual host; on other platforms it is the
 // root entry).
 func TestDisksList(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 	resp, body := doJSON(t, "GET", ts.URL+"/api/disks", "", cookie)
 	if resp.StatusCode != http.StatusOK {
@@ -51,7 +51,7 @@ func TestDisksList(t *testing.T) {
 
 // TestFilesList verifies absolute-path directory listing with size/mtime.
 func TestFilesList(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	root := t.TempDir()
@@ -98,7 +98,7 @@ func TestFilesList(t *testing.T) {
 // deletes every video it owned from the library — the whole subtree's single
 // episodes and series disappear with it, while other sources keep their rows.
 func TestRemoveSourceWipesLibrary(t *testing.T) {
-	ts, cookie, database := newTestServerDB(t, "secret")
+	ts, cookie, database, _ := newTestServerDB(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 	ctx := context.Background()
 	root := t.TempDir()
@@ -173,7 +173,7 @@ func TestRemoveSourceWipesLibrary(t *testing.T) {
 }
 
 func TestFilesRenameDelete(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	root := t.TempDir()
@@ -204,7 +204,7 @@ func TestFilesRenameDelete(t *testing.T) {
 // TestFilesRenamesBatch verifies the batch rename endpoint renames every entry
 // and reports partial failures per-item (OpResult).
 func TestFilesRenamesBatch(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	root := t.TempDir()
@@ -253,7 +253,7 @@ func TestFilesRenamesBatch(t *testing.T) {
 
 // TestFilesPins verifies pin add/list/remove against the settings table.
 func TestFilesPins(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	resp, body := doJSON(t, "POST", ts.URL+"/api/files/pins",
@@ -294,7 +294,7 @@ func TestFilesPins(t *testing.T) {
 
 // TestFilesCopyEnqueue verifies copy enqueues a background job.
 func TestFilesCopyEnqueue(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	src := filepath.Join(t.TempDir(), "f.txt")
@@ -321,7 +321,7 @@ func TestFilesCopyEnqueue(t *testing.T) {
 // TestAddSourceRejectsNested verifies marking a directory inside an existing
 // source (or one containing it) is rejected with nested_source (ADR-017).
 func TestAddSourceRejectsNested(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	base := t.TempDir()
@@ -351,7 +351,7 @@ func TestAddSourceRejectsNested(t *testing.T) {
 // TestFileDeleteEvictsLibraryRow verifies deleting a file in the browser evicts
 // its library row right away through the unified evict pipeline (ADR-017).
 func TestFileDeleteEvictsLibraryRow(t *testing.T) {
-	ts, cookie, database := newTestServerDB(t, "secret")
+	ts, cookie, database, _ := newTestServerDB(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 	ctx := context.Background()
 

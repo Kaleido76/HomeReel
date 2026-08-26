@@ -21,6 +21,7 @@ import (
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/media"
 	"homereel/backend/internal/netutil"
+	"homereel/backend/internal/realtime"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/store"
@@ -71,6 +72,10 @@ func run() error {
 	live := jobs.NewLiveStatus()
 	jobsSvc := jobs.NewService(store.NewJobRepo(database), live)
 	bus := events.New()
+	// Realtime channel (ADR-021): a single WebSocket hub bridging server push
+	// (domain events + job progress) and client→server RPC, removing the need
+	// for polling.
+	hub := realtime.New()
 	videosRepo := store.NewVideoRepo(database)
 	sourcesRepo := store.NewSourceRepo(database)
 	showsRepo := store.NewShowRepo(database)
@@ -129,6 +134,15 @@ func run() error {
 		}
 	}()
 
+	// Realtime bridge (ADR-021): every in-process domain event is pushed to all
+	// connected WebSocket clients as "events.<type>". The event publish sites
+	// stay untouched; the hub fans out to each terminal's connection.
+	go func() {
+		for ev := range bus.SubscribeAll() {
+			hub.Broadcast("events."+ev.Type, ev.Data)
+		}
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -155,13 +169,19 @@ func run() error {
 		}
 		bus.Publish(events.Event{Type: typ, Data: data})
 	})
+	// Realtime job progress (ADR-021): stream each user job's live snapshot to
+	// connected clients so the task panel updates without polling. Internal
+	// jobs are filtered inside the reporter before publishing.
+	pubJob := func(j jobs.Job) { hub.Broadcast("jobs.progress", j) }
+	jobsSvc.SetProgressPublisher(pubJob)
+	worker.SetProgressPublisher(pubJob)
 	go worker.Run(ctx)
 
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler: api.New(authSvc, jobsSvc, scannerSvc, fsvc,
 			videosRepo, showsRepo, seriesRepo, historyRepo, prefsRepo, devLogRepo, streamingSvc,
-			search.NewFTS5(database, videosRepo), bus, cfg.Server.DataDir,
+			search.NewFTS5(database, videosRepo), bus, hub, cfg.Server.DataDir,
 			config.ResolveStaticDir(cfg.Server.StaticDir)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,

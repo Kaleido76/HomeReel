@@ -16,31 +16,32 @@ import (
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/media"
+	"homereel/backend/internal/realtime"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
 	"homereel/backend/internal/store"
 	"homereel/backend/internal/streaming"
 )
 
-func newTestServer(t *testing.T, password string) (*httptest.Server, string) {
+func newTestServer(t *testing.T, password string) (*httptest.Server, string, *realtime.Hub) {
 	t.Helper()
-	ts, cookie, _ := newTestServerDB(t, password)
-	return ts, cookie
+	ts, cookie, _, hub := newTestServerDB(t, password)
+	return ts, cookie, hub
 }
 
 // newTestServerDB builds the test server and also returns the database handle
-// so tests can seed records directly.
-func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *sql.DB) {
+// and the realtime hub so tests can seed records and register RPC handlers.
+func newTestServerDB(t *testing.T, password string) (*httptest.Server, string, *sql.DB, *realtime.Hub) {
 	t.Helper()
-	handler, database := newTestHandler(t, password, "")
+	handler, database, hub := newTestHandler(t, password, "")
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts, "", database
+	return ts, "", database, hub
 }
 
 // newTestHandler wires the full dependency graph and returns the root handler,
 // optionally hosting a frontend static dir (static-serving tests pass one).
-func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sql.DB) {
+func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sql.DB, *realtime.Hub) {
 	t.Helper()
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -74,13 +75,14 @@ func newTestHandler(t *testing.T, password, staticDir string) (http.Handler, *sq
 	streamingSvc := streaming.New(videosRepo, t.TempDir(), media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
 	dataDir := t.TempDir()
 	bus := events.New()
+	hub := realtime.New()
 	fsvc := fservice.New(jobsSvc, store.NewSettingsRepo(database), sourcesRepo, media.Paths{FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
 	fsvc.SetLibraryNotifier(scannerSvc.IngestPaths, scannerSvc.EvictPaths)
 	handler := New(authSvc, jobsSvc, scannerSvc, fsvc,
 		videosRepo, showsRepo, seriesRepo, historyRepo, prefsRepo,
 		store.NewDevLogRepo(database), streamingSvc,
-		search.NewFTS5(database, videosRepo), bus, dataDir, staticDir)
-	return handler, database
+		search.NewFTS5(database, videosRepo), bus, hub, dataDir, staticDir)
+	return handler, database, hub
 }
 
 func loginCookie(t *testing.T, ts *httptest.Server, password string) string {
@@ -142,7 +144,7 @@ func decodeBool(t *testing.T, body string) bool {
 }
 
 func TestHealthPublic(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 	resp, body := doJSON(t, "GET", ts.URL+"/api/health", "", "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("health status = %d, want 200 (body %s)", resp.StatusCode, body)
@@ -150,7 +152,7 @@ func TestHealthPublic(t *testing.T) {
 }
 
 func TestProtectedReturns401WithoutSession(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 	resp, body := doJSON(t, "GET", ts.URL+"/api/me", "", "")
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("me status = %d, want 401 (body %s)", resp.StatusCode, body)
@@ -158,7 +160,7 @@ func TestProtectedReturns401WithoutSession(t *testing.T) {
 }
 
 func TestAuthFlow(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 
 	resp, body := doJSON(t, "GET", ts.URL+"/api/auth/status", "", "")
 	if resp.StatusCode != http.StatusOK || decodeBool(t, body) {
@@ -198,7 +200,7 @@ func TestAuthFlow(t *testing.T) {
 }
 
 func TestFilesRoutesRequireAuth(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 	for _, path := range []string{"/api/files/list", "/api/files/pins", "/api/files/sources"} {
 		resp, body := doJSON(t, "GET", ts.URL+path, "", "")
 		if resp.StatusCode != http.StatusUnauthorized {

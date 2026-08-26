@@ -16,7 +16,7 @@ import (
 // all-videos clearing. The selection cache must stay independent of the resume
 // history (DELETE /api/videos/{id}/history only clears progress).
 func TestPlaybackPrefsFlow(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -80,7 +80,7 @@ func TestPlaybackPrefsFlow(t *testing.T) {
 // TestPlaybackPrefsValidation rejects negative audio tracks and out-of-range
 // volumes.
 func TestPlaybackPrefsValidation(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -99,7 +99,7 @@ func TestPlaybackPrefsValidation(t *testing.T) {
 // cache (FK ON DELETE CASCADE) and that clearing the resume history keeps the
 // selection cache intact.
 func TestPlaybackPrefsCascade(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -128,7 +128,7 @@ func TestPlaybackPrefsCascade(t *testing.T) {
 
 // TestPlaybackPrefsClearAll removes every pref row through the cache manager.
 func TestPlaybackPrefsClearAll(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -191,7 +191,7 @@ func seedSeriesVideo(t *testing.T, database *sql.DB, videoID string) string {
 // and cleared via DELETE /api/series/{id}/prefs. A standalone video keeps its
 // own concrete per-video row.
 func TestSeriesPlaybackPrefsFlow(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "e1", "s01e01.mkv", "s01e01.mkv", "Episode 1", 100)
@@ -274,7 +274,7 @@ func TestSeriesPlaybackPrefsFlow(t *testing.T) {
 // TestSeriesPlaybackPrefsPriority checks that a series record wins over the
 // member's own video record (「系列有记录时忽略单集记录」).
 func TestSeriesPlaybackPrefsPriority(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "e1", "s01e01.mkv", "s01e01.mkv", "Episode 1", 100)
@@ -312,7 +312,7 @@ func TestSeriesPlaybackPrefsPriority(t *testing.T) {
 // TestSeriesPlaybackPrefsClearAll ensures the cache manager「清空全部」clears
 // series-scoped rows too.
 func TestSeriesPlaybackPrefsClearAll(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "e1", "s01e01.mkv", "s01e01.mkv", "Episode 1", 100)
@@ -331,7 +331,7 @@ func TestSeriesPlaybackPrefsClearAll(t *testing.T) {
 // TestSeriesPlaybackPrefsCascade ensures deleting a series' last member drops
 // the series (show/season cascade) and with it the shared prefs row.
 func TestSeriesPlaybackPrefsCascade(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "e1", "s01e01.mkv", "s01e01.mkv", "Episode 1", 100)

@@ -1,12 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { CheckCircle2, FileVideo, Folder, Loader2, Lock, RefreshCw, XCircle } from 'lucide-react'
 import type { Job } from '../../../api/jobs'
 import { isActiveJob } from '../../../api/jobs'
 import { convertPaths, probePaths, type ConvertProbe } from '../../../api/convert'
 import { formatEta } from '../../../lib/format'
 import { Tooltip } from '../../../components/Tooltip'
-import { useJobs, jobsKey } from '../../jobs/useJobs'
+import { useJobs } from '../../jobs/useJobs'
 import { clearPending, intendedOutput, usePending } from './queue'
 import {
   CONVERT_PRESETS,
@@ -29,7 +29,6 @@ const UNIVERSAL_AUDIO = new Set(['aac', 'mp3'])
 // with its probe badges) and the queue shows every conversion — active ones
 // with live progress, finished ones as history.
 export function FormatFactoryPage() {
-  const queryClient = useQueryClient()
   const pending = usePending()
   const jobsQuery = useJobs()
   const [params, setParams] = useState<ConvertParams>({ ...DEFAULT_PARAMS })
@@ -89,8 +88,6 @@ export function FormatFactoryPage() {
     mutationFn: (args: { paths: string[]; params: ConvertParams }) => convertPaths(args.paths, args.params),
     onSuccess: () => {
       clearPending()
-      // 转换是后台任务，立即刷新任务指示器让顶部图标马上旋转。
-      void queryClient.invalidateQueries({ queryKey: jobsKey })
     },
   })
 

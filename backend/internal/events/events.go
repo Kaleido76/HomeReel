@@ -42,11 +42,25 @@ func (b *Bus) Subscribe(types ...string) <-chan Event {
 	return ch
 }
 
-// Publish delivers an event to all subscribers of its type.
+// SubscribeAll returns a channel that receives every published event regardless
+// of type. It is used by the realtime bridge so any domain event can be pushed
+// to connected clients without touching each publish site (ADR-021).
+func (b *Bus) SubscribeAll() <-chan Event {
+	ch := make(chan Event, 64)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.subs["*"] = append(b.subs["*"], ch)
+	return ch
+}
+
+// Publish delivers an event to all subscribers of its type (and to catch-all
+// subscribers registered via SubscribeAll).
 func (b *Bus) Publish(ev Event) {
 	b.mu.RLock()
 	chans := b.subs[ev.Type]
+	all := b.subs["*"]
 	b.mu.RUnlock()
+	chans = append(chans, all...)
 	for _, ch := range chans {
 		select {
 		case ch <- ev:

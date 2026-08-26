@@ -81,7 +81,7 @@ func titleOf(rel string) string {
 }
 
 func TestShowsWall(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
 	resp, body := doJSON(t, "GET", ts.URL+"/api/shows", "", cookie)
@@ -109,7 +109,7 @@ func TestShowsWall(t *testing.T) {
 }
 
 func TestShowDetailAndEpisodes(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	showID := seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -152,7 +152,7 @@ func TestShowDetailAndEpisodes(t *testing.T) {
 }
 
 func TestTagsHome(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -186,7 +186,7 @@ func TestTagsHome(t *testing.T) {
 }
 
 func TestSearchAndVideoPatch(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -236,7 +236,7 @@ func TestSearchAndVideoPatch(t *testing.T) {
 }
 
 func TestVideoDeleteCleansShow(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedLibrary(t, database)
 	cookie := loginCookie(t, ts, "secret")
 

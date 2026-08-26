@@ -98,6 +98,7 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 | ADR-018 | 系列关联模型 | **2026-09 方案 B：显式分组**。`link_groups` + `link_group_members` 两张表，关联 = 同一组内系列**互相可见**（A 关联 B、C 时三者同组，打开任一方都看到另外两方）；无名称、无方向。维护为**全量替换**：`PUT /api/series/{id}/links` 提交勾选集，该系列与勾选系列同组、取消勾选即不再关联（前端「管理关联」多选弹窗 + `SeriesPickerModal`）；每系列至多一组（`series_id` 唯一索引），`SyncShowLinks` 把同 show 所有季自动并入一组。替代旧 `series_links` 无向边模型（读时直接邻居、不相邻不可见） | 解决「A 关联 B、C 后打开 B 也看到 A、C」的互相可见需求；显式分组比读时遍历/传递闭包实现直观、可增量维护；开发期直接重建无需迁移旧数据 |
 | ADR-019 | 开发者工具日志 | **2026-09**：工具页新增「开发者工具」工具——在移动端等无开发者工具的终端上记录/查看/归档前端日志。**采集**：App 启动即按持久化开关安装 `console.*` 劫持（覆盖第三方库输出）+ 提供带模块标记的 `devLog()` logger，环形缓冲上限 2000 条，仅开关开启时采集，采集状态与缓冲为**前端内存态**（localStorage 持久化开关）。**归档**：把当前采集日志 `POST /api/devlogs` 存 SQLite `devlogs` 表（entries 为 JSON 数组，逐字存储以便取回还原），PC 端开发者工具选择归档查看/复制，另提供 `GET /api/devlogs/{id}/raw` 纯文本端点供开发时按 ID 非 GUI 抓取日志 | 移动端打不开开发者工具，需把前端日志带回 PC 排错；SQLite 存储与项目数据层一致、可查询/可删除；采集放内存避免长期运行拖慢页面 |
 | ADR-020 | ffmpeg/ffprobe 收口 | **2026-09**：所有 ffmpeg/ffprobe 命令构建与执行统一收口在 `media` 包——探测（`Probe`/`ProbeStreams`/`ProbeSubtitles`/`ProbeAudioStreams`/`ProbeAudioChannels`/`ScanKeyframes`）、缩略图（`Thumbnail`）、字幕提取（`ExtractTextSubtitle`）、Remux 流拷贝（`RemuxVideo`）、HLS 分片转码（`TranscodeSegment`）、格式工厂（`ConvertToMp4`）。调用方（streaming/scanner/fservice）以结构化参数调用，**不再拼命令行**；`-nostdin -hide_banner -loglevel error -y` 基础头、`-map 0:v:0 -map 0:a:N?` 映射模式、音频「全设备通用」白名单（`media.UniversalAudioCodecs`，替代原 `remuxAudioCodecs` 与 `universalMp4Audio` 两份重复拷贝）与可流拷贝视频编码（`media.RemuxVideoCodecs`）单点定义。**二进制路径统一解析**：`media.ResolvePaths` 启动时校验一次——绝对路径直用、裸名走 `exec.LookPath`、缺失启动即报错；各服务改持 `media.Paths` 单一字段 | 消除 ffmpeg 命令构建分散于 streaming/remux、streaming/hls、fservice/convert 三处及重复码表；未来改动 ffmpeg 参数/升级/换二进制只需改 media 一处；二进制缺失在启动即暴露而非运行中途 |
+| ADR-021 | 实时双向通道 | **2026-09**：WebSocket（gorilla/websocket）单连接承载「服务端→客户端推送」与「客户端→服务端 RPC」，统一信封 `{id?, type, data?}`（`id` 非空=RPC 请求，响应 `<type>.result`/`<type>.error`；无 `id`=即发即忘推送）。后端 `realtime` 包（Hub 连接注册表 + `Broadcast` + `Handle(type, fn)` 处理器注册表 + 单连接读/写泵 + 心跳/慢客户端丢弃），挂 `GET /api/ws`（`requireAuth` cookie 鉴权）；**事件桥**：`events.Bus.SubscribeAll()` 把现有全部域事件转发为 `events.<type>` 推送，事件发布方零改动即达前端。前端 `RealtimeClient` 单例（`src/api/realtime.ts`：自动重连/指数退避、页面可见唤醒、`on()` 订阅、`send()`/`request()`、`invalidateOnMessage` 把推送映射到 TanStack Query 失效）。**多终端并发**：每个会话独立连接，广播默认全量。**迁移路线**：先把轮询点（jobs 1s/15s、文件页 5s）逐步改为「初始 REST 快照 + 实时推送失效」；jobs 进度事件由 reporter 经 Hub 节流发布，不落库 | 轮询存在延迟与无谓请求；单连接统一双向管理、前端零额外依赖；复用现有 events 总线使任意域事件即时达前端，编码只需声明「收到 X → 失效 Y」 |
 
 ## 5. 工程目录约定
 
@@ -106,7 +107,7 @@ backend/
   cmd/server            # 装配 + 启动
   internal/
     api  auth  config  db  domain  events
-    files  fservice  jobs  media  netutil
+    files  fservice  jobs  media  netutil  realtime
     scanner  search  store  streaming
   data/                 # 运行期数据（data_dir）：SQLite + covers/thumbs/remux/hls/subtitles/uploads
   config.yaml           # 服务配置（示例见 docs/decisions.md）

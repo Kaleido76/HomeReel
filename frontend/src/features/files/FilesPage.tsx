@@ -28,7 +28,7 @@ import { ClipboardDrawer } from './ClipboardDrawer'
 import { RenameDrawer } from './RenameDrawer'
 import { isMediaName } from './fileType'
 import { basename, parentPath } from './path'
-import { jobsKey } from '../jobs/useJobs'
+import { useRealtimeMessage } from '../../components/RealtimeProvider'
 import { openFormat } from '../../tabs/manager'
 import type { ConvertTarget } from '../tools/format/queue'
 
@@ -76,6 +76,19 @@ export function FilesPage() {
   const entries = list.data?.entries ?? []
   // 多媒体视图：目录始终保留以便继续导航，文件仅显示视频/音乐。
   const visibleEntries = mediaOnly ? entries.filter((e) => e.is_dir || isMediaName(e.name)) : entries
+
+  // 扫描任务结束即刷新源列表，让源行旋转标识与顶部任务面板同步消失
+  // （否则要等 5s 轮询才看到 scanning=false）。事件桥的 jobs.done/failed 带 type 字段。
+  useRealtimeMessage('events.jobs.done', (data) => {
+    if ((data as { type?: string } | undefined)?.type === 'scan_source') {
+      void queryClient.invalidateQueries({ queryKey: ['files-sources'] })
+    }
+  })
+  useRealtimeMessage('events.jobs.failed', (data) => {
+    if ((data as { type?: string } | undefined)?.type === 'scan_source') {
+      void queryClient.invalidateQueries({ queryKey: ['files-sources'] })
+    }
+  })
 
   function go(p: string) {
     setSelected(new Set())
@@ -201,8 +214,6 @@ export function FilesPage() {
       }
       const verb = clipboard.mode === 'copy' ? '复制' : '移动'
       flash(`${verb}已作为后台任务开始，可在顶部任务面板查看进度`)
-      // 复制/移动是后台任务，立即刷新任务指示器让顶部图标马上旋转。
-      void queryClient.invalidateQueries({ queryKey: jobsKey })
       if (clipboard.mode === 'cut') {
         setClipboard(null)
         setActiveDrawer(null)
@@ -279,7 +290,6 @@ export function FilesPage() {
       } else {
         const res = await addSource(path)
         flash(res.job_id ? '已标记为多媒体源，开始扫描…' : '已标记为多媒体源')
-        if (res.job_id) void queryClient.invalidateQueries({ queryKey: jobsKey })
       }
       await queryClient.invalidateQueries({ queryKey: ['files-sources'] })
     } catch (err) {
@@ -292,7 +302,6 @@ export function FilesPage() {
     try {
       await scanSource(p)
       flash('已提交重新扫描')
-      void queryClient.invalidateQueries({ queryKey: jobsKey })
       await queryClient.invalidateQueries({ queryKey: ['files-sources'] })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '重新扫描失败')
@@ -305,10 +314,9 @@ export function FilesPage() {
     if (paths.length === 0 || paths.some((p) => !p)) return
     setError('')
     try {
-      const res = await markResources(paths, 'series')
+      await markResources(paths, 'series')
       const label = hasDirSelected ? '系列' : '当前目录为系列'
       flash(`已标记 ${paths.length} 个${label}，开始入库…`)
-      if (res.job_ids.length > 0) void queryClient.invalidateQueries({ queryKey: jobsKey })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '标记失败')
     }

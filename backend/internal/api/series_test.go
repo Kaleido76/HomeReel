@@ -75,7 +75,7 @@ func mustSeries(t *testing.T, series domain.SeriesRepo, ctx context.Context, nam
 }
 
 func TestSeriesListAndDetail(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -136,7 +136,7 @@ func TestSeriesListAndDetail(t *testing.T) {
 }
 
 func TestSeriesListFilter(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 	if err := store.NewVideoRepo(database).SetTags(context.Background(), "e1", []string{"犯罪"}); err != nil {
@@ -156,7 +156,7 @@ func TestSeriesListFilter(t *testing.T) {
 }
 
 func TestSeriesLinkGroupMutualVisibility(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -233,7 +233,7 @@ func TestSeriesLinkGroupMutualVisibility(t *testing.T) {
 }
 
 func TestSeriesClearHistory(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -285,7 +285,7 @@ func TestSeriesClearHistory(t *testing.T) {
 }
 
 func TestSeriesReorder(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -332,7 +332,7 @@ func TestSeriesReorder(t *testing.T) {
 }
 
 func TestSeriesResort(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 
@@ -381,7 +381,7 @@ func TestSeriesResort(t *testing.T) {
 }
 
 func TestSeriesPosterFallback(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	seedSeries(t, database)
 	cookie := loginCookie(t, ts, "secret")
 

@@ -3,6 +3,7 @@
 > 改动 `frontend/src/{tabs,features}` 前必读。技术栈：React 19 + TypeScript、Vite、Tailwind CSS 4、
 > TanStack Router / Query、Vidstack（Direct/Remux Range，Transcode HLS + 本地 hls.js）；**前端命令一律用 `pnpm`**。
 > UI 视觉规范（配色 / 间距 / 组件风格）见根目录 `UI.md`。
+> 实时双向通道（WebSocket，ADR-021）见 [realtime.md](realtime.md)。
 
 ## 1. 多 Router 页签（keep-alive）
 
@@ -55,7 +56,9 @@
   关闭抽屉、清空勾选并刷新列表。
 - **多媒体源**：标记/取消标记仅经工具栏按钮（激活态），**取消标记经强确认**（提示该源下所有单集与系列将
   从库中移除），确认后该源的全部已入库内容从库中消失（磁盘文件不受影响）；源行有「重新扫描」按钮 +
-  扫描中 spinner + 离线徽标（`available=false` 表示根目录当前不可达）；源列表 5s 轮询感知扫描完成。
+  扫描中 spinner + 离线徽标（`available=false` 表示根目录当前不可达）；扫描完成经实时事件
+  `events.jobs.done|failed`（`type==='scan_source'`）即时失效 `['files-sources']`，旋转标识与任务面板
+  同步消失（ADR-021），5s 轮询仅作离线徽标等兜底。
 - **手动标记系列（2026-08 管理面定稿）**：工具栏「标记为系列」入队 mark_resource 后台任务（复用
   JobsIndicator 进度），把所选文件夹（或当前目录）打包为系列——须位于媒体源内（源外路径被拒绝并提示先
   添加为多媒体源），成员 = 根目录直接一级子文件。**「标记为单集」与离散资源概念已彻底清除**。详见
@@ -361,9 +364,11 @@
   - **归档**：把当前采集的日志 `POST /api/devlogs` 提交到后端（返回 ID，见 decisions.md §2.6）；归档浏览器列出
     历史记录，选中后查看逐条日志（**复制全部**、`GET /api/devlogs/{id}/raw` 原始文本、删除）。
 - **后台任务按钮（JobsIndicator）**：header 右侧、退出登录旁。双鱼箭头图标（`RefreshCw`）在有长时任务
-  时 `animate-spin` 并显示数量徽标；点击弹出任务面板（`features/jobs/JobsIndicator.tsx`，轮询
-  `GET /api/jobs`，进行中 1s / 空闲 15s）。面板为 `absolute` 覆盖自身区域，**不因点击外部消失**，仅
-  再次点击按钮收起。任务行展示名称 + 进度：`progress>=0` 为确定进度条，否则 `.indeterminate-bar`
+   时 `animate-spin` 并显示数量徽标；点击弹出任务面板（`features/jobs/JobsIndicator.tsx`）。任务列表由
+   `useJobs`（realtime 驱动：`GET /api/jobs` 仅首次快照，后续经 `jobs.progress` 推送就地合并缓存、
+   `events.jobs.done|failed` 失效，见 §7 / realtime.md §6）保持实时，无轮询。面板为 `absolute` 覆盖自身区域，
+   **不因点击外部消失**，仅再次点击按钮收起。任务行展示名称 + 进度：`progress>=0` 为确定进度条，否则
+   `.indeterminate-bar`
   动态滑条（`index.css`）。进行中的确定进度任务展示**剩余时间估算**（`job.eta_seconds`，后端按
   进度×耗时推算，`formatEta` 格式化）。只显示 `internal=false` 的长时任务（扫描/转换/复制/移动）。
 
@@ -378,3 +383,19 @@
   `transition-all duration-200`；选中 `border-blue-500 bg-blue-50 ring-1 ring-blue-500/30`；封面无缩放动画。
   卡片缩略图响应式（2026-09）：窄屏（<lg）16:9 封面缩至 `h-16 w-28`、卡片 padding/gap 收紧（`px-2.5 py-2 gap-2.5`），
   卡片整体变矮，右侧标题/元数据获得更多宽度；宽屏恢复 `h-20 w-36` 大图。
+
+## 7. 实时双向通道（2026-09，ADR-021）
+
+> 完整协议与后端实现见 [realtime.md](realtime.md)。本节只列前端的使用约定。
+
+- **`RealtimeClient` 单例**（`src/api/realtime.ts`）：连接生命周期随登录态由
+  `RealtimeProvider`（`src/components/RealtimeProvider.tsx`，挂在 `AuthProvider` 内层）管理——登录
+  `connect()`、登出 `disconnect()`；自动重连（指数退避 + 页面可见唤醒）、RPC `request()`（Promise +
+  超时）、推送 `on()` 订阅、即发即忘 `send()`。
+- **迁移轮询的推荐姿势**：保留初始一次 REST 快照，用
+  `invalidateOnMessage(client, queryClient, { 'events.jobs.done': [['jobs']] })`
+  （`src/lib/realtimeQuery.ts`）把推送映射到 queryKey 失效；业务组件无需理解 WS 细节。
+- 组件内按需订阅用 `useRealtimeMessage(type, handler)`（卸载自动退订）。连接状态可经
+  `useRealtime().status` 读取（`disconnected | connecting | connected`）。
+- 现有轮询点：文件页（源列表与目录列表各 5s）**尚未迁移**到实时通道，迁移路线见
+  realtime.md §6；jobs 轮询已迁移（见 §7）。

@@ -10,7 +10,7 @@ import (
 // TestResourcesMarkEnqueuesJob verifies marking enqueues a user-facing
 // mark_resource job and returns its id.
 func TestResourcesMarkEnqueuesJob(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	resp, body := doJSON(t, "POST", ts.URL+"/api/files/resources",
@@ -38,7 +38,7 @@ func TestResourcesMarkEnqueuesJob(t *testing.T) {
 
 // Discrete marking no longer exists (管理面定稿 2026-08) — rejected.
 func TestResourcesMarkRejectsDiscrete(t *testing.T) {
-	ts, cookie := newTestServer(t, "secret")
+	ts, cookie, _ := newTestServer(t, "secret")
 	cookie = loginCookie(t, ts, "secret")
 
 	resp, body := doJSON(t, "POST", ts.URL+"/api/files/resources",
@@ -50,7 +50,7 @@ func TestResourcesMarkRejectsDiscrete(t *testing.T) {
 
 // TestResourcesMarkRequiresAuth verifies the resource route is protected.
 func TestResourcesMarkRequiresAuth(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 	resp, body := doJSON(t, "POST", ts.URL+"/api/files/resources",
 		`{"paths":["D:\\Clips"],"kind":"series"}`, "")
 	if resp.StatusCode != http.StatusUnauthorized {

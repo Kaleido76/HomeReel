@@ -57,7 +57,7 @@ func seedVideo(t *testing.T, database *sql.DB, sourceID, id, rel, path, title st
 }
 
 func TestVideosList(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -83,7 +83,7 @@ func TestVideosList(t *testing.T) {
 }
 
 func TestVideosListAdvancedFilter(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -101,7 +101,7 @@ func TestVideosListAdvancedFilter(t *testing.T) {
 }
 
 func TestVideoDetail(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -118,7 +118,7 @@ func TestVideoDetail(t *testing.T) {
 }
 
 func TestHistoryUpsertAndRead(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	sourceID := newTestSource(t, ts, cookie)
 	seedVideo(t, database, sourceID, "v1", "a.mp4", "a.mp4", "Alpha", 100)
@@ -164,7 +164,7 @@ func TestHistoryUpsertAndRead(t *testing.T) {
 }
 
 func TestStreamDirectAndCover(t *testing.T) {
-	ts, _, database := newTestServerDB(t, "secret")
+	ts, _, database, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), []byte("0123456789"), 0o644); err != nil {
@@ -207,7 +207,7 @@ func TestStreamDirectAndCover(t *testing.T) {
 }
 
 func TestConvertEndpoints(t *testing.T) {
-	ts, _, _ := newTestServerDB(t, "secret")
+	ts, _, _, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 
 	root := t.TempDir()
@@ -285,7 +285,7 @@ func TestConvertEndpoints(t *testing.T) {
 // expanded video (a directory expands to its direct-level videos) and that
 // codec lists are always arrays.
 func TestConvertProbeEndpoints(t *testing.T) {
-	ts, _, _ := newTestServerDB(t, "secret")
+	ts, _, _, _ := newTestServerDB(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 
 	root := t.TempDir()

@@ -138,11 +138,19 @@ func (l *LiveStatus) Remove(id string) {
 type Service struct {
 	repo Repo
 	live *LiveStatus
+	pub  progressPublisher
 }
 
 // NewService builds the queue service.
 func NewService(repo Repo, live *LiveStatus) *Service {
 	return &Service{repo: repo, live: live}
+}
+
+// SetProgressPublisher installs a sink for live job snapshots (ADR-021). The
+// service publishes each newly enqueued user job so clients see it immediately
+// without polling; internal jobs are skipped.
+func (s *Service) SetProgressPublisher(pub func(job Job)) {
+	s.pub = pub
 }
 
 // Enqueue appends a user-facing long-running job in queued state. Name is the
@@ -167,6 +175,9 @@ func (s *Service) enqueue(ctx context.Context, j Job) (string, error) {
 	j.UpdatedAt = now
 	if err := s.repo.Enqueue(ctx, j); err != nil {
 		return "", err
+	}
+	if s.pub != nil && !j.Internal {
+		s.pub(j)
 	}
 	return j.ID, nil
 }
@@ -214,6 +225,11 @@ type Reporter interface {
 // Handler executes a job and may report progress through report.
 type Handler func(ctx context.Context, j Job, report Reporter) error
 
+// progressPublisher receives a job's live state for fan-out to realtime
+// subscribers (ADR-021). It is invoked on every throttled progress/subtask
+// update while a job runs; internal jobs are skipped by the caller.
+type progressPublisher func(job Job)
+
 // Worker pulls queued jobs and runs them through the handler with bounded
 // concurrency. Running jobs left over from a previous process are requeued on
 // start (crash recovery, ADR-008).
@@ -223,6 +239,7 @@ type Worker struct {
 	concurrency int
 	live        *LiveStatus
 	notify      func(ctx context.Context, j Job, err error)
+	pub         progressPublisher
 }
 
 // NewWorker builds a worker pool.
@@ -239,6 +256,14 @@ func NewWorker(repo Repo, handler Handler, concurrency int, live *LiveStatus) *W
 // jobs are not reported.
 func (w *Worker) SetNotify(fn func(ctx context.Context, j Job, err error)) {
 	w.notify = fn
+}
+
+// SetProgressPublisher installs a sink for live job progress. The worker pushes
+// each user-facing job's live snapshot over it (throttled); the realtime hub
+// uses this to stream progress without polling (ADR-021). A nil sink disables
+// publishing.
+func (w *Worker) SetProgressPublisher(pub func(job Job)) {
+	w.pub = pub
 }
 
 // Run processes jobs until ctx is cancelled. The goroutine dispatcher loop
@@ -297,11 +322,17 @@ func (w *Worker) Run(ctx context.Context) {
 				if w.live != nil {
 					w.live.Remove(j.ID)
 				}
+				// Publish the final state over realtime so clients learn the
+				// done/failed status without polling (ADR-021). The deferred
+				// notify still drives the domain event bus.
+				if w.pub != nil && !j.Internal {
+					w.pub(final)
+				}
 				if w.notify != nil && !j.Internal {
 					w.notify(ctx, final, runErr)
 				}
 			}()
-			report := newJobReporter(ctx, w.repo, j.ID, w.live)
+			report := newJobReporter(ctx, w.repo, j, w.live, w.pub)
 			runErr = w.handler(ctx, j, report)
 			report.flush()
 		}(job)
@@ -309,26 +340,50 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 // jobReporter implements Reporter for one running job: overall progress is
-// persisted with throttling so a long scan doesn't hammer SQLite, and the
-// sub-task line lives in the shared in-memory LiveStatus.
+// persisted with throttling so a long scan doesn't hammer SQLite, the
+// sub-task line lives in the shared in-memory LiveStatus, and (when a
+// publisher is installed) a live snapshot is pushed to realtime subscribers.
 type jobReporter struct {
 	ctx      context.Context
 	repo     Repo
 	id       string
 	live     *LiveStatus
+	pub      progressPublisher
+	cur      Job
 	started  time.Time
 	mu       sync.Mutex
 	last     float64
 	lastTime time.Time
+	lastPub  time.Time
 }
 
 const (
 	progressInterval = 250 * time.Millisecond
 	progressMinDelta = 0.01
+	// publishInterval bounds how often a live snapshot reaches subscribers.
+	publishInterval = 400 * time.Millisecond
 )
 
-func newJobReporter(ctx context.Context, repo Repo, id string, live *LiveStatus) *jobReporter {
-	return &jobReporter{ctx: ctx, repo: repo, id: id, live: live, started: time.Now(), last: -1}
+func newJobReporter(ctx context.Context, repo Repo, j Job, live *LiveStatus, pub progressPublisher) *jobReporter {
+	j.Progress = -1
+	j.Subtask = ""
+	j.SubtaskProgress = 0
+	j.EtaSeconds = nil
+	return &jobReporter{ctx: ctx, repo: repo, id: j.ID, live: live, pub: pub, cur: j, started: time.Now(), last: -1}
+}
+
+// publish pushes the live snapshot to the progress sink, skipping internal jobs
+// and throttling to publishInterval.
+func (r *jobReporter) publish(force bool) {
+	if r.pub == nil || r.cur.Internal {
+		return
+	}
+	now := time.Now()
+	if !force && now.Sub(r.lastPub) < publishInterval {
+		return
+	}
+	r.lastPub = now
+	r.pub(r.cur)
 }
 
 // Progress records a new overall value, persisting it if it is far enough
@@ -346,12 +401,21 @@ func (r *jobReporter) Progress(fraction float64) {
 	if r.live != nil {
 		r.live.SetEta(r.id, computeETA(r.started, now, fraction))
 	}
+	eta := computeETA(r.started, now, fraction)
+	if eta >= 0 {
+		e := eta
+		r.cur.EtaSeconds = &e
+	} else {
+		r.cur.EtaSeconds = nil
+	}
+	r.cur.Progress = fraction
 	if r.last >= 0 && now.Sub(r.lastTime) < progressInterval && absFloat(fraction-r.last) < progressMinDelta {
 		return
 	}
 	r.last = fraction
 	r.lastTime = now
 	_ = r.repo.MarkProgress(r.ctx, r.id, fraction)
+	r.publish(false)
 }
 
 // computeETA estimates the seconds left from the time spent and the fraction
@@ -375,6 +439,7 @@ func (r *jobReporter) flush() {
 	if r.last >= 0 {
 		_ = r.repo.MarkProgress(r.ctx, r.id, r.last)
 	}
+	r.publish(true)
 }
 
 // Subtask replaces the current sub-task status line (in-memory only).
@@ -382,6 +447,8 @@ func (r *jobReporter) Subtask(text string) {
 	if r.live != nil {
 		r.live.SetSubtask(r.id, text)
 	}
+	r.cur.Subtask = text
+	r.publish(false)
 }
 
 // SubtaskProgress sets the current sub-task's percentage.
@@ -389,6 +456,8 @@ func (r *jobReporter) SubtaskProgress(pct float64) {
 	if r.live != nil {
 		r.live.SetSubtaskProgress(r.id, pct)
 	}
+	r.cur.SubtaskProgress = pct
+	r.publish(false)
 }
 
 func absFloat(n float64) float64 {

@@ -14,6 +14,8 @@ export default defineConfig({
         changeOrigin: true,
         // 复用与后端的 keep-alive 连接，避免分块上传大量顺序请求时的连接抖动
         agent: new http.Agent({ keepAlive: true, maxSockets: 8 }),
+        // 转发 WebSocket 升级（ADR-021 实时通道）
+        ws: true,
       },
     },
   },

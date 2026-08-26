@@ -26,7 +26,7 @@ func TestStaticServing(t *testing.T) {
 	write("index.html", "<html>HomeReel</html>")
 	write(filepath.Join("assets", "app.js"), "console.log(1)")
 
-	handler, _ := newTestHandler(t, "secret", staticDir)
+	handler, _, _ := newTestHandler(t, "secret", staticDir)
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
@@ -61,7 +61,7 @@ func TestStaticServing(t *testing.T) {
 
 // TestNoStaticWhenDisabled ensures API-only mode never serves the SPA.
 func TestNoStaticWhenDisabled(t *testing.T) {
-	handler, _ := newTestHandler(t, "secret", "")
+	handler, _, _ := newTestHandler(t, "secret", "")
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 

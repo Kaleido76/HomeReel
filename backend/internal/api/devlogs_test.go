@@ -10,7 +10,7 @@ import (
 // TestDevLogsFlow covers the dev-tools log archive lifecycle: submit → list →
 // fetch (with raw text) → delete.
 func TestDevLogsFlow(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 	cookie := loginCookie(t, ts, "secret")
 
 	// Submit an archive.
@@ -70,7 +70,7 @@ func TestDevLogsFlow(t *testing.T) {
 
 // TestDevLogsRequireAuth ensures the archive endpoints are protected.
 func TestDevLogsRequireAuth(t *testing.T) {
-	ts, _ := newTestServer(t, "secret")
+	ts, _, _ := newTestServer(t, "secret")
 	for _, path := range []string{"/api/devlogs", "/api/devlogs/x", "/api/devlogs/x/raw"} {
 		resp, _ := doJSON(t, "GET", ts.URL+path, "", "")
 		if resp.StatusCode != http.StatusUnauthorized {

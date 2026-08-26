@@ -301,3 +301,95 @@ func TestHasActive(t *testing.T) {
 type errBoom struct{}
 
 func (e *errBoom) Error() string { return "boom" }
+
+// TestWorkerPublishesProgress verifies the progress publisher is invoked with the
+// live job snapshot for a user-facing job, and is skipped for internal jobs
+// (which must not spam realtime clients, ADR-021).
+func TestWorkerPublishesProgress(t *testing.T) {
+	repo := &memRepo{}
+	live := NewLiveStatus()
+
+	release := make(chan struct{})
+	handler := func(_ context.Context, j Job, report Reporter) error {
+		report.Progress(0.5)
+		report.Subtask("探测 a.mp4")
+		if j.Type == TypeScanSource {
+			// keep the user job running until we observe the publish
+			<-release
+		}
+		return nil
+	}
+
+	published := make(chan Job, 8)
+	var mu sync.Mutex
+	var seen []Job
+	worker := NewWorker(repo, handler, 1, live)
+	worker.SetProgressPublisher(func(j Job) {
+		mu.Lock()
+		seen = append(seen, j)
+		mu.Unlock()
+		published <- j
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	idUser, _ := svcType(repo, live, "rescan", "vol1")
+	idInternal, _ := svcTypeInternal(repo, live, "probe", "vol1")
+
+	// Wait for the user job to publish at least once.
+	select {
+	case j := <-published:
+		if j.ID != idUser || j.Progress != 0.5 {
+			t.Fatalf("published = %+v, want user job with progress 0.5", j)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher not called for user job")
+	}
+
+	// Let the user job keep streaming; confirm the internal job never reaches
+	// the publisher while both are running.
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case j := <-published:
+		if j.ID == idInternal {
+			t.Fatalf("internal job leaked to publisher: %+v", j)
+		}
+	}
+
+	close(release)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	var hasSubtask bool
+	for _, j := range seen {
+		if j.ID == idInternal {
+			t.Fatalf("internal job leaked to publisher: %+v", j)
+		}
+		if j.Subtask == "探测 a.mp4" {
+			hasSubtask = true
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("no progress publications captured for user job")
+	}
+	if !hasSubtask {
+		t.Fatalf("live subtask not published in %+v", seen)
+	}
+}
+
+func svcType(repo Repo, live *LiveStatus, typ, target string) (string, error) {
+	svc := NewService(repo, live)
+	return svc.Enqueue(context.Background(), typ, target, "扫描视频库", "")
+}
+
+func svcTypeInternal(repo Repo, live *LiveStatus, typ, target string) (string, error) {
+	svc := NewService(repo, live)
+	return svc.EnqueueInternal(context.Background(), typ, target, "")
+}

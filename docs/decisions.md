@@ -354,6 +354,38 @@ CREATE VIRTUAL TABLE videos_fts USING fts5(
 > `devLog()` logger」，环形缓冲上限 2000 条，仅在开关开启时采集（localStorage 持久化开关，App
 > 启动即安装 hook）；归档接口只负责保存/取回，采集状态与缓冲为前端内存态。
 
+### 2.7 实时通道（WebSocket，2026-09，ADR-021）
+
+单条 WebSocket 连接承载「服务端→客户端推送」与「客户端→服务端 RPC」（前端 `RealtimeClient`
+单例 + 后端 `realtime.Hub`），用于解除现有轮询（jobs、文件页）。实现细节见
+[docs/realtime.md](realtime.md)。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/ws` | WebSocket 握手（`requireAuth` cookie 鉴权，未登录返回 401） |
+
+统一信封 `{ id?, type, data? }`：
+
+- **`id` 非空 = RPC 请求**：响应 `type = "<请求type>.result"`（`data`=返回值）或
+  `"<请求type>.error"`（`data`=`{ code, message }`，错误体与 REST 一致）。前端 `request()`
+  按 id 关联为 Promise。
+- **无 `id` = 即发即忘推送/通知**：不回复。
+
+消息类型（命名空间 `域.动作`，前后端共享注册表）：
+
+| type | 方向 | 说明 |
+|---|---|---|
+| `ping` / `pong` | 双向 | 应用层探活 |
+| `hello` | C→S | 连接信息（预留） |
+| `events.<域事件>` | S→C | **事件桥**：`events.Bus.SubscribeAll()` 把全部域事件
+  （`video.imported`/`video.updated`/`video.deleted`/`jobs.done`/`jobs.failed`…）转发为
+  `events.<type>` 推送，事件发布方零改动 |
+
+> 迁移模式：轮询点改为「初始 REST 快照 + 实时推送失效」。前端
+> `invalidateOnMessage(client, queryClient, { 'events.jobs.done': [['jobs']] })` 声明「收到 X →
+> 失效 Y」即可，无需改数据层。jobs 进度事件（`jobs.progress`）由 reporter 经 Hub 节流发布、不落库，
+> 属后续迁移内容。
+
 ## 3. 配置（config.yaml 示例）
 
 ```yaml
