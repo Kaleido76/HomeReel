@@ -50,8 +50,9 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 | `docs/backend.md` | 后端与数据层实现事实源（时间戳/SQLite/迁移/FTS5/系列归组/多媒体源/jobs/事件总线） | 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config}` |
 | `docs/media.md` | 媒体管线实现事实源（ffprobe/容器判定/分段 MP4/格式工厂/能力判定/字幕/封面） | 改动 `backend/internal/{media,streaming}` 或前端播放器媒体相关 |
 | `docs/frontend.md` | 前端实现事实源（页签 keep-alive/栏位栈/Vidstack/响应式/文件浏览器/卡片） | 改动 `frontend/src/{tabs,features}` |
+| `docs/realtime.md` | 实时双向通道实现事实源（WS 协议/Hub/RealtimeClient） | 改动 `backend/internal/realtime` 或 `src/api/realtime.ts` |
 | `docs/status.md` | 现状快照/遗留待办/人工验证清单/未来方向 | 规划新功能、验收、会话交接 |
-| `UI.md` | UI 设计语言（视觉规范；与实现冲突处以 frontend.md §5/§6 为准） | 改动前端样式/布局前 |
+| `UI.md` | UI 设计语言（设计原则总纲；具体规格以 frontend.md 为准） | 改动前端样式/布局前 |
 | `Note.md` | 用户草稿 | 永不阅读 |
 
 **规则**：改代码或架构前先读本文档 §4 的 ADR 与 `docs/decisions.md` 契约；实现细节以各领域文档为准。
@@ -75,30 +76,31 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 ## 4. 关键决策记录（ADR）
 
 > 架构「为什么这样」的依据。**新增/修订决策必须在此留痕**（追加行或修订结论），并同步回填受影响的关联章节。
+> 每条 ADR 只写「结论 + 理由」；实现细节一律下沉领域文档（下表括号内为细节所在处）。
 
 | # | 决策 | 结论 | 理由 |
 |---|---|---|---|
-| ADR-001 | 后端形态 | 单个 Go 服务，内部按包拆分（api/auth/config/db/domain/store/files/fservice/events/scanner/jobs/media/streaming/search）；**v1.0 全程不拆服务** | 家庭部署单个进程 + 单个 sqlite 完全够用；拆服务带来四套日志/配置/部署成本，等 AI/OCR/Whisper 真正变重再拆 |
-| ADR-002 | 认证模型 | 单口令 + 会话 Cookie，**支持多终端并发会话**（各终端独立会话，登出/过期互不影响），无用户概念，数据中 `user` 固定为 `local` | 个人使用；多终端同时在线互不挤占；登录页实现局域网访问保护 |
-| ADR-003 | 部署形态 | 纯 Web 应用，监听 `0.0.0.0`，浏览器访问 | 任何局域网设备（PC/手机/平板/TV）无需安装即可用 |
-| ADR-004 | 文件入库 | 目录扫描 + **多媒体源标记**（`media_sources`）驱动视频库；手动分块上传与统一上传接口已随旧 Explorer 移除（2026-08，files 上传能力待后续补） | 入库只依赖「用户标记的目录」，与文件浏览完全解耦 |
-| ADR-005 | 数据库 | SQLite（纯 Go 驱动 + WAL 模式）；演进路线：WAL → FTS5 → Background Queue → Read Cache → 仅真正遇瓶颈才考虑 PostgreSQL | Windows 免 CGO、零依赖、单文件；个人量级瓶颈是 ffmpeg 而非数据库 |
-| ADR-006 | 播放策略 | **三层动态流（2026-08 修订，替代纯 Range 直连）**：前端把 probe 元数据映射成 MIME/codecs 串，用 `canPlayType()` 核对目标机能力决定播放层——Direct（浏览器原生可解码）→ HTTP Range 直连；Remux（编码可解但容器不兼容，如 MKV h264+aac）→ 后端**整片流拷贝成缓存 MP4** 走 Range（全片可拖）；Transcode（编码不兼容 HEVC/rmvb/DTS 等，**或音频不可拷贝 AC3/EAC3/DTS/PCM**——浏览器无 Dolby 解码器且整条音频重编码过慢会卡死 Remux 整片生成）→ **按需转码 HLS**（VOD 全量列表 + 关键帧对齐 + 每会话独立）。三者皆不可才引导格式工厂（保留为可选预转码工具）。**多音轨选轨（2026-09）**：播放器菜单选轨后 Remux 按轨缓存、Transcode 以新会话重建流、Direct 暂用默认轨。**播放选择记忆（2026-09 修订）**：单集级 + 系列级两层缓存音轨/字幕/音量——系列剧集共享同一记忆（音轨/字幕按**轨道名称**匹配，系列有记录时优先于单集记录、单集记录作关系重组兜底），详情页可查看并清除。实现细节（命令/缓存命名/音轨号传递）见 [media.md](docs/media.md) §4/§6。**伪全屏（2026-09 修订）**：触摸/移动端原生全屏不可用（iOS `<div>` 不支持 `requestFullscreen`）或会盖住自定义控制条/WebVTT 字幕，故移动端全屏按钮走**纯 CSS 伪全屏**（`position:fixed` 铺满 `dvh/dvw` 盖住应用 + 竖屏设备对横屏内容 `rotate(90deg)`），桌面端保持原生全屏；由 `PlayerFullscreenButton` 覆盖默认 `fullscreenButton` slot，按 `pointer: coarse` 判定设备分发。实现细节见 [frontend.md](docs/frontend.md) §3。**实测依据**：ffmpeg 对 Matroska 流拷贝按需 seek 不可靠，故 Remux 整片流拷贝不切片；Transcode 用重编码精确 seek，内容与 PTS 均精确 | 原「纯 Range + 引导转换」要用户手动操作；Remux 一次流拷贝成本极低且结果全片可拖；Transcode 只转用户实际看的部分。判定机制运行期固化（前后端协同），不逐格式堆硬编码布尔 |
-| ADR-007 | 文件身份 | `(source_id, file_id, relative_path)` 三元组唯一；**file_id 全局匹配**（跨源移动仍识别为同一视频）；`(file_id, size, mtime)` 为变更指纹；`hash`（SHA-256）为可选后台任务（**2026-09 修订**：videos 表无 hash 列、无 hash 任务类型，当前未实现，仅保留扩展空间） | 文件移动目录（甚至移动出原多媒体源、进入另一源）后仍能识别为同一视频；大文件全量哈希代价高，首次索引快速 |
-| ADR-008 | 任务队列 | SQLite 持久化 `jobs` 表 + 进程内 worker 池 | 可展示进度、崩溃可恢复、实现简单 |
-| ADR-009 | 搜索 | 定义 `SearchProvider` 接口；当前实现 SQLite FTS5（反规范化 `search_text`），Meilisearch/AI 检索后续新增实现 | 控制器不直接写 SQL；替换搜索引擎无需改动 Controller |
-| ADR-010 | AI 模块 | 通过**事件（Event）**解耦：`VideoImported` 等事件广播，AI/OCR/缩略图/转写作为 Listener 监听 | 各能力独立演进，AI 接入无需修改 Upload/主流程 |
-| ADR-011 | 存储抽象 | **已移除（2026-08）**：storages 模型整体删除，改为**多媒体源** `media_sources`（仅 `(id, path, created_at, last_scan_at)`，纯持久化标记 + 扫描单位），不参与文件浏览生命周期 | 视频库入库与文件浏览彻底解耦；多媒体源是「用户承诺这里主要放多媒体」的目录，可如 pin 一样轻易增删，取消标记不删库 |
-| ADR-012 | 目录扫描 | 扫描、缩略图、元数据、哈希、导入统一收敛到 `scanner` 模块；扫描单位是**多媒体源**而非存储卷；fsnotify 监视为下阶段能力 | Explorer/Library 均不负责扫描，职责单一；未来 AI 也以事件接入 scanner |
-| ADR-013 | 前端形态 | 文件浏览器（files）与视频库（library）是共享 API / 播放器 / 元数据的两个应用面，以顶部页签切换 | 以后可做 TV Mode（只保留 Library）；共享层避免重复实现 |
-| ADR-014 | 热插拔与可用性 | **已移除（2026-08）**：无卷序列号/盘符重映射/可用性探测。多媒体源根不可达 → 扫描**中止且不动库**（移动硬盘没插时保护元数据）；根存在 → 正常增删改 | 多媒体源是普通路径，不维护虚拟盘生命周期；「不可达即暂停扫描」沿用旧保护语义 |
-| ADR-015 | 系列组织 | **2026-08 管理面定稿 + 2026-09 显示名/手动排序修订**：系列是**用户显式创建**的管理容器，绑定根目录（`seasons.root_path`），成员 = 根目录**直接一级子文件**默认按文件名序 1..N（无季号结构），**可手动拖拽重排**（`POST /api/series/{id}/order`，置 `seasons.sort_manual=1`，此后扫描/同步只追加新成员、不重排），**可恢复自动模式**（`POST /api/series/{id}/resort`，清 `sort_manual` 按文件名序重绑，纯 DB 操作）；**扫描只维护既有系列成员、绝不自动建系列**；单集是唯一基本实体、必须归属媒体源；**无电影/tv 结构类型**（区分走标签）；只增不拆、识别错了由用户手动归组。**系列显示名（2026-09）**：系列名 = `shows.name`，**创建时默认取文件夹名**，创建后是**独立于文件夹的显示名**——可经 `PATCH /api/shows/{id}` 手动编辑，扫描/标记/同步**永不覆盖**（与单集 `title_source` 同语义）；文件夹对应关系只由 `root_path` 承载。**成员标题受 `title_source` 保护（2026-09 修订）**：手动编辑过的成员标题（批量改名/单集详情编辑）扫描/同步**不再还原为文件名**，`bindSeriesMembers` 依 `EpisodeAssign.TitleSource` 保留 | 剧集/番剧是常见形态；严格「路径 + FileID」对应避免误组；系列是纯 DB 概念不随磁盘自动漂移，避免自动规则误判后难以纠错；显示名/成员顺序允许用户修正识别结果而不动磁盘 |
-| ADR-016 | ~~元数据刮削~~（已移除） | ~~离线优先、手动触发：本地 NFO → 手动编辑 → 可选在线刮削（TMDB，需 API Key）~~ | 2026-08 移除：刮削子系统（TMDB 在线 + NFO 侧边文件）整体删除，仅保留手动编辑 |
-| ADR-017 | 统一资源进口/出口管线 | 所有资源「入库/入维护范围」收敛到**同一套后端函数**：scanner 暴露 `IngestPaths`（进口：probe + file_id 指纹 + 建行/重定位 + 系列收敛 + 事件）与 `EvictPaths`（出口：删行 + 系列收敛 + `VideoDeleted`），内部共用单一 `normalizeCandidate`。扫描/标记/同步重构为复用同一函数；文件浏览器经 `fservice.SetLibraryNotifier` 注入回调挂钩——copy/convert 产物 → Ingest，move/rename → **Ingest(新路径) 先、Evict(旧路径) 后**（保住 file_id 身份与历史），delete → Evict。任何经 HomeReel 的文件变更在**操作完成瞬间**即归一化，不再等下次扫描；未来 upload / fsnotify 复用同一入口。**多媒体源禁止嵌套**（`AddSource` 校验拒绝，路由表仅防御历史遗留）；手动 title 经 `title_source` 保护（`manual` 永不被扫描覆盖）。顺带修复：`VideoUpdated` 只清字幕缓存（封面/缩略图由 probe 重建，纯改名/移动不动缓存） | 消除「文件操作是哑操作、数据滞后到下次扫描」；三份并存实现（scan/mark/sync）收敛为一；文件身份（file_id）全局匹配使移动不丢历史 |
-| ADR-018 | 系列关联模型 | **2026-09 方案 B：显式分组**。`link_groups` + `link_group_members` 两张表，关联 = 同一组内系列**互相可见**（A 关联 B、C 时三者同组，打开任一方都看到另外两方）；无名称、无方向。维护为**全量替换**：`PUT /api/series/{id}/links` 提交勾选集，该系列与勾选系列同组、取消勾选即不再关联（前端「管理关联」多选弹窗 + `SeriesPickerModal`）；每系列至多一组（`series_id` 唯一索引），`SyncShowLinks` 把同 show 所有季自动并入一组。替代旧 `series_links` 无向边模型（读时直接邻居、不相邻不可见） | 解决「A 关联 B、C 后打开 B 也看到 A、C」的互相可见需求；显式分组比读时遍历/传递闭包实现直观、可增量维护；开发期直接重建无需迁移旧数据 |
-| ADR-019 | 开发者工具日志 | **2026-09**：工具页新增「开发者工具」工具——在移动端等无开发者工具的终端上记录/查看/归档前端日志。**采集**：App 启动即按持久化开关安装 `console.*` 劫持（覆盖第三方库输出）+ 提供带模块标记的 `devLog()` logger，环形缓冲上限 2000 条，仅开关开启时采集，采集状态与缓冲为**前端内存态**（localStorage 持久化开关）。**归档**：把当前采集日志 `POST /api/devlogs` 存 SQLite `devlogs` 表（entries 为 JSON 数组，逐字存储以便取回还原），PC 端开发者工具选择归档查看/复制，另提供 `GET /api/devlogs/{id}/raw` 纯文本端点供开发时按 ID 非 GUI 抓取日志 | 移动端打不开开发者工具，需把前端日志带回 PC 排错；SQLite 存储与项目数据层一致、可查询/可删除；采集放内存避免长期运行拖慢页面 |
-| ADR-020 | ffmpeg/ffprobe 收口 | **2026-09**：所有 ffmpeg/ffprobe 命令构建与执行统一收口在 `media` 包——探测（`Probe`/`ProbeStreams`/`ProbeSubtitles`/`ProbeAudioStreams`/`ProbeAudioChannels`/`ScanKeyframes`）、缩略图（`Thumbnail`）、字幕提取（`ExtractTextSubtitle`）、Remux 流拷贝（`RemuxVideo`）、HLS 分片转码（`TranscodeSegment`）、格式工厂（`ConvertToMp4`）。调用方（streaming/scanner/fservice）以结构化参数调用，**不再拼命令行**；`-nostdin -hide_banner -loglevel error -y` 基础头、`-map 0:v:0 -map 0:a:N?` 映射模式、音频「全设备通用」白名单（`media.UniversalAudioCodecs`，替代原 `remuxAudioCodecs` 与 `universalMp4Audio` 两份重复拷贝）与可流拷贝视频编码（`media.RemuxVideoCodecs`）单点定义。**二进制路径统一解析**：`media.ResolvePaths` 启动时校验一次——绝对路径直用、裸名走 `exec.LookPath`、缺失启动即报错；各服务改持 `media.Paths` 单一字段 | 消除 ffmpeg 命令构建分散于 streaming/remux、streaming/hls、fservice/convert 三处及重复码表；未来改动 ffmpeg 参数/升级/换二进制只需改 media 一处；二进制缺失在启动即暴露而非运行中途 |
-| ADR-021 | 实时双向通道 | **2026-09**：WebSocket（gorilla/websocket）单连接承载「服务端→客户端推送」与「客户端→服务端 RPC」，统一信封 `{id?, type, data?}`（`id` 非空=RPC 请求，响应 `<type>.result`/`<type>.error`；无 `id`=即发即忘推送）。后端 `realtime` 包（Hub 连接注册表 + `Broadcast` + `Handle(type, fn)` 处理器注册表 + 单连接读/写泵 + 心跳/慢客户端丢弃），挂 `GET /api/ws`（`requireAuth` cookie 鉴权）；**事件桥**：`events.Bus.SubscribeAll()` 把现有全部域事件转发为 `events.<type>` 推送，事件发布方零改动即达前端。前端 `RealtimeClient` 单例（`src/api/realtime.ts`：自动重连/指数退避、页面可见唤醒、`on()` 订阅、`send()`/`request()`、`invalidateOnMessage` 把推送映射到 TanStack Query 失效）。**多终端并发**：每个会话独立连接，广播默认全量。**迁移路线**：先把轮询点（jobs 1s/15s、文件页 5s）逐步改为「初始 REST 快照 + 实时推送失效」；jobs 进度事件由 reporter 经 Hub 节流发布，不落库 | 轮询存在延迟与无谓请求；单连接统一双向管理、前端零额外依赖；复用现有 events 总线使任意域事件即时达前端，编码只需声明「收到 X → 失效 Y」 |
+| ADR-001 | 后端形态 | 单个 Go 服务，内部按包拆分（api/auth/config/db/domain/store/files/fservice/events/scanner/jobs/media/netutil/realtime/streaming/search）；**v1.0 全程不拆服务** | 家庭部署单进程 + 单 sqlite 足够；拆服务带来成倍的日志/配置/部署成本，AI 等真正变重再拆 |
+| ADR-002 | 认证模型 | 单口令 + 会话 Cookie；多终端并发会话各自独立、登出/过期互不影响；无用户概念，数据 `user` 固定 `local` | 个人使用；多终端同时在线互不挤占；`user` 字段为未来多用户留位 |
+| ADR-003 | 部署形态 | 纯 Web 应用，监听 `0.0.0.0`，浏览器访问 | 局域网任意设备免安装即用 |
+| ADR-004 | 文件入库 | 多媒体源标记驱动视频库入库；分块上传已随旧 Explorer 移除，upload 待后续补 | 入库只依赖「用户标记的目录」，与文件浏览完全解耦 |
+| ADR-005 | 数据库 | SQLite（纯 Go 驱动 + WAL）；演进按需推进（WAL → FTS5 → 队列/缓存），真遇瓶颈才考虑 PostgreSQL | Windows 免 CGO、零依赖单文件；个人量级瓶颈是 ffmpeg 不是 DB |
+| ADR-006 | 播放策略 | **三层动态流**：Direct（Range 直连）→ Remux（整片流拷贝成缓存 MP4）→ Transcode（按需 HLS）→ 格式工厂兜底；判定源 = 前端运行期 `canPlayType()` 核对 probe 元数据，后端能力标志仅兜底。附随能力：多音轨选轨、播放选择记忆（单集+系列双层）、移动端伪全屏（细节见 media.md §4/§6、frontend.md §3） | Remux 纯拷贝成本极低且结果全片可拖；Transcode 只转实际观看部分；判定运行期固化，不逐格式堆硬编码布尔。实测依据（Matroska 流拷贝 seek 不可靠、音频重编码 ~70× 实时）见 media.md §4 |
+| ADR-007 | 文件身份 | `(source_id, file_id, relative_path)` 唯一；file_id **全局匹配**（跨源移动仍是同一视频）；`(size, mtime)` 为变更指纹；hash 未实现，仅留扩展空间 | 目录移动甚至跨源移动不丢身份与历史；大文件哈希代价高，首次索引要快 |
+| ADR-008 | 任务队列 | SQLite 持久化 `jobs` 表 + 进程内 worker 池 | 进度可见、崩溃可恢复、实现简单 |
+| ADR-009 | 搜索 | `SearchProvider` 接口；当前实现 SQLite FTS5（反规范化 `search_text`），后续可加 Meilisearch/AI 实现 | 控制器不直接写 SQL；替换引擎不动上层 |
+| ADR-010 | AI 模块 | 事件解耦：AI/OCR/缩略图/转写作为 Listener 订阅 `VideoImported` 等域事件 | AI 接入不修改主流程 |
+| ADR-011 | 存储模型 | storages 卷模型已删除，改为**多媒体源** `media_sources`（仅 id/path/时间戳）：持久化标记 + 扫描单位，不参与文件浏览生命周期 | 入库与文件浏览彻底解耦；多媒体源像 pin 一样轻易增删，取消标记不删库 |
+| ADR-012 | 目录扫描 | 扫描/缩略图/导入统一收敛到 `scanner` 包；扫描单位是多媒体源而非存储卷；fsnotify 监视未实施 | Explorer/Library 不负责扫描，职责单一；fsnotify 将来复用 ADR-017 统一入口 |
+| ADR-013 | 前端形态 | 文件浏览与视频库是共享 API/播放器/元数据的两个应用面，顶部页签切换 | 共享层避免重复实现；将来可裁出 TV Mode |
+| ADR-014 | 可用性保护 | 无卷序列号/盘符映射等热插拔管理；源根不可达 → 扫描中止且绝不动库，根存在 → 正常增删改 | 移动硬盘没插时不误判「文件全部删除」；多媒体源只是普通路径 |
+| ADR-015 | 系列组织 | 系列是用户显式创建的管理容器：绑定根目录、成员 = 直接一级子文件（文件名序）；显示名/成员顺序/成员标题均可手动修正且扫描永不覆盖；扫描只维护既有系列成员、绝不自动建系列；单集必须归属媒体源；无电影/tv 结构类型（区分走标签）。实现见 backend.md §4 | 严格「路径 + FileID」对应避免误组；系列是纯 DB 概念不随磁盘漂移；识别错了由用户手动修正而不动磁盘 |
+| ADR-016 | （废止） | ~~元数据刮削~~：TMDB 在线 + NFO 子系统已于 2026-08 整体移除，仅保留手动编辑 | 墓碑记录，防止重新引入 |
+| ADR-017 | 统一进出口管线 | 一切入库/出库收敛到 scanner 的 `IngestPaths` / `EvictPaths`（共用单一 `normalizeCandidate`）；文件浏览器操作经回调挂钩——copy/convert 产物 → Ingest，move/rename → 先 Ingest 新路径再 Evict 旧路径，delete → Evict；操作完成瞬间即归一化，不等下次扫描。多媒体源新建即禁止嵌套；手动 title 经 `title_source` 保护 | 消除「哑操作滞后到下次扫描」；扫描/标记/同步三份并存实现收敛为一；file_id 全局匹配使移动不丢历史 |
+| ADR-018 | 系列关联 | 显式分组模型：`link_groups` + 成员表，同组系列互相可见、无方向；维护 = `PUT /api/series/{id}/links` 全量替换勾选集，每系列至多一组 | 「A 关联 B、C 后打开 B 也看到 A、C」的互相可见需求；全量替换比读时遍历直观、增量维护简单 |
+| ADR-019 | 开发者工具日志 | 前端内存环形缓冲（2000 条上限，开关控制）劫持 `console.*` + `devLog()` 采集；归档经 `POST /api/devlogs` 存 SQLite `devlogs` 表，PC 端查看，另提供 `/raw` 纯文本端点 | 移动端打不开 devtools，需把日志带回 PC 排错；采集在内存态避免长期运行拖慢页面 |
+| ADR-020 | ffmpeg 收口 | 所有 ffmpeg/ffprobe 命令构建统一收口 `media` 包，调用方只传结构化参数不拼命令行；音频白名单（`UniversalAudioCodecs`）与可流拷贝视频编码（`RemuxVideoCodecs`)单点定义；二进制路径启动时统一解析，缺失启动即报错 | 改参数/升级/换二进制只需改一处；命令分散三处的重复码表消除；缺失早暴露而非运行中途 |
+| ADR-021 | 实时通道 | 单条 WebSocket（`GET /api/ws`，cookie 鉴权）承载 S→C 推送 + C→S RPC，信封 `{id?, type, data?}`；事件桥把全部域事件转发为 `events.*` 推送（发布方零改动）；轮询迁移模式 = 初始 REST 快照 + 推送失效。协议见 realtime.md | 轮询有延迟与无谓请求；复用 events 总线前端零额外依赖，业务编码只需声明「收到 X → 失效 Y」 |
 
 ## 5. 工程目录约定
 

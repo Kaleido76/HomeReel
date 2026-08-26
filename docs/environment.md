@@ -6,12 +6,12 @@
 
 | 工具 | 用途 | 本机状态 |
 |---|---|---|
-| Go 1.22+ | 后端编译（当前 1.26.5，`CGO_ENABLED=0`） | ✅ 已装（`C:\Program Files\Go`） |
-| Node.js 18+ | 前端运行（当前 v24.18.0） | ✅ 已装 |
-| pnpm | 前端包管理（当前 11.9.0，registry 为 npmmirror） | ✅ 已装 |
-| Git | 版本管理（当前 2.55.0） | ✅ 已装 |
+| Go 1.26 | 后端编译（`CGO_ENABLED=0`） | ✅ 已装（`C:\Program Files\Go`） |
+| Node.js LTS | 前端运行 | ✅ 已装 |
+| pnpm 11.x | 前端包管理（registry 为 npmmirror） | ✅ 已装 |
+| Git | 版本管理 | ✅ 已装 |
 | winget | 软件安装（备选 choco/scoop 未装） | ✅ 已装 |
-| **FFmpeg / ffprobe** | 媒体探测、缩略图、字幕、格式工厂转换；integration 测试依赖 | ✅ 已装（8.1.2，`winget install Gyan.FFmpeg`，已入 PATH） |
+| **FFmpeg / ffprobe** | 媒体探测、缩略图、字幕、格式工厂转换；integration 测试依赖 | ✅ 已装（winget 安装 Gyan.FFmpeg，已入 PATH） |
 
 本机 `go env`：`GOOS=windows GOARCH=amd64 CGO_ENABLED=0`，符合「免 CGO 单 exe」要求。
 

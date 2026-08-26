@@ -104,19 +104,15 @@ realtime/
 
 ## 6. 迁移路线
 
-目标：轮询点改为「初始 REST 快照 + 实时推送失效」，逐个迁移，见 `status.md` §2 待办。
+目标：轮询点改为「初始 REST 快照 + 实时推送失效」，逐个迁移。进度明细见 [status.md](status.md) §2：
 
-1. **jobs（useJobs 1s/15s）**：✅ 已完成（2026-09）。后端在**三个时机**经 Hub 发布 `jobs.progress`
-   完整快照（内存态、不落库；内部任务 `internal=true` 不发）：① `Service.Enqueue` 入队即推（新任务
-   立即出现）；② reporter 每次节流上报（运行进度/子任务/ETA）；③ Worker 收尾 `MarkDone/Failed`
-   后推最终态（含 `status`/`error`）。前端 `useJobs` 完全依赖该推送「初始 REST 快照 + 就地合并缓存」，
-   **运行期零 REST 轮询/失效**；仅在（重）连成功时一次性补拉快照以恢复断连期间遗漏。已无任何
-   `GET /api/jobs` 轮询。
-2. **文件页（5s ×2）**：部分迁移（2026-09）——扫描完成已实时化：前端监听
-   `events.jobs.done|failed`（`type==='scan_source'`）即时失效 `['files-sources']`，源行旋转标识与
-   任务面板同步消失；目录列表（复制/移动完成后内容变化）与离线徽标仍走 5s 轮询，待后续改为
-   fservice 操作完成后经 Hub 发布变更推送。
-3. 未来 fsnotify / upload 复用同一 Hub 推送通道。
+- **jobs** ✅ 已迁移——后端在入队 / reporter 上报 / Worker 收尾三个时机经 Hub 推送**用户任务**
+  完整快照（内存态不落库，internal 任务不发）；前端初始 REST 快照 + 就地合并缓存，
+  运行期零 `GET /api/jobs` 轮询，仅（重）连成功时补拉一次恢复断连期间遗漏。
+- **文件页** 部分迁移：扫描完成已实时化（监听 `events.jobs.done|failed(type=scan_source)`
+  即时失效 `['files-sources']`）；目录列表与离线徽标仍走 5s 轮询，待改为 fservice 操作完成后
+  经 Hub 发布变更推送。
+- 未来 fsnotify / upload 复用同一 Hub 推送通道。
 
 ## 7. 验证
 
