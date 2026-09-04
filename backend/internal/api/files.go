@@ -228,6 +228,7 @@ func (s *Server) handleFilesSourcesAdd(w http.ResponseWriter, r *http.Request) {
 	} else {
 		jobID = id
 	}
+	slog.Info("source added", "source_id", src.ID, "path", src.Path)
 	writeJSON(w, http.StatusOK, map[string]any{"source": src, "job_id": jobID})
 }
 
@@ -261,6 +262,7 @@ func (s *Server) handleFilesSourcesRemove(w http.ResponseWriter, r *http.Request
 	for _, id := range ids {
 		s.bus.Publish(events.Event{Type: events.VideoDeleted, Data: map[string]string{"video_id": id}})
 	}
+	slog.Info("source removed", "path", path, "videos_removed", len(ids))
 	writeJSON(w, http.StatusOK, map[string]any{"removed": true, "videos_removed": len(ids)})
 }
 
@@ -288,5 +290,6 @@ func (s *Server) handleFilesSourcesScan(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
 		return
 	}
+	slog.Info("source scan enqueued", "source_id", src.ID, "path", req.Path)
 	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": jobID})
 }

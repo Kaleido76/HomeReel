@@ -1,23 +1,21 @@
 package api
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"homereel/backend/internal/auth"
 	"homereel/backend/internal/domain"
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/logging"
 	"homereel/backend/internal/realtime"
 	"homereel/backend/internal/scanner"
 	"homereel/backend/internal/search"
@@ -246,23 +244,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
-	return s.recoverer(s.logger(next))
-}
-
-func (s *Server) logger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		slog.Info("http",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"range", r.Header.Get("Range"),
-			"status", rec.status,
-			"bytes", rec.bytes,
-			"duration", time.Since(start).Round(time.Millisecond).String(),
-		)
-	})
+	return s.recoverer(logging.AccessLog()(next))
 }
 
 func (s *Server) recoverer(next http.Handler) http.Handler {
@@ -275,41 +257,6 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-	bytes  int64
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-func (r *statusRecorder) Write(p []byte) (int, error) {
-	n, err := r.ResponseWriter.Write(p)
-	r.bytes += int64(n)
-	return n, err
-}
-
-// Unwrap lets http.ResponseController reach the underlying response writer.
-func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-// Flush/Hijack forward to the underlying writer so middleware (logging) does
-// not break streaming responses or the WebSocket upgrade.
-func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, errors.New("response writer does not support hijacking")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

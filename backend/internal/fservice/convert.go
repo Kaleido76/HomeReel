@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,7 @@ func (s *Service) HandleConvert(ctx context.Context, j jobs.Job, report jobs.Rep
 		return err
 	}
 	s.notifyIngest(ctx, outputs)
+	slog.Info("convert done", "path", meta.Path, "outputs", len(outputs))
 	return nil
 }
 

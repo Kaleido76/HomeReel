@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"homereel/backend/internal/logging"
 	"gopkg.in/yaml.v3"
 )
 
@@ -14,9 +15,10 @@ import (
 var StaticDirCandidates = []string{"static", filepath.Join("..", "frontend", "dist")}
 
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	Auth   AuthConfig   `yaml:"auth"`
-	Media  MediaConfig  `yaml:"media"`
+	Server ServerConfig   `yaml:"server"`
+	Auth   AuthConfig     `yaml:"auth"`
+	Media  MediaConfig    `yaml:"media"`
+	Log    logging.Config `yaml:"log"`
 }
 
 type ServerConfig struct {
@@ -57,6 +59,7 @@ func Default() Config {
 			FFprobePath:      "ffprobe",
 			ProbeConcurrency: 2,
 		},
+		Log: logging.Default(),
 	}
 }
 

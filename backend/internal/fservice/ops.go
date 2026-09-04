@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,9 @@ func (s *Service) runFsJob(ctx context.Context, sources []string, dest, verb str
 func (s *Service) copyJob(ctx context.Context, sources []string, dest string, report jobs.Reporter) error {
 	err := s.runFsJob(ctx, sources, dest, "复制", report, copyTree)
 	s.notifyIngest(ctx, joinedDest(sources, dest))
+	if err == nil {
+		slog.Info("copy done", "sources", len(sources), "dest", dest)
+	}
 	return err
 }
 
@@ -112,6 +116,9 @@ func (s *Service) moveJob(ctx context.Context, sources []string, dest string, re
 	err := s.runFsJob(ctx, sources, dest, "移动", report, moveTree)
 	s.notifyIngest(ctx, joinedDest(sources, dest))
 	s.notifyEvict(ctx, sources)
+	if err == nil {
+		slog.Info("move done", "sources", len(sources), "dest", dest)
+	}
 	return err
 }
 

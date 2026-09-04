@@ -19,6 +19,7 @@ import (
 	"homereel/backend/internal/events"
 	"homereel/backend/internal/fservice"
 	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/logging"
 	"homereel/backend/internal/media"
 	"homereel/backend/internal/netutil"
 	"homereel/backend/internal/realtime"
@@ -40,6 +41,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// Configure the one backend logger up front so every later log line (the
+	// startup sequence included) already flows through the chosen level/format
+	// and optional file output.
+	_, closeLog, err := logging.Setup(cfg.Log)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+	slog.Info("log configured", "level", cfg.Log.LevelName(), "format", cfg.Log.Format, "file", cfg.Log.File)
 
 	database, err := db.Open(cfg.Server.DataDir)
 	if err != nil {

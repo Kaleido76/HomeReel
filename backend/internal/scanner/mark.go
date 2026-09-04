@@ -71,6 +71,7 @@ func (s *Service) markSeries(ctx context.Context, path, srcID string, report job
 	if _, err := s.syncSeriesFolder(ctx, path, cands, ids, true); err != nil {
 		return err
 	}
+	slog.Info("series marked", "path", path, "members", len(ids))
 	return nil
 }
 

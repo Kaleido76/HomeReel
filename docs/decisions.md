@@ -182,6 +182,11 @@ media:
   ffmpeg_path: "ffmpeg"    # 默认取 PATH；缺失启动即报错（见 environment.md）
   ffprobe_path: "ffprobe"
   probe_concurrency: 2     # 后台 probe/thumbnail 并发数
+
+log:
+  level: "info"            # debug | info | warn | error（默认 info；详见 backend.md §10）
+  format: "text"           # text | json（默认 text）
+  file: ""                 # 可选日志文件路径；空=仅控制台。启动时把已有日志按日期轮转一次
 ```
 
 ## 4. AI 模块扩展契约（仅预留，默认不实现）

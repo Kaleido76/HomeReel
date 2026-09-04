@@ -1,6 +1,6 @@
 # backend.md — 后端与数据层约定
 
-> 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config,realtime}` 前必读。
+> 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config,realtime,logging}` 前必读。
 > 架构背景见 [AGENTS.md](../AGENTS.md) §4 ADR；媒体管线见 [media.md](media.md)；实时通道见 [realtime.md](realtime.md)。
 
 ## 1. 时间戳
@@ -95,3 +95,16 @@
   `files.pins`。sources 端点见 decisions.md §2.2；源路径规范化（`filepath.Clean`，盘符根保留尾分隔符）
   以便路由前缀比较。
 - worker 分发：main.go 把 fscopy/fsmove/convert 交给 fservice，probe/thumbnail/scan_source 交给 scanner。
+
+## 10. 后端日志（logging）
+
+- 统一组件 `backend/internal/logging`（ADR-022）：`Setup` 按 `log.level/format/file` 构建 slog handler
+  并经 `slog.SetDefault` 全库生效——各包继续用包级 `slog.*`，零改造。级别 `debug|info|warn|error`
+  （默认 info）；格式 `text|json`（默认 text，时间戳本地毫秒级）。
+- 输出：stderr + 可选 `log.file`（追加写；启动时旧文件轮转为 `<base>-<YYYYMMDD><ext>`，不做后台滚动，
+  见 ADR-022）。文件句柄在服务关闭时释放。
+- HTTP 访问日志（`logging.AccessLog`，路径分级，详略得当）：5xx→Error、4xx→Warn；2xx/3xx 业务 API→Info；
+  `/api/stream/*` 与 SPA 静态资源等高频路径→Debug（默认 info 级别静默，播放 Range/HLS 分片不刷屏）。
+  字段：`method/path/remote/status/bytes/duration`（Range 请求附加 `range`）。
+- 关键业务操作以操作级粒度记 Info（非逐文件）：多媒体源增/删/重扫（api/files.go）、系列标记
+  （scanner/mark.go）、转换/复制/移动任务完成（fservice，带产物数/源数）；扫描完成见 §8。

@@ -47,7 +47,7 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 | 本文档 §4 | **关键决策记录（ADR）**：架构「为什么这样」的依据，决策修订必须留痕 | 理解设计取舍、评估架构影响 |
 | `docs/decisions.md` | 契约：数据模型（SQL）/ API 契约 / 配置示例 / AI 扩展预留 / 演进路线 / 风险对策 | 查表结构、API、config.yaml、未来方向 |
 | `docs/environment.md` | 本机开发环境、FFmpeg PATH 陷阱、部署形态/静态托管/启动输出 | 搭建环境、部署、排障 |
-| `docs/backend.md` | 后端与数据层实现事实源（时间戳/SQLite/迁移/FTS5/系列归组/多媒体源/jobs/事件总线） | 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config}` |
+| `docs/backend.md` | 后端与数据层实现事实源（时间戳/SQLite/迁移/FTS5/系列归组/多媒体源/jobs/事件总线/后端日志） | 改动 `backend/internal/{store,scanner,fservice,files,jobs,events,db,config,realtime,logging}` |
 | `docs/media.md` | 媒体管线实现事实源（ffprobe/容器判定/分段 MP4/格式工厂/能力判定/字幕/封面） | 改动 `backend/internal/{media,streaming}` 或前端播放器媒体相关 |
 | `docs/frontend.md` | 前端实现事实源（页签 keep-alive/栏位栈/Vidstack/响应式/文件浏览器/卡片） | 改动 `frontend/src/{tabs,features}` |
 | `docs/realtime.md` | 实时双向通道实现事实源（WS 协议/Hub/RealtimeClient） | 改动 `backend/internal/realtime` 或 `src/api/realtime.ts` |
@@ -101,6 +101,7 @@ HomeReel 是部署在家庭局域网的**个人视频资料管理与播放平台
 | ADR-019 | 开发者工具日志 | 前端内存环形缓冲（2000 条上限，开关控制）劫持 `console.*` + `devLog()` 采集；归档经 `POST /api/devlogs` 存 SQLite `devlogs` 表，PC 端查看，另提供 `/raw` 纯文本端点 | 移动端打不开 devtools，需把日志带回 PC 排错；采集在内存态避免长期运行拖慢页面 |
 | ADR-020 | ffmpeg 收口 | 所有 ffmpeg/ffprobe 命令构建统一收口 `media` 包，调用方只传结构化参数不拼命令行；音频白名单（`UniversalAudioCodecs`）与可流拷贝视频编码（`RemuxVideoCodecs`)单点定义；二进制路径启动时统一解析，缺失启动即报错 | 改参数/升级/换二进制只需改一处；命令分散三处的重复码表消除；缺失早暴露而非运行中途 |
 | ADR-021 | 实时通道 | 单条 WebSocket（`GET /api/ws`，cookie 鉴权）承载 S→C 推送 + C→S RPC，信封 `{id?, type, data?}`；事件桥把全部域事件转发为 `events.*` 推送（发布方零改动）；轮询迁移模式 = 初始 REST 快照 + 推送失效。协议见 realtime.md | 轮询有延迟与无谓请求；复用 events 总线前端零额外依赖，业务编码只需声明「收到 X → 失效 Y」 |
+| ADR-022 | 后端日志 | 统一 `logging` 包：`log.level/format/file` 单点配置，`Setup` 经 `slog.SetDefault` 全库生效（各包继续包级 `slog.*` 零改造）；HTTP 访问日志路径分级——业务 API 成功 Info、`/api/stream/*` 与静态资源成功 Debug、4xx→Warn、5xx→Error；可选文件输出启动时按日期轮转一次；关键业务操作以操作级粒度记 Info。实现见 backend.md §10 | 播放流量（Range/HLS 分片/封面）会淹没日志，分级后默认 info 只剩业务操作与错误（详略得当）；`slog.SetDefault` 覆盖全部调用点；家庭服务按天轮转一次足够，不做后台滚动机制（禁止过度优化） |
 
 ## 5. 工程目录约定
 
@@ -109,7 +110,7 @@ backend/
   cmd/server            # 装配 + 启动
   internal/
     api  auth  config  db  domain  events
-    files  fservice  jobs  media  netutil  realtime
+    files  fservice  jobs  logging  media  netutil  realtime
     scanner  search  store  streaming
   data/                 # 运行期数据（data_dir）：SQLite + covers/thumbs/remux/hls/subtitles/uploads
   config.yaml           # 服务配置（示例见 docs/decisions.md）
