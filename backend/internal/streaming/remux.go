@@ -138,16 +138,7 @@ func (s *Service) defaultRemuxVideo(ctx context.Context, v domain.Video, out str
 // RemoveRemux deletes a video's cached remux MP4s (all audio tracks and their
 // fingerprint sidecars) so a deleted or replaced file is never served stale.
 func (s *Service) RemoveRemux(videoID string) {
-	for _, p := range []string{
-		filepath.Join(s.remuxDir, videoID+".mp4"),
-		filepath.Join(s.remuxDir, videoID+".mp4.meta"),
-	} {
-		_ = os.Remove(p)
-	}
-	matches, _ := filepath.Glob(filepath.Join(s.remuxDir, videoID+"-a*.mp4*"))
-	for _, m := range matches {
-		_ = os.Remove(m)
-	}
+	_ = s.ClearRemux(videoID)
 }
 
 // Remux serves the cached remuxed MP4 of a video with HTTP Range support,

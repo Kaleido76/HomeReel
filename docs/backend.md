@@ -59,6 +59,15 @@
   `streaming.RemoveCache` 自动清理。
 - 工具页缓存管理入口：`GET /api/cache` 概览（孤儿统计）、`DELETE /api/cache?kind=subtitle`
   （唯一支持的 kind）、`DELETE /api/cache/orphans`（孤儿 = 从缓存文件名解析出的视频 ID 不在全库索引）。
+- 系列级批量操作（ADR-023）：`DELETE /api/cache/series/{id}/subtitles` 一次清空系列全部成员的字幕缓存、
+  `DELETE /api/cache/series/{id}/remux` 一次清空该系列全部成员的 Remux 缓存；
+  `POST /api/cache/pregen`（body `{series_id}` 或 `{video_ids}`）入队 `pregen` Job 预提取内封文本字幕——
+  worker 对每个视频探测文本字幕轨并写出 `<id>-<track>.vtt`（与播放按需提取同一命名），已存在跳过；
+  进度按视频报告（Subtask/Progress）。payload 携带 enqueue 时解析的 `{video_id,title,path}`，worker
+  不依赖视频库；job 由 `streaming.HandlePregen` 执行（`cmd/server/main.go` 分发）。
+- 单视频清理：`DELETE /api/cache/remux/{videoId}`（`streaming.ClearRemux`）。概览 `GET /api/cache` 的 `remuxes`
+  数组按视频报告 Remux 归属（`streaming.ListRemuxCache`，排除 `.meta` 指纹 sidecar），供前端按系列/单集展示占用
+  并在归属处清理（无归属的 Remux 走孤儿清理）。
 - 元数据刮削（TMDB+NFO）与封面手动上传均已移除：封面由扫描内联生成。
 
 ## 7. 扫描安全

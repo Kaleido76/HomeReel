@@ -166,6 +166,9 @@ func run() error {
 	// jobs (fscopy/fsmove/convert) are dispatched to the fservice handler,
 	// everything else (probe/thumbnail/scan_source) to the scanner.
 	worker := jobs.NewWorker(store.NewJobRepo(database), func(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
+		if j.Type == jobs.TypePregen {
+			return streamingSvc.HandlePregen(ctx, j, report)
+		}
 		if j.Type == jobs.TypeFsCopy || j.Type == jobs.TypeFsMove || j.Type == jobs.TypeConvert {
 			return fsvc.HandleJob(ctx, j, report)
 		}

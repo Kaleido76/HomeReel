@@ -114,7 +114,14 @@ export function ToolsPage() {
           if (!mounted.has(def.id)) return null
           const Comp = def.component
           return (
-            <div key={def.id} hidden={def.id !== activeId} className="min-h-full px-4 py-6 sm:px-6 xl:px-8">
+            <div
+              key={def.id}
+              hidden={def.id !== activeId}
+              // fullHeight tools fill the pane exactly on wide screens (master-
+              // detail internal scroll); on narrow screens they flow naturally so
+              // the page scrolls as one document.
+              className={`px-4 py-6 sm:px-6 xl:px-8 ${def.fullHeight ? 'min-h-full lg:h-full' : 'min-h-full'}`}
+            >
               <Comp />
             </div>
           )

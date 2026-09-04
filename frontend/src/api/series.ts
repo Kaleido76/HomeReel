@@ -76,6 +76,10 @@ export function fetchSeriesDetail(id: string): Promise<SeriesDetail> {
   return api<SeriesDetail>(`/api/series/${id}`)
 }
 
+export function fetchSeriesMembers(id: string): Promise<{ members: SeriesMember[] }> {
+  return api<{ members: SeriesMember[] }>(`/api/series/${id}/members`)
+}
+
 export function syncSeries(id: string): Promise<{ synced: boolean }> {
   return api<{ synced: boolean }>(`/api/series/${id}/sync`, { method: 'POST' })
 }

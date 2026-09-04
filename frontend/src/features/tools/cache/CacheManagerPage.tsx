@@ -1,402 +1,213 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Eraser, FolderOpen, Images, SlidersHorizontal, Subtitles, Trash2 } from 'lucide-react'
-import {
-  clearAllPrefs,
-  clearAllSubtitleCache,
-  clearOrphanCache,
-  clearPrefs,
-  clearSeriesPrefs,
-  clearSubtitleCache,
-  clearSubtitleTrack,
-  fetchCacheStats,
-  type CacheOrphans,
-  type PlaybackPrefsCacheEntry,
-  type SeriesPrefsCacheEntry,
-  type SubtitleCacheGroup,
-} from '../../../api/cache'
-import { formatBytes } from '../../../lib/format'
+import { Loader2 } from 'lucide-react'
+import { fetchCacheStats } from '../../../api/cache'
+import { fetchSeries } from '../../../api/series'
+import { fetchVideos, type Video } from '../../../api/videos'
+import { useJobs } from '../../jobs/useJobs'
+import { useMediaQuery } from '../../../lib/useMediaQuery'
+import { buildCacheModel, hasCache, hasStandaloneCache, type CacheSelection, type SeriesCacheInfo } from './model'
+import { CacheOverviewBar } from './CacheOverviewBar'
+import { CacheList } from './CacheList'
+import { SeriesCacheDetail, StandaloneCacheDetail } from './CacheDetail'
 
-// CacheManagerPage manages the regenerable caches around videos. Granularity
-// follows what is actually useful: extracted subtitles are listed per video
-// (grouped under their show) and can be cleared per track / per video, since
-// they are the most frequently stale; covers and thumbs are only ever cleared
-// as orphans — an in-use cover/thumb is regenerated at scan time and deleting
-// it has no upside. Clearing never touches source files.
+// fetchAllStandaloneVideos returns every standalone (ungrouped) video, walking
+// pages until the total is collected (home-scale libraries fit one or two).
+async function fetchAllStandaloneVideos(): Promise<Video[]> {
+  const out: Video[] = []
+  const pageSize = 200
+  for (let page = 1; page <= 20; page++) {
+    const res = await fetchVideos({ ungrouped: true, pageSize, page })
+    out.push(...res.videos)
+    if (out.length >= res.total) break
+  }
+  return out
+}
+
+const sortByName = (a: SeriesCacheInfo, b: SeriesCacheInfo) => a.series.name.localeCompare(b.series.name, 'zh-Hans-CN')
+
+// CacheManagerPage manages the regenerable caches around videos. It is a
+// hierarchical, series-first view instead of the old flat dump: a compact
+// overview strip, a searchable list of the series that own cache (with a
+// one-line「显示无缓存的系列」toggle at the bottom), every standalone video
+// (library 单集 semantics) and the orphan/remux global caches as pinned list
+// items, plus a detail pane per series/video holding the fine-grained
+// operations. Series-level batch actions (预生成 / 清理字幕 / 清理记忆) live in
+// the detail; pre-generation runs as a standard background job. Clearing never
+// touches source files.
 export function CacheManagerPage() {
   const queryClient = useQueryClient()
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
-  const overview = useQuery({ queryKey: ['cache'], queryFn: fetchCacheStats })
+  const [selection, setSelection] = useState<CacheSelection | null>(null)
+  const [query, setQuery] = useState('')
+  const [showAll, setShowAll] = useState(false)
+  const [showStandaloneAll, setShowStandaloneAll] = useState(false)
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
+  const wide = useMediaQuery('(min-width: 1024px)')
 
-  const orphans = overview.data?.orphans
-  const subtitleGroups = overview.data?.subtitles ?? []
-  const prefsEntries = overview.data?.prefs ?? []
-  const seriesPrefsEntries = overview.data?.series_prefs ?? []
-  const orphanTotal = orphans ? orphanCount(orphans) : 0
+  const seriesQuery = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
+  const cacheQuery = useQuery({ queryKey: ['cache'], queryFn: fetchCacheStats })
+  // Every standalone video (not just the cached ones) so the「未归组单集」section
+  // works like the library's 单集 view — a no-cache video can still be managed
+  // (e.g. pre-generate its subtitles).
+  const standaloneVideosQuery = useQuery({ queryKey: ['videos', 'ungrouped'], queryFn: fetchAllStandaloneVideos })
 
-  async function run(action: () => Promise<{ cleared: number }>, confirmText: string) {
-    if (!window.confirm(confirmText)) return
-    setError('')
-    setMessage('')
-    try {
-      const { cleared } = await action()
-      await queryClient.invalidateQueries({ queryKey: ['cache'] })
-      setMessage(`已清理 ${cleared} 项缓存`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '清理失败')
-    }
-  }
+  const model = useMemo(
+    () =>
+      buildCacheModel(cacheQuery.data, seriesQuery.data?.series ?? [], standaloneVideosQuery.data ?? []),
+    [cacheQuery.data, seriesQuery.data, standaloneVideosQuery.data],
+  )
 
-  // Group live subtitles under their show (in backend order); standalone videos
-  // are listed separately.
-  const showGroups: { title: string; groups: SubtitleCacheGroup[] }[] = []
-  const standalone: SubtitleCacheGroup[] = []
-  const showIndex = new Map<string, number>()
-  for (const g of subtitleGroups) {
-    if (g.show_id && g.show_title) {
-      let idx = showIndex.get(g.show_id)
-      if (idx === undefined) {
-        idx = showGroups.length
-        showIndex.set(g.show_id, idx)
-        showGroups.push({ title: g.show_title, groups: [] })
+  // A finished pregen job changed the cache underneath the page: refetch once so
+  // the shown state matches what is on disk.
+  const jobsQuery = useJobs()
+  const invalidatedPregen = useRef(new Set<string>())
+  useEffect(() => {
+    for (const j of jobsQuery.data?.jobs ?? []) {
+      if (j.type !== 'pregen') continue
+      if (j.status === 'done' || j.status === 'failed') {
+        if (!invalidatedPregen.current.has(j.id)) {
+          invalidatedPregen.current.add(j.id)
+          void queryClient.invalidateQueries({ queryKey: ['cache'] })
+        }
       }
-      showGroups[idx].groups.push(g)
-    } else {
-      standalone.push(g)
     }
+  }, [jobsQuery.data, queryClient])
+
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 4000)
+    return () => clearTimeout(t)
+  }, [notice])
+
+  const q = query.trim().toLowerCase()
+  const cachedSeries = useMemo(() => model.series.filter(hasCache), [model.series])
+  const noCacheSeries = useMemo(() => model.series.filter((s) => !hasCache(s)), [model.series])
+  const shownSeries = useMemo(
+    () => (showAll ? [...cachedSeries, ...noCacheSeries] : cachedSeries).sort(sortByName),
+    [cachedSeries, noCacheSeries, showAll],
+  )
+  const filteredSeries = useMemo(
+    () => (q ? shownSeries.filter((s) => s.series.name.toLowerCase().includes(q)) : shownSeries),
+    [shownSeries, q],
+  )
+  const cachedStandalone = useMemo(() => model.standalone.filter(hasStandaloneCache), [model.standalone])
+  const noCacheStandalone = useMemo(() => model.standalone.filter((s) => !hasStandaloneCache(s)), [model.standalone])
+  const filteredStandalone = useMemo(() => {
+    const shown = showStandaloneAll
+      ? [...cachedStandalone, ...noCacheStandalone]
+      : cachedStandalone
+    return q ? shown.filter((s) => s.title.toLowerCase().includes(q)) : shown
+  }, [cachedStandalone, noCacheStandalone, showStandaloneAll, q])
+
+  // On wide screens keep a selection among the visible items (first row by
+  // default); on narrow screens nothing is auto-selected so the list stays open.
+  const visibleItems = useMemo<CacheSelection[]>(() => {
+    const out: CacheSelection[] = filteredSeries.map((s) => ({ kind: 'series' as const, id: s.series.id }))
+    for (const st of filteredStandalone) out.push({ kind: 'standalone' as const, id: st.videoId })
+    return out
+  }, [filteredSeries, filteredStandalone])
+
+  useEffect(() => {
+    if (!wide) return
+    const visible = new Set(visibleItems.map((s) => `${s.kind}:${s.id}`))
+    if (selection && visible.has(`${selection.kind}:${selection.id}`)) return
+    setSelection(visibleItems[0] ?? null)
+  }, [wide, selection, visibleItems])
+
+  async function onChanged() {
+    await queryClient.invalidateQueries({ queryKey: ['cache'] })
   }
 
-  // Playback selection caches share the same show grouping.
-  const prefShowGroups: { title: string; entries: PlaybackPrefsCacheEntry[] }[] = []
-  const prefStandalone: PlaybackPrefsCacheEntry[] = []
-  const prefShowIndex = new Map<string, number>()
-  for (const p of prefsEntries) {
-    if (p.show_id && p.show_title) {
-      let idx = prefShowIndex.get(p.show_id)
-      if (idx === undefined) {
-        idx = prefShowGroups.length
-        prefShowIndex.set(p.show_id, idx)
-        prefShowGroups.push({ title: p.show_title, entries: [] })
-      }
-      prefShowGroups[idx].entries.push(p)
-    } else {
-      prefStandalone.push(p)
-    }
+  const emitNotice = (text: string, error?: boolean) => setNotice({ text, error })
+
+  if (seriesQuery.isLoading || cacheQuery.isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center text-neutral-400">
+        <Loader2 className="size-6 animate-spin" />
+      </div>
+    )
   }
+
+  if (seriesQuery.isError || cacheQuery.isError) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {cacheQuery.error instanceof Error ? cacheQuery.error.message : '加载缓存数据失败'}
+        </p>
+      </div>
+    )
+  }
+
+  const showList = !selection || wide
+  const showDetail = !!selection
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <p className="text-sm text-neutral-600">
-        这里管理围绕视频生成的缓存：封面/缩略图在扫描时生成，字幕 vtt 在内封字幕首次播放时提取。清理不影响源文件，缓存均可重建。
-      </p>
+    <div className="flex min-h-full flex-col gap-4 lg:h-full lg:min-h-0">
+      <CacheOverviewBar overview={cacheQuery.data} />
 
-      <section className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-sm font-medium text-neutral-800">孤儿缓存</h2>
-            <p className="mt-1 text-xs text-neutral-500">
-              对应视频已不在库中的残留文件（删除记录后可能遗留），只能整体清理。
-            </p>
-            {orphans && orphanTotal > 0 ? (
-              <p className="mt-2 text-sm text-neutral-800">
-                {orphanTotal} 个 · {formatBytes(orphanBytes(orphans))}
-                <span className="ml-2 text-xs text-neutral-400">
-                  封面 {orphans.cover.orphans} · 缩略图 {orphans.thumb.orphans} · 字幕 {orphans.subtitle.orphans}
-                </span>
-              </p>
+      <div className="flex min-h-0 flex-1 gap-4">
+        <div className={`${showList ? 'flex min-h-0 min-w-0 flex-col' : 'hidden'} ${wide ? 'w-96 shrink-0' : 'flex-1'}`}>
+          <CacheList
+            series={filteredSeries}
+            standalone={filteredStandalone}
+            noCacheCount={noCacheSeries.length}
+            showAll={showAll}
+            onToggleShowAll={() => setShowAll((v) => !v)}
+            standaloneNoCacheCount={noCacheStandalone.length}
+            standaloneShowAll={showStandaloneAll}
+            onToggleStandaloneShowAll={() => setShowStandaloneAll((v) => !v)}
+            query={query}
+            onQuery={setQuery}
+            selection={selection}
+            onSelect={setSelection}
+            orphans={cacheQuery.data?.orphans}
+            onChanged={onChanged}
+            onNotice={emitNotice}
+          />
+        </div>
+
+        {showDetail && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {selection.kind === 'series' ? (
+              <SeriesCacheDetail
+                info={model.series.find((s) => s.series.id === selection.id)!}
+                subtitlesByVideo={model.subtitlesByVideo}
+                remuxByVideo={model.remuxByVideo}
+                prefsByVideo={model.prefsByVideo}
+                seriesPrefs={model.seriesPrefs.get(selection.id)}
+                narrow={!wide}
+                onBack={() => setSelection(null)}
+                onChanged={onChanged}
+                onNotice={emitNotice}
+              />
             ) : (
-              <p className="mt-2 text-sm text-emerald-600">当前没有孤儿缓存</p>
-            )}
-          </div>
-          <button
-            disabled={!orphans || orphanTotal === 0}
-            onClick={() => void run(clearOrphanCache, `确定清理全部 ${orphanTotal} 个孤儿缓存文件？`)}
-            className="flex shrink-0 items-center gap-1.5 rounded bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
-          >
-            <Eraser className="size-4" /> 清理孤儿
-          </button>
-        </div>
-      </section>
-
-      <section className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <Subtitles className="size-4 text-neutral-400" />
-            <h2 className="text-sm font-medium text-neutral-800">字幕缓存</h2>
-          </div>
-          <button
-            onClick={() => void run(clearAllSubtitleCache, '确定清空全部字幕缓存？下次播放会自动重新提取。')}
-            className="flex items-center gap-1.5 rounded border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
-          >
-            <Eraser className="size-3.5" /> 清空全部
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-neutral-500">
-          内封文本字幕首次播放时提取并缓存；源文件更换或提取乱码时可逐条删除，重播即重新生成。
-        </p>
-
-        {subtitleGroups.length === 0 ? (
-          <p className="mt-4 text-sm text-neutral-500">
-            尚无字幕缓存。播放过含内封字幕的视频（如 MKV）后，这里会列出其提取出的字幕文件。
-          </p>
-        ) : (
-          <div className="mt-4 space-y-6">
-            {showGroups.map((sg) => (
-              <div key={sg.title}>
-                <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  <FolderOpen className="size-3.5" /> {sg.title}
-                </h3>
-                <div className="mt-2 space-y-3">
-                  {sg.groups.map((g) => (
-                    <SubtitleVideoRow key={g.video_id} group={g} run={run} />
-                  ))}
-                </div>
-              </div>
-            ))}
-            {standalone.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">未归组的视频</h3>
-                <div className="mt-2 space-y-3">
-                  {standalone.map((g) => (
-                    <SubtitleVideoRow key={g.video_id} group={g} run={run} />
-                  ))}
-                </div>
-              </div>
+              <StandaloneCacheDetail
+                item={model.standalone.find((s) => s.videoId === selection.id)!}
+                narrow={!wide}
+                onBack={() => setSelection(null)}
+                onChanged={onChanged}
+                onNotice={emitNotice}
+              />
             )}
           </div>
         )}
-      </section>
 
-      <section className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <SlidersHorizontal className="size-4 text-neutral-400" />
-            <h2 className="text-sm font-medium text-neutral-800">播放选择记忆</h2>
-          </div>
-          <button
-            disabled={prefsEntries.length === 0 && seriesPrefsEntries.length === 0}
-            onClick={() => void run(clearAllPrefs, '确定清空全部播放选择记忆？下次播放将回到默认音轨/字幕/音量。')}
-            className="flex items-center gap-1.5 rounded border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Eraser className="size-3.5" /> 清空全部
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-neutral-500">
-          记录每个视频上次手动选择的音轨、字幕与音量，播放时自动应用（仅用户主动切换时更新）。系列剧集共享
-          同一记忆（系列级，按音轨/字幕名称匹配）。删除后回到浏览器默认。
-        </p>
-
-        {prefsEntries.length === 0 && seriesPrefsEntries.length === 0 ? (
-          <p className="mt-4 text-sm text-neutral-500">
-            尚无播放选择记忆。播放时手动切换过音轨、字幕或音量的视频/系列会在这里列出。
-          </p>
-        ) : (
-          <div className="mt-4 space-y-6">
-            {prefShowGroups.map((sg) => (
-              <div key={sg.title}>
-                <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  <FolderOpen className="size-3.5" /> {sg.title}
-                </h3>
-                <div className="mt-2 space-y-3">
-                  {sg.entries.map((p) => (
-                    <PrefsVideoRow key={p.video_id} entry={p} run={run} />
-                  ))}
-                </div>
-              </div>
-            ))}
-            {prefStandalone.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">未归组的视频</h3>
-                <div className="mt-2 space-y-3">
-                  {prefStandalone.map((p) => (
-                    <PrefsVideoRow key={p.video_id} entry={p} run={run} />
-                  ))}
-                </div>
-              </div>
-            )}
-            {seriesPrefsEntries.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">系列级（整部共享）</h3>
-                <div className="mt-2 space-y-3">
-                  {seriesPrefsEntries.map((p) => (
-                    <SeriesPrefsRow key={p.series_id} entry={p} run={run} />
-                  ))}
-                </div>
-              </div>
-            )}
+        {!showDetail && wide && (
+          <div className="hidden min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-neutral-200 bg-white text-sm text-neutral-400 lg:flex">
+            选择左侧的系列或单集查看缓存详情
           </div>
         )}
-      </section>
-
-      <section className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
-        <div className="flex items-center gap-1.5">
-          <Images className="size-4 text-neutral-400" />
-          <h2 className="text-sm font-medium text-neutral-800">封面与缩略图</h2>
-        </div>
-        <p className="mt-1 text-xs text-neutral-500">
-          扫描时自动生成。正在使用的封面/缩略图无需删除；如视频已删除但残留了图片，请用上方的「清理孤儿」。
-        </p>
-        {orphans && (orphans.cover.orphans > 0 || orphans.thumb.orphans > 0) && (
-          <p className="mt-2 text-sm text-neutral-800">
-            当前有孤儿封面 {orphans.cover.orphans} 个、孤儿缩略图 {orphans.thumb.orphans} 个。
-          </p>
-        )}
-      </section>
-
-      {message && <p className="mt-4 text-sm text-emerald-600">{message}</p>}
-      {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-    </div>
-  )
-}
-
-function orphanCount(o: CacheOrphans): number {
-  return o.cover.orphans + o.thumb.orphans + o.subtitle.orphans
-}
-
-function orphanBytes(o: CacheOrphans): number {
-  return o.cover.orphan_bytes + o.thumb.orphan_bytes + o.subtitle.orphan_bytes
-}
-
-// prefsSummary turns a playback selection cache into a compact description of
-// what would be re-applied on the next play (only the recorded fields).
-function prefsSummary(p: PlaybackPrefsCacheEntry): string {
-  const parts: string[] = []
-  if (typeof p.audio_track === 'number') parts.push(`音轨 ${p.audio_track + 1}`)
-  if (typeof p.subtitle_id === 'string') {
-    if (p.subtitle_id === '') parts.push('字幕 关闭')
-    else parts.push(`字幕 ${p.subtitle_id === 'sidecar' ? '侧边文件' : `内封轨 ${p.subtitle_id.replace(/^e/, '')}`}`)
-  }
-  if (typeof p.volume === 'number') parts.push(`音量 ${Math.round(p.volume * 100)}%${p.muted ? '（静音）' : ''}`)
-  return parts.length > 0 ? parts.join(' · ') : '（仅记录了部分偏好）'
-}
-
-function PrefsVideoRow({
-  entry,
-  run,
-}: {
-  entry: PlaybackPrefsCacheEntry
-  run: (action: () => Promise<{ cleared: number }>, confirmText: string) => void
-}) {
-  const [busy, setBusy] = useState(false)
-  return (
-    <div className="flex items-center justify-between gap-4 rounded border border-neutral-200 p-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-neutral-800">{entry.title}</p>
-        <p className="mt-0.5 truncate text-xs text-neutral-500">{prefsSummary(entry)}</p>
       </div>
-      <button
-        disabled={busy}
-        onClick={() =>
-          void (async () => {
-            setBusy(true)
-            await run(() => clearPrefs(entry.video_id), `确定删除「${entry.title}」的播放选择记忆？`)
-            setBusy(false)
-          })()
-        }
-        className="flex shrink-0 items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
-      >
-        <Trash2 className="size-3" /> 删除
-      </button>
-    </div>
-  )
-}
 
-// seriesPrefsSummary turns a series' shared playback selection cache into a
-// compact description of what every episode would auto-apply (tracks by name).
-function seriesPrefsSummary(p: SeriesPrefsCacheEntry): string {
-  const parts: string[] = []
-  if (typeof p.audio_track_name === 'string') parts.push(`音轨 ${p.audio_track_name}`)
-  if (typeof p.subtitle_name === 'string') parts.push(`字幕 ${p.subtitle_name === '' ? '关闭' : p.subtitle_name}`)
-  if (typeof p.volume === 'number') parts.push(`音量 ${Math.round(p.volume * 100)}%${p.muted ? '（静音）' : ''}`)
-  return parts.length > 0 ? parts.join(' · ') : '（仅记录了部分偏好）'
-}
-
-function SeriesPrefsRow({
-  entry,
-  run,
-}: {
-  entry: SeriesPrefsCacheEntry
-  run: (action: () => Promise<{ cleared: number }>, confirmText: string) => void
-}) {
-  const [busy, setBusy] = useState(false)
-  return (
-    <div className="flex items-center justify-between gap-4 rounded border border-neutral-200 p-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-neutral-800">{entry.title}</p>
-        <p className="mt-0.5 truncate text-xs text-neutral-500">{seriesPrefsSummary(entry)}</p>
-      </div>
-      <button
-        disabled={busy}
-        onClick={() =>
-          void (async () => {
-            setBusy(true)
-            await run(() => clearSeriesPrefs(entry.series_id), `确定删除系列「${entry.title}」的共享播放选择记忆？`)
-            setBusy(false)
-          })()
-        }
-        className="flex shrink-0 items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
-      >
-        <Trash2 className="size-3" /> 删除
-      </button>
-    </div>
-  )
-}
-
-function SubtitleVideoRow({
-  group,
-  run,
-}: {
-  group: SubtitleCacheGroup
-  run: (action: () => Promise<{ cleared: number }>, confirmText: string) => void
-}) {
-  const [busy, setBusy] = useState(false)
-  return (
-    <div className="rounded border border-neutral-200 p-3">
-      <div className="flex items-center justify-between gap-4">
-        <span className="min-w-0 truncate text-sm font-medium text-neutral-800">{group.title}</span>
-        <span className="shrink-0 text-xs text-neutral-400">
-          {group.files.length} 轨 · {formatBytes(group.bytes)}
-        </span>
-        <button
-          disabled={busy}
-          onClick={() =>
-            void (async () => {
-              setBusy(true)
-              await run(
-                () => clearSubtitleCache(group.video_id),
-                `确定清空「${group.title}」的字幕缓存（${group.files.length} 个文件）？`,
-              )
-              setBusy(false)
-            })()
-          }
-          className="flex shrink-0 items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+      {notice && (
+        <p
+          className={`shrink-0 rounded-md border px-3 py-2 text-sm ${
+            notice.error ? 'border-red-200 bg-red-50 text-red-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          }`}
         >
-          <Trash2 className="size-3" /> 清空该视频
-        </button>
-      </div>
-      <ul className="mt-2 space-y-1">
-        {group.files.map((f) => (
-          <li key={f.name} className="flex items-center justify-between gap-4 py-0.5 pl-4">
-            <span className="min-w-0 truncate text-xs text-neutral-600">
-              轨 {f.track} · {f.name} · {formatBytes(f.bytes)}
-            </span>
-            <button
-              disabled={busy}
-              onClick={() =>
-                void (async () => {
-                  setBusy(true)
-                  await run(() => clearSubtitleTrack(group.video_id, f.track), `删除字幕文件 ${f.name}？`)
-                  setBusy(false)
-                })()
-              }
-              className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
-            >
-              <Trash2 className="size-3" /> 删除
-            </button>
-          </li>
-        ))}
-      </ul>
+          {notice.text}
+        </p>
+      )}
     </div>
   )
 }

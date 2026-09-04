@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"sync"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/jobs"
 	"homereel/backend/internal/media"
 )
 
@@ -311,6 +313,84 @@ func sidecarMime(p string) string {
 	return "text/plain; charset=utf-8"
 }
 
+// PregenItem is one video of a TypePregen job: its indexed id, display title
+// and current source path. The path is resolved at enqueue time so the worker
+// never needs the video store.
+type PregenItem struct {
+	VideoID string `json:"video_id"`
+	Title   string `json:"title"`
+	Path    string `json:"path"`
+}
+
+// PregenMeta is the job payload of TypePregen.
+type PregenMeta struct {
+	Items []PregenItem `json:"items"`
+}
+
+// HandlePregen runs a TypePregen job: it probes every video for embedded text
+// subtitle tracks and extracts the ones missing from the subtitle cache, so a
+// later playback finds them ready instead of extracting on first request.
+// Extracting an already-cached track is a no-op (the .vtt exists). Progress
+// advances by video; per-video failures are collected into one job error so a
+// partially successful batch still shows in the task panel.
+func (s *Service) HandlePregen(ctx context.Context, j jobs.Job, report jobs.Reporter) error {
+	var meta PregenMeta
+	if err := json.Unmarshal([]byte(j.Extra), &meta); err != nil || len(meta.Items) == 0 {
+		return errors.New("pregen job missing items")
+	}
+	var errs []string
+	for i, item := range meta.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		report.Subtask(fmt.Sprintf("提取 %s（%d/%d）", item.Title, i+1, len(meta.Items)))
+		if err := s.preExtractVideo(ctx, item); err != nil {
+			errs = append(errs, item.Title+": "+err.Error())
+		}
+		report.Progress(float64(i+1) / float64(len(meta.Items)))
+	}
+	if len(errs) == 1 {
+		return errors.New(errs[0])
+	}
+	if len(errs) > 1 {
+		return fmt.Errorf("%d 项失败：%s", len(errs), strings.Join(errs, "；"))
+	}
+	return nil
+}
+
+// preExtractVideo extracts every embedded text subtitle track of one video
+// that is not already cached, writing each to subtitles/<id>-<index>.vtt (the
+// exact naming Subtitle() serves from).
+func (s *Service) preExtractVideo(ctx context.Context, item PregenItem) error {
+	if s.media.FFmpeg == "" {
+		return nil
+	}
+	if _, err := os.Stat(item.Path); err != nil {
+		return err
+	}
+	subs, err := media.ProbeSubtitles(ctx, s.media, item.Path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.subDir, 0o755); err != nil {
+		return err
+	}
+	for _, st := range subs {
+		if !media.TextSubtitleCodecs[st.Codec] {
+			continue
+		}
+		cached := filepath.Join(s.subDir, fmt.Sprintf("%s-%d.vtt", item.VideoID, st.Index))
+		if _, err := os.Stat(cached); err == nil {
+			continue
+		}
+		if err := s.extractSubtitle(ctx, item.Path, st.Index, cached); err != nil {
+			_ = os.Remove(cached + ".tmp")
+			return err
+		}
+	}
+	return nil
+}
+
 // RemoveCache deletes a video's generated cover/thumb files, extracted
 // subtitles, and cached remux MP4 (called when the video is deleted so stale
 // images or media are never served).
@@ -329,11 +409,7 @@ func (s *Service) RemoveCache(videoID string) {
 // scanner regenerates them (processInline) whenever it re-probes; a pure
 // rename/move does not even change them (ADR-017).
 func (s *Service) RemoveSubtitles(videoID string) {
-	matches, _ := filepath.Glob(filepath.Join(s.subDir, videoID+"-*.vtt"))
-	for _, m := range matches {
-		_ = os.Remove(m)
-	}
-	_ = os.Remove(filepath.Join(s.subDir, videoID+".vtt"))
+	_ = s.ClearSubtitles(videoID)
 }
 
 func serveFile(w http.ResponseWriter, r *http.Request, path, contentType string) error {

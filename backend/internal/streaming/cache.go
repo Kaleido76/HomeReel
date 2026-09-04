@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// CacheClass aggregates one cache class (cover / thumb / subtitle): totals and
-// the subset that belongs to no indexed video (orphans). Cache classes are
-// distinguished by their directory and file-name rule, so the owning video id
-// can be recovered from each file name.
+// CacheClass aggregates one cache class (cover / thumb / subtitle / remux):
+// totals and the subset that belongs to no indexed video (orphans). Cache
+// classes are distinguished by their directory and file-name rule, so the
+// owning video id can be recovered from each file name.
 type CacheClass struct {
 	Files       int64 `json:"files"`
 	Bytes       int64 `json:"bytes"`
@@ -115,6 +115,61 @@ func subtitleCacheID(name string) (string, int) {
 // regenerated on next playback; the source file is untouched).
 func (s *Service) ClearAllSubtitles() int {
 	return removeDirFiles(s.subDir)
+}
+
+// RemuxCacheFile is one cached remux output (a per-audio-track MP4) with its
+// owning video id. Fingerprint sidecars are excluded — they are metadata, not a
+// remux the user manages.
+type RemuxCacheFile struct {
+	VideoID string
+	Name    string
+	Bytes   int64
+}
+
+// ListRemuxCache returns every cached remux MP4, parsed from the
+// "<id>.mp4" / "<id>-a<N>.mp4" names so the UI can group them per video.
+func (s *Service) ListRemuxCache() []RemuxCacheFile {
+	entries, err := os.ReadDir(s.remuxDir)
+	if err != nil {
+		return nil
+	}
+	var out []RemuxCacheFile
+	for _, e := range entries {
+		if e.IsDir() || strings.HasSuffix(e.Name(), ".meta") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		id, ok := remuxIDFromName(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())))
+		if !ok {
+			continue
+		}
+		out = append(out, RemuxCacheFile{VideoID: id, Name: e.Name(), Bytes: info.Size()})
+	}
+	return out
+}
+
+// ClearRemux deletes a video's cached remux MP4s (all audio tracks and their
+// fingerprint sidecars) and returns how many files were removed.
+func (s *Service) ClearRemux(videoID string) int {
+	removed := 0
+	for _, p := range []string{
+		filepath.Join(s.remuxDir, videoID+".mp4"),
+		filepath.Join(s.remuxDir, videoID+".mp4.meta"),
+	} {
+		if os.Remove(p) == nil {
+			removed++
+		}
+	}
+	matches, _ := filepath.Glob(filepath.Join(s.remuxDir, videoID+"-a*.mp4*"))
+	for _, m := range matches {
+		if os.Remove(m) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 // ClearSubtitles deletes every extracted-subtitle cache file of one video.

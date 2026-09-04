@@ -19,6 +19,9 @@ const (
 	TypeFsCopy       = "fscopy"
 	TypeFsMove       = "fsmove"
 	TypeConvert      = "convert"
+	// TypePregen pre-extracts a video set's text subtitles into the subtitle
+	// cache ahead of playback (cache-manager「预生成缓存」).
+	TypePregen = "pregen"
 )
 
 // Job statuses.

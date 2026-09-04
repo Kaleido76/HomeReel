@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
 
 	"homereel/backend/internal/domain"
+	"homereel/backend/internal/jobs"
+	"homereel/backend/internal/streaming"
 )
 
 // Cache management (工具页「缓存管理」): statistics + manual clearing of the
@@ -66,6 +69,36 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	out := make([]cacheSubtitleGroup, 0, len(order))
 	for _, id := range order {
 		out = append(out, *groups[id])
+	}
+
+	// Remuxed MP4 caches, grouped per video (ADR-006 remux tier) so the UI can
+	// show where the (usually dominant) space lives — per series / per episode.
+	remuxGroups := map[string]*cacheRemuxGroup{}
+	var remuxOrder []string
+	for _, f := range s.streaming.ListRemuxCache() {
+		v, ok := vByID[f.VideoID]
+		if !ok {
+			continue
+		}
+		g, ok := remuxGroups[v.ID]
+		if !ok {
+			g = &cacheRemuxGroup{VideoID: v.ID, Title: v.Title, ShowID: v.ShowID, ShowTitle: showTitles[v.ShowID]}
+			remuxGroups[v.ID] = g
+			remuxOrder = append(remuxOrder, v.ID)
+		}
+		g.Files++
+		g.Bytes += f.Bytes
+	}
+	sort.Slice(remuxOrder, func(i, j int) bool {
+		a, b := remuxGroups[remuxOrder[i]], remuxGroups[remuxOrder[j]]
+		if a.ShowTitle != b.ShowTitle {
+			return a.ShowTitle < b.ShowTitle
+		}
+		return a.Title < b.Title
+	})
+	remuxOut := make([]cacheRemuxGroup, 0, len(remuxOrder))
+	for _, id := range remuxOrder {
+		remuxOut = append(remuxOut, *remuxGroups[id])
 	}
 
 	// 播放选择记忆（音轨/字幕/音量偏好缓存）：按视频列出，删除后播放器回到
@@ -135,6 +168,7 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"orphans":      s.streaming.CacheOverview(ids),
 		"subtitles":    out,
+		"remuxes":      remuxOut,
 		"prefs":        prefs,
 		"series_prefs": seriesPrefs,
 	})
@@ -153,6 +187,18 @@ type cacheSubtitleGroup struct {
 	ShowTitle string              `json:"show_title,omitempty"`
 	Files     []cacheSubtitleFile `json:"files"`
 	Bytes     int64               `json:"bytes"`
+}
+
+// cacheRemuxGroup is one video's cached remux MP4s (default + per-audio-track
+// outputs). It is reported per video so the UI can attribute the remux space to
+// the owning series / episode.
+type cacheRemuxGroup struct {
+	VideoID   string `json:"video_id"`
+	Title     string `json:"title"`
+	ShowID    string `json:"show_id,omitempty"`
+	ShowTitle string `json:"show_title,omitempty"`
+	Files     int    `json:"files"`
+	Bytes     int64  `json:"bytes"`
 }
 
 // cachePrefsEntry is one video's playback selection cache as shown by the cache
@@ -195,6 +241,152 @@ func (s *Server) handleCacheSubtitleTrackClear(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cleared": s.streaming.ClearSubtitleTrack(r.PathValue("videoId"), track)})
+}
+
+// clearSeriesCache runs one cache clear across every member of the series in
+// the request path and returns the total number of removed files. It is the
+// shared tail of the series-level「清理字幕」/「清理 Remux」handlers.
+func (s *Server) clearSeriesCache(r *http.Request, clear func(videoID string) int) (int, error) {
+	members, err := s.series.GetMembers(r.Context(), r.PathValue("seriesId"))
+	if err != nil {
+		return 0, err
+	}
+	var cleared int
+	for _, m := range members {
+		cleared += clear(m.VideoID)
+	}
+	return cleared, nil
+}
+
+// handleCacheSeriesSubtitleClear clears the extracted-subtitle cache of every
+// member of a series in one request (cache-manager series-level「清理字幕」).
+func (s *Server) handleCacheSeriesSubtitleClear(w http.ResponseWriter, r *http.Request) {
+	cleared, err := s.clearSeriesCache(r, s.streaming.ClearSubtitles)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "读取系列成员失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared})
+}
+
+// handleCacheSeriesRemuxClear clears the cached remux MP4s of every member of a
+// series in one request (cache-manager series-level「清理 Remux」).
+func (s *Server) handleCacheSeriesRemuxClear(w http.ResponseWriter, r *http.Request) {
+	cleared, err := s.clearSeriesCache(r, s.streaming.ClearRemux)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "读取系列成员失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared})
+}
+
+// handleCacheRemuxVideoClear clears one video's cached remux MP4s (the
+// standalone-cache detail「清理 Remux」).
+func (s *Server) handleCacheRemuxVideoClear(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": s.streaming.ClearRemux(r.PathValue("videoId"))})
+}
+
+// handleCachePregen enqueues a background job that pre-extracts every target
+// video's embedded text subtitles into the cache (cache-manager「预生成缓存」).
+// The target is a series (series_id) or an explicit set of videos (video_ids,
+// e.g. one standalone episode); the job runs through the standard queue so
+// progress is visible in the task panel.
+func (s *Server) handleCachePregen(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SeriesID string   `json:"series_id"`
+		VideoIDs []string `json:"video_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+		return
+	}
+
+	videoIDs := append([]string(nil), body.VideoIDs...)
+	var title string
+	if body.SeriesID != "" {
+		se, err := s.series.Get(r.Context(), body.SeriesID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "系列不存在")
+			return
+		}
+		members, err := s.series.GetMembers(r.Context(), body.SeriesID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "读取系列成员失败")
+			return
+		}
+		for _, m := range members {
+			videoIDs = append(videoIDs, m.VideoID)
+		}
+		title = se.Name
+	}
+	videoIDs = uniqueNonEmpty(videoIDs)
+	if len(videoIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "没有可预生成的视频")
+		return
+	}
+
+	items := make([]streaming.PregenItem, 0, len(videoIDs))
+	for _, id := range videoIDs {
+		v, err := s.videos.Get(r.Context(), id)
+		if err != nil {
+			continue
+		}
+		items = append(items, streaming.PregenItem{VideoID: v.ID, Title: v.Title, Path: v.Path})
+	}
+	if len(items) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "所选视频均不在库中")
+		return
+	}
+	if len(items) == 1 {
+		title = items[0].Title
+	}
+
+	// Dedup by the resource the job owns: a whole series, or a lone video.
+	target := body.SeriesID
+	if target == "" {
+		target = items[0].VideoID
+		if len(items) > 1 {
+			target = "multi"
+		}
+	}
+	active, err := s.jobs.HasActive(r.Context(), jobs.TypePregen, target)
+	if err != nil {
+		slog.Warn("check pregen active", "err", err)
+	}
+	if active {
+		writeError(w, http.StatusConflict, "already_running", "该目标已有进行中的预生成任务")
+		return
+	}
+
+	extra, err := json.Marshal(streaming.PregenMeta{Items: items})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "任务编码失败")
+		return
+	}
+	id, err := s.jobs.Enqueue(r.Context(), jobs.TypePregen, target, "预生成字幕缓存 · "+title, string(extra))
+	if err != nil {
+		slog.Error("enqueue pregen", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "任务提交失败")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": id})
+}
+
+// uniqueNonEmpty dedupes and drops empty ids from a video id list.
+func uniqueNonEmpty(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *Server) handleCacheClear(w http.ResponseWriter, r *http.Request) {

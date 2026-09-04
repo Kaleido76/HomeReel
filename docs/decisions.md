@@ -128,8 +128,11 @@
 | GET | `/api/cache` | 缓存概览（孤儿统计 + 字幕分组 + 播放选择记忆列表） |
 | DELETE | `/api/cache?kind=subtitle` | 清空全部字幕缓存（唯一支持的 kind，其余走孤儿清理） |
 | DELETE | `/api/cache/orphans` | 清空孤儿缓存（库中已无对应视频的残留文件） |
-| DELETE | `/api/cache/subtitles/{videoId}[/{track}]` | 按视频 / 按轨删除字幕缓存 |
+| DELETE | `/api/cache/remux/{videoId}` | 清空单视频的 Remux 缓存 |
+| DELETE | `/api/cache/series/{seriesId}/subtitles` | 系列级：一次清空该系列全部成员的字幕缓存 |
+| DELETE | `/api/cache/series/{seriesId}/remux` | 系列级：一次清空该系列全部成员的 Remux 缓存 |
 | DELETE | `/api/cache/prefs[/{videoId}]` | 清空全部 / 单视频播放选择记忆 |
+| POST | `/api/cache/pregen` | 入队预生成 Job（body `{series_id}` 或 `{video_ids}`）：提前提取内封文本字幕为 vtt 缓存（ADR-023） |
 
 ### 2.5 历史 / 搜索 / 设置 / 播放记忆
 

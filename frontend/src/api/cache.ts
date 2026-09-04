@@ -11,6 +11,7 @@ export interface CacheOrphans {
   cover: CacheClass
   thumb: CacheClass
   subtitle: CacheClass
+  remux: CacheClass
 }
 
 export interface SubtitleCacheFile {
@@ -25,6 +26,18 @@ export interface SubtitleCacheGroup {
   show_id?: string
   show_title?: string
   files: SubtitleCacheFile[]
+  bytes: number
+}
+
+// CacheRemuxGroup is one video's cached remux MP4s (default + per-audio-track
+// outputs). Reported per video so the UI can attribute the remux space to the
+// owning series / episode.
+export interface CacheRemuxGroup {
+  video_id: string
+  title: string
+  show_id?: string
+  show_title?: string
+  files: number
   bytes: number
 }
 
@@ -58,6 +71,7 @@ export interface SeriesPrefsCacheEntry {
 export interface CacheOverview {
   orphans: CacheOrphans
   subtitles: SubtitleCacheGroup[]
+  remuxes: CacheRemuxGroup[]
   prefs: PlaybackPrefsCacheEntry[]
   series_prefs: SeriesPrefsCacheEntry[]
 }
@@ -70,16 +84,45 @@ export function clearSubtitleCache(videoId: string): Promise<{ cleared: number }
   return api<{ cleared: number }>(`/api/cache/subtitles/${videoId}`, { method: 'DELETE' })
 }
 
-export function clearSubtitleTrack(videoId: string, track: number): Promise<{ cleared: number }> {
-  return api<{ cleared: number }>(`/api/cache/subtitles/${videoId}/${track}`, { method: 'DELETE' })
-}
-
-export function clearAllSubtitleCache(): Promise<{ cleared: number }> {
-  return api<{ cleared: number }>('/api/cache?kind=subtitle', { method: 'DELETE' })
-}
-
 export function clearOrphanCache(): Promise<{ cleared: number }> {
   return api<{ cleared: number }>('/api/cache/orphans', { method: 'DELETE' })
+}
+
+// clearVideoRemux deletes one video's cached remux MP4s (the standalone-cache
+// detail「清理 Remux」).
+export function clearVideoRemux(videoId: string): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>(`/api/cache/remux/${videoId}`, { method: 'DELETE' })
+}
+
+// clearSeriesRemux clears the cached remux MP4s of every member of a series in
+// one request (series-level「清理 Remux」).
+export function clearSeriesRemux(seriesId: string): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>(`/api/cache/series/${seriesId}/remux`, { method: 'DELETE' })
+}
+
+// clearSeriesSubtitles clears the extracted-subtitle cache of every member of a
+// series in one request (series-level「清理字幕」).
+export function clearSeriesSubtitles(seriesId: string): Promise<{ cleared: number }> {
+  return api<{ cleared: number }>(`/api/cache/series/${seriesId}/subtitles`, { method: 'DELETE' })
+}
+
+// pregenSubtitles enqueues a background job that pre-extracts the given videos'
+// embedded text subtitles into the cache, so playback finds them ready (used for
+// a lone standalone video or the standalone-cache section).
+export function pregenSubtitles(videoIds: string[]): Promise<{ job_id: string }> {
+  return api<{ job_id: string }>('/api/cache/pregen', {
+    method: 'POST',
+    body: JSON.stringify({ video_ids: videoIds }),
+  })
+}
+
+// pregenSeriesSubtitles enqueues the same pre-extraction job for a whole series
+// (series-level「预生成缓存」; the backend resolves members and dedups by series).
+export function pregenSeriesSubtitles(seriesId: string): Promise<{ job_id: string }> {
+  return api<{ job_id: string }>('/api/cache/pregen', {
+    method: 'POST',
+    body: JSON.stringify({ series_id: seriesId }),
+  })
 }
 
 export function clearPrefs(videoId: string): Promise<{ cleared: number }> {
@@ -90,8 +133,4 @@ export function clearPrefs(videoId: string): Promise<{ cleared: number }> {
 // cache manager reuses the series detail page's endpoint).
 export function clearSeriesPrefs(seriesId: string): Promise<{ cleared: number }> {
   return api<{ cleared: number }>(`/api/series/${seriesId}/prefs`, { method: 'DELETE' })
-}
-
-export function clearAllPrefs(): Promise<{ cleared: number }> {
-  return api<{ cleared: number }>('/api/cache/prefs', { method: 'DELETE' })
 }
