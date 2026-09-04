@@ -54,7 +54,7 @@ export function ToolsPage() {
       {/* Narrow screens: a full-width context row showing the current tool.
           Tapping it expands the drawer; the row is the "current tool" item of
           the list (blue + bold) and the drawer holds the other tools. */}
-      <div className="relative z-50 flex shrink-0 items-center border-b border-neutral-200 bg-white lg:hidden">
+      <div className="relative z-10 flex shrink-0 items-center border-b border-neutral-200 bg-white lg:hidden">
         <button
           onClick={() => setMenuOpen((o) => !o)}
           aria-haspopup="menu"
@@ -75,18 +75,20 @@ export function ToolsPage() {
             <ChevronDown className="ml-auto size-4 shrink-0 text-neutral-400" />
           )}
         </button>
+      </div>
 
-        {/* The drawer is always mounted so opacity/transform can animate both
-            the fade-in and the fade-out; it is pointer-inert while closed. */}
-        <div
-          inert={!menuOpen}
-          className={`absolute inset-x-0 top-full z-50 overflow-hidden rounded-b-lg shadow-lg transition-[opacity,transform] duration-150 ${
-            menuOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'
-          }`}
-        >
-          <div className="max-h-[60vh] divide-y divide-neutral-100 overflow-y-auto border-b border-neutral-200 border-t border-neutral-100 bg-white py-1">
-            <ToolList activeId={activeId} onSelect={selectTool} variant="menu" excludeActive />
-          </div>
+      {/* The drawer is always mounted so opacity/transform can animate both
+          the fade-in and the fade-out; it is pointer-inert while closed.
+          Placed outside the selection bar so its z-50 is in the root context,
+          above the backdrop (z-40) and below the header (z-50). */}
+      <div
+        inert={!menuOpen}
+        className={`fixed inset-x-0 top-14 z-[45] overflow-hidden transition-[opacity,transform] duration-150 lg:hidden ${
+          menuOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'
+        }`}
+      >
+        <div className="max-h-[60vh] divide-y divide-neutral-100 overflow-y-auto border-b border-neutral-200 bg-white py-1 shadow-lg">
+          <ToolList activeId={activeId} onSelect={selectTool} variant="menu" excludeActive />
         </div>
       </div>
 

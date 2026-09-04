@@ -4,6 +4,7 @@ import { clearOrphanCache } from '../../../api/cache'
 import type { CacheOrphans } from '../../../api/cache'
 import { seriesPosterUrl } from '../../../api/series'
 import { coverUrl } from '../../../api/videos'
+import { useNotify } from '../../../components/NotificationProvider'
 import { formatBytes } from '../../../lib/format'
 import {
   hasCache,
@@ -34,7 +35,6 @@ export function CacheList({
   onSelect,
   orphans,
   onChanged,
-  onNotice,
 }: {
   series: SeriesCacheInfo[]
   standalone: StandaloneCacheInfo[]
@@ -50,9 +50,9 @@ export function CacheList({
   onSelect: (sel: CacheSelection) => void
   orphans?: CacheOrphans
   onChanged: () => Promise<void>
-  onNotice: (text: string, error?: boolean) => void
 }) {
   const [confirmOrphans, setConfirmOrphans] = useState(false)
+  const { notify } = useNotify()
   const orphanCount = orphans ? orphanTotal(orphans) : 0
   const empty = series.length === 0 && standalone.length === 0
 
@@ -153,9 +153,9 @@ export function CacheList({
               try {
                 const { cleared } = await clearOrphanCache()
                 await onChanged()
-                onNotice(`已清理 ${cleared} 个孤儿缓存文件`)
+                notify(`已清理 ${cleared} 个孤儿缓存文件`)
               } catch (err) {
-                onNotice(err instanceof Error ? err.message : '清理失败', true)
+                notify(err instanceof Error ? err.message : '清理失败', 'error')
               }
             })().then(() => setConfirmOrphans(false))
           }

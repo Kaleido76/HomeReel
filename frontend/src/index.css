@@ -55,6 +55,40 @@ body {
   animation: indeterminate-slide 1.2s ease-in-out infinite;
 }
 
+/* Notification banner slide-in / slide-out (NotificationProvider) */
+@keyframes notify-slide-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes notify-slide-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+}
+
+.notify-slide-success,
+.notify-slide-warning,
+.notify-slide-error {
+  animation:
+    notify-slide-in 200ms ease-out forwards,
+    notify-slide-out 200ms ease-in forwards;
+  /* Total duration set via animation-delay: the slide-out fires after hold.
+     JS sets --notify-hold to the hold duration (ms). */
+  animation-delay: 0ms, calc(var(--notify-hold, 3500ms) + 200ms);
+}
+
 /* Fake fullscreen (ADR-006 修订): the player wrapper is stretched over the whole
    dynamic viewport to simulate native fullscreen on touch browsers, where native
    fullscreen is unavailable (iOS <div>) or hides our custom controls/subtitles.

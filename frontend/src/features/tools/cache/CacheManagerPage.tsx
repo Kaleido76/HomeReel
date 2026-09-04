@@ -41,7 +41,6 @@ export function CacheManagerPage() {
   const [query, setQuery] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [showStandaloneAll, setShowStandaloneAll] = useState(false)
-  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const wide = useMediaQuery('(min-width: 1024px)')
 
   const seriesQuery = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
@@ -72,12 +71,6 @@ export function CacheManagerPage() {
       }
     }
   }, [jobsQuery.data, queryClient])
-
-  useEffect(() => {
-    if (!notice) return
-    const t = setTimeout(() => setNotice(null), 4000)
-    return () => clearTimeout(t)
-  }, [notice])
 
   const q = query.trim().toLowerCase()
   const cachedSeries = useMemo(() => model.series.filter(hasCache), [model.series])
@@ -117,8 +110,6 @@ export function CacheManagerPage() {
   async function onChanged() {
     await queryClient.invalidateQueries({ queryKey: ['cache'] })
   }
-
-  const emitNotice = (text: string, error?: boolean) => setNotice({ text, error })
 
   if (seriesQuery.isLoading || cacheQuery.isLoading) {
     return (
@@ -162,7 +153,6 @@ export function CacheManagerPage() {
             onSelect={setSelection}
             orphans={cacheQuery.data?.orphans}
             onChanged={onChanged}
-            onNotice={emitNotice}
           />
         </div>
 
@@ -178,7 +168,6 @@ export function CacheManagerPage() {
                 narrow={!wide}
                 onBack={() => setSelection(null)}
                 onChanged={onChanged}
-                onNotice={emitNotice}
               />
             ) : (
               <StandaloneCacheDetail
@@ -186,7 +175,6 @@ export function CacheManagerPage() {
                 narrow={!wide}
                 onBack={() => setSelection(null)}
                 onChanged={onChanged}
-                onNotice={emitNotice}
               />
             )}
           </div>
@@ -198,16 +186,6 @@ export function CacheManagerPage() {
           </div>
         )}
       </div>
-
-      {notice && (
-        <p
-          className={`shrink-0 rounded-md border px-3 py-2 text-sm ${
-            notice.error ? 'border-red-200 bg-red-50 text-red-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          }`}
-        >
-          {notice.text}
-        </p>
-      )}
     </div>
   )
 }

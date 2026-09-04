@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Play, RefreshCw, Trash2 } from 'lucide-react'
@@ -14,6 +14,7 @@ import {
   syncVideo,
   type PlaybackPrefs,
 } from '../../api/videos'
+import { useNotify } from '../../components/NotificationProvider'
 import { playMode } from '../../lib/playability'
 import { formatVolume } from '../../lib/format'
 import { openFormatVideo } from '../../tabs/manager'
@@ -67,7 +68,7 @@ export function VideoDetailPane({
 }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [error, setError] = useState('')
+  const { notify } = useNotify()
   const detail = useQuery({ queryKey: ['video', videoId], queryFn: () => fetchVideo(videoId) })
   // Shares the ['subtitles', id] cache with VideoPlayer, so opening the player
   // after this pane does not re-fetch the track list.
@@ -139,27 +140,25 @@ export function VideoDetailPane({
   const prefVolume = typeof p?.volume === 'number' ? formatVolume(p.volume, p.muted) : undefined
 
   async function doSync() {
-    setError('')
     try {
       await syncVideo(video.id)
       queryClient.invalidateQueries({ queryKey: ['video', video.id] })
       queryClient.invalidateQueries({ queryKey: ['videos'] })
       queryClient.invalidateQueries({ queryKey: ['series'] })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '同步失败')
+      notify(err instanceof ApiError ? err.message : '同步失败', 'error')
     }
   }
 
   async function remove() {
     if (!window.confirm('该单集的源文件已不存在。移除将删除其已入库元数据，磁盘文件不受影响。')) return
-    setError('')
     try {
       await deleteVideo(video.id)
       queryClient.invalidateQueries({ queryKey: ['videos'] })
       queryClient.invalidateQueries({ queryKey: ['series'] })
       navigate({ to: '/library' })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '移除失败')
+      notify(err instanceof ApiError ? err.message : '移除失败', 'error')
     }
   }
 
@@ -248,8 +247,6 @@ export function VideoDetailPane({
         audioTracks={audioTracks.data?.audio ?? []}
         mode={mode}
       />
-
-      {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   )
 }

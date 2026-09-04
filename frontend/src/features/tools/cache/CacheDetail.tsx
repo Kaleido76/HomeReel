@@ -19,6 +19,7 @@ import { fetchSeriesMembers, seriesPosterUrl } from '../../../api/series'
 import { coverUrl } from '../../../api/videos'
 import { isActiveJob } from '../../../api/jobs'
 import { useJobs } from '../../jobs/useJobs'
+import { useNotify } from '../../../components/NotificationProvider'
 import { formatBytes } from '../../../lib/format'
 import { prefsSummary, seriesPrefsSummary, type SeriesCacheInfo, type StandaloneCacheInfo } from './model'
 import { VideoCacheRow } from './VideoCacheRow'
@@ -29,20 +30,19 @@ import { ConfirmDialog } from './ConfirmDialog'
 // same header/action layout (the standalone just has no member panel below).
 
 // runClear executes a destructive clear, refreshes the cache overview and
-// surfaces the outcome (or an error) through the shared notice bar — the common
-// tail of every「清理…」action in the two detail panes.
+// surfaces the outcome (or an error) through the global notification banner.
 async function runClear(
   fn: () => Promise<unknown>,
   text: string,
   onChanged: () => Promise<void>,
-  onNotice: (text: string, error?: boolean) => void,
+  notify: (message: string, type?: 'success' | 'warning' | 'error') => void,
 ) {
   try {
     await fn()
     await onChanged()
-    onNotice(text)
+    notify(text)
   } catch (err) {
-    onNotice(err instanceof Error ? err.message : '操作失败', true)
+    notify(err instanceof Error ? err.message : '操作失败', 'error')
   }
 }
 
@@ -117,7 +117,6 @@ export function SeriesCacheDetail({
   narrow,
   onBack,
   onChanged,
-  onNotice,
 }: {
   info: SeriesCacheInfo
   subtitlesByVideo: Map<string, SubtitleCacheGroup>
@@ -127,10 +126,10 @@ export function SeriesCacheDetail({
   narrow: boolean
   onBack?: () => void
   onChanged: () => Promise<void>
-  onNotice: (text: string, error?: boolean) => void
 }) {
   const [dialog, setDialog] = useState<null | 'subtitles' | 'prefs' | 'remux'>(null)
   const [pregenBusy, setPregenBusy] = useState(false)
+  const { notify } = useNotify()
   const jobs = useJobs()
   const membersQuery = useQuery({
     queryKey: ['series-members', info.series.id],
@@ -174,9 +173,9 @@ export function SeriesCacheDetail({
     setPregenBusy(true)
     try {
       await pregenSeriesSubtitles(info.series.id)
-      onNotice('已提交预生成任务，可在顶部任务栏查看进度')
+      notify('已提交预生成任务，可在顶部任务栏查看进度')
     } catch (err) {
-      onNotice(err instanceof Error ? err.message : '任务提交失败', true)
+      notify(err instanceof Error ? err.message : '任务提交失败', 'error')
     } finally {
       setPregenBusy(false)
     }
@@ -184,12 +183,12 @@ export function SeriesCacheDetail({
 
   async function clearSubtitles() {
     setDialog(null)
-    await runClear(() => clearSeriesSubtitles(info.series.id), `已清理「${info.series.name}」的字幕缓存`, onChanged, onNotice)
+    await runClear(() => clearSeriesSubtitles(info.series.id), `已清理「${info.series.name}」的字幕缓存`, onChanged, notify)
   }
 
   async function clearRemux() {
     setDialog(null)
-    await runClear(() => clearSeriesRemux(info.series.id), `已清理「${info.series.name}」的 Remux 缓存`, onChanged, onNotice)
+    await runClear(() => clearSeriesRemux(info.series.id), `已清理「${info.series.name}」的 Remux 缓存`, onChanged, notify)
   }
 
   async function clearMemory() {
@@ -198,7 +197,7 @@ export function SeriesCacheDetail({
       await clearSeriesPrefs(info.series.id)
       const targets = [...prefsByVideo.values()].filter((p) => p.show_id === info.series.show_id)
       await Promise.all(targets.map((p) => clearPrefs(p.video_id)))
-    }, `已清理「${info.series.name}」的播放记忆`, onChanged, onNotice)
+    }, `已清理「${info.series.name}」的播放记忆`, onChanged, notify)
   }
 
   return (
@@ -296,7 +295,6 @@ export function SeriesCacheDetail({
                 remux={remuxByVideo.get(m.video_id)}
                 prefs={prefsByVideo.get(m.video_id)}
                 onChanged={onChanged}
-                onNotice={onNotice}
               />
             ))}
           </div>
@@ -342,16 +340,15 @@ export function StandaloneCacheDetail({
   narrow,
   onBack,
   onChanged,
-  onNotice,
 }: {
   item: StandaloneCacheInfo
   narrow: boolean
   onBack?: () => void
   onChanged: () => Promise<void>
-  onNotice: (text: string, error?: boolean) => void
 }) {
   const [dialog, setDialog] = useState<null | 'subtitles' | 'prefs' | 'remux'>(null)
   const [pregenBusy, setPregenBusy] = useState(false)
+  const { notify } = useNotify()
   const jobs = useJobs()
   const activePregen = (jobs.data?.jobs ?? []).find(
     (j) => j.type === 'pregen' && j.target === item.videoId && isActiveJob(j),
@@ -364,9 +361,9 @@ export function StandaloneCacheDetail({
     setPregenBusy(true)
     try {
       await pregenSubtitles([item.videoId])
-      onNotice('已提交预生成任务，可在顶部任务栏查看进度')
+      notify('已提交预生成任务，可在顶部任务栏查看进度')
     } catch (err) {
-      onNotice(err instanceof Error ? err.message : '任务提交失败', true)
+      notify(err instanceof Error ? err.message : '任务提交失败', 'error')
     } finally {
       setPregenBusy(false)
     }
@@ -374,17 +371,17 @@ export function StandaloneCacheDetail({
 
   async function clearSubtitles() {
     setDialog(null)
-    await runClear(() => clearSubtitleCache(item.videoId), `已清空「${item.title}」的字幕缓存`, onChanged, onNotice)
+    await runClear(() => clearSubtitleCache(item.videoId), `已清空「${item.title}」的字幕缓存`, onChanged, notify)
   }
 
   async function clearRemux() {
     setDialog(null)
-    await runClear(() => clearVideoRemux(item.videoId), `已清理「${item.title}」的 Remux 缓存`, onChanged, onNotice)
+    await runClear(() => clearVideoRemux(item.videoId), `已清理「${item.title}」的 Remux 缓存`, onChanged, notify)
   }
 
   async function clearMemory() {
     setDialog(null)
-    await runClear(() => clearPrefs(item.videoId), `已删除「${item.title}」的播放记忆`, onChanged, onNotice)
+    await runClear(() => clearPrefs(item.videoId), `已删除「${item.title}」的播放记忆`, onChanged, notify)
   }
 
   return (

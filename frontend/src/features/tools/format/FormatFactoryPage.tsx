@@ -4,6 +4,7 @@ import { CheckCircle2, FileVideo, Folder, Loader2, Lock, RefreshCw, XCircle } fr
 import type { Job } from '../../../api/jobs'
 import { isActiveJob } from '../../../api/jobs'
 import { convertPaths, probePaths, type ConvertProbe } from '../../../api/convert'
+import { useNotify } from '../../../components/NotificationProvider'
 import { formatEta } from '../../../lib/format'
 import { Tooltip } from '../../../components/Tooltip'
 import { useJobs } from '../../jobs/useJobs'
@@ -32,6 +33,7 @@ export function FormatFactoryPage() {
   const pending = usePending()
   const jobsQuery = useJobs()
   const [params, setParams] = useState<ConvertParams>({ ...DEFAULT_PARAMS })
+  const { notify } = useNotify()
 
   const convertJobs = useMemo(
     () => (jobsQuery.data?.jobs ?? []).filter((j) => j.type === 'convert'),
@@ -86,8 +88,14 @@ export function FormatFactoryPage() {
 
   const convert = useMutation({
     mutationFn: (args: { paths: string[]; params: ConvertParams }) => convertPaths(args.paths, args.params),
-    onSuccess: () => {
+    onSuccess: (res) => {
       clearPending()
+      if (res.errors && res.errors.length > 0) {
+        notify(res.errors.map((e) => `${e.path}：${e.message}`).join('；'), 'warning')
+      }
+    },
+    onError: (err) => {
+      notify(err instanceof Error ? err.message : '转换提交失败', 'error')
     },
   })
 
@@ -196,21 +204,6 @@ export function FormatFactoryPage() {
             </>
           )}
         </section>
-      )}
-
-      {convert.isError && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
-          {convert.error instanceof Error ? convert.error.message : '转换提交失败'}
-        </p>
-      )}
-      {convert.isSuccess && (convert.data.errors?.length ?? 0) > 0 && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-          {convert.data.errors?.map((e) => (
-            <p key={e.path} className="truncate" title={e.path}>
-              {e.path}：{e.message}
-            </p>
-          ))}
-        </div>
       )}
     </div>
   )

@@ -29,6 +29,7 @@ import {
   submitDevLog,
   type DevLogSummary,
 } from '../../../api/devlogs'
+import { useNotify } from '../../../components/NotificationProvider'
 
 const LEVELS: DevLogLevel[] = ['log', 'info', 'warn', 'error', 'debug']
 
@@ -45,7 +46,7 @@ export function DevToolsPage() {
   const [lines, setLines] = useState<DevLogLine[]>(getDevLogLines())
   const [viewing, setViewing] = useState<DevLogSummary | null>(null)
   const [note, setNote] = useState('')
-  const [submitMsg, setSubmitMsg] = useState('')
+  const { notify } = useNotify()
 
   useEffect(() => subscribeDevLog(() => setLines(getDevLogLines())), [])
 
@@ -83,10 +84,10 @@ export function DevToolsPage() {
     mutationFn: () => submitDevLog(deviceSource(), note, getDevLogLines()),
     onSuccess: (res) => {
       setNote('')
-      setSubmitMsg(`已归档，ID ${res.id}`)
+      notify(`已归档，ID ${res.id}`)
       void queryClient.invalidateQueries({ queryKey: ['devlogs'] })
     },
-    onError: (err) => setSubmitMsg(err instanceof Error ? err.message : '归档失败'),
+    onError: (err) => notify(err instanceof Error ? err.message : '归档失败', 'error'),
   })
 
   return (
@@ -243,7 +244,6 @@ export function DevToolsPage() {
             提交归档（{lines.length} 条）
           </button>
         </div>
-        {submitMsg && <p className="mt-2 text-xs text-neutral-500">{submitMsg}</p>}
       </section>
 
       {/* Archive browser */}

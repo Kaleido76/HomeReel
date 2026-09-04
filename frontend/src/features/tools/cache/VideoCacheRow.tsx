@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Eraser, Trash2 } from 'lucide-react'
 import type { CacheRemuxGroup, PlaybackPrefsCacheEntry, SubtitleCacheGroup } from '../../../api/cache'
 import { clearPrefs, clearSubtitleCache } from '../../../api/cache'
+import { useNotify } from '../../../components/NotificationProvider'
 import { formatBytes } from '../../../lib/format'
 import { prefsSummary } from './model'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -19,7 +20,6 @@ export function VideoCacheRow({
   prefs,
   remux,
   onChanged,
-  onNotice,
 }: {
   videoId: string
   episode?: string
@@ -28,9 +28,9 @@ export function VideoCacheRow({
   prefs?: PlaybackPrefsCacheEntry
   remux?: CacheRemuxGroup
   onChanged: () => Promise<void>
-  onNotice: (text: string, error?: boolean) => void
 }) {
   const [dialog, setDialog] = useState<null | 'subtitles' | 'prefs'>(null)
+  const { notify } = useNotify()
   const hasCache = !!group || !!prefs || !!remux
   const parts: string[] = []
   if (group) parts.push(`${group.files.length} 轨 · ${formatBytes(group.bytes)}`)
@@ -42,9 +42,9 @@ export function VideoCacheRow({
     try {
       const { cleared } = await fn()
       await onChanged()
-      onNotice(`${label}，已清理 ${cleared} 项`)
+      notify(`${label}，已清理 ${cleared} 项`)
     } catch (err) {
-      onNotice(err instanceof Error ? err.message : '操作失败', true)
+      notify(err instanceof Error ? err.message : '操作失败', 'error')
     }
   }
 

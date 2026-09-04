@@ -29,6 +29,7 @@ import { RenameDrawer } from './RenameDrawer'
 import { isMediaName } from './fileType'
 import { basename, parentPath } from './path'
 import { useRealtimeMessage } from '../../components/RealtimeProvider'
+import { useNotify } from '../../components/NotificationProvider'
 import { openFormat } from '../../tabs/manager'
 import type { ConvertTarget } from '../tools/format/queue'
 
@@ -53,9 +54,8 @@ export function FilesPage() {
   const [activeDrawer, setActiveDrawer] = useState<'clipboard' | 'rename' | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string[] | null>(null)
-  const [notice, setNotice] = useState('')
-  const [error, setError] = useState('')
   const [mediaOnly, setMediaOnly] = useState(false)
+  const { notify } = useNotify()
 
   const disks = useQuery({ queryKey: ['files-disks'], queryFn: fetchDisks, staleTime: 60_000 })
   const pins = useQuery({ queryKey: ['files-pins'], queryFn: fetchPins })
@@ -102,9 +102,7 @@ export function FilesPage() {
   }
 
   function flash(message: string) {
-    setError('')
-    setNotice(message)
-    window.setTimeout(() => setNotice(''), 4000)
+    notify(message)
   }
 
   function invalidate() {
@@ -170,11 +168,10 @@ export function FilesPage() {
   }
 
   async function commitRenames(renames: { path: string; newName: string }[]) {
-    setError('')
     try {
       const res = await filesRenames(renames)
       if (res.errors && res.errors.length > 0) {
-        setError(res.errors.map((e) => `${e.path}: ${e.message}`).join('；'))
+        notify(res.errors.map((e) => `${e.path}: ${e.message}`).join('；'), 'error')
       } else {
         flash(`已重命名 ${renames.length} 项`)
       }
@@ -182,7 +179,7 @@ export function FilesPage() {
       setSelected(new Set())
       invalidate()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '批量重命名失败')
+      notify(err instanceof ApiError ? err.message : '批量重命名失败', 'error')
     }
   }
 
@@ -204,7 +201,6 @@ export function FilesPage() {
 
   async function paste() {
     if (!clipboard || !path) return
-    setError('')
     try {
       const paths = clipboard.items.map((i) => i.path)
       if (clipboard.mode === 'copy') {
@@ -220,28 +216,26 @@ export function FilesPage() {
         setSelected(new Set())
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '操作失败')
+      notify(err instanceof ApiError ? err.message : '操作失败', 'error')
     }
   }
 
   async function commitRename(p: string, newName: string) {
-    setError('')
     try {
       await filesRename(p, newName)
       setRenaming(null)
       invalidate()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '重命名失败')
+      notify(err instanceof ApiError ? err.message : '重命名失败', 'error')
     }
   }
 
   async function confirmDelete() {
     if (!deleting) return
-    setError('')
     try {
       const res = await filesDelete(deleting)
       if (res.errors && res.errors.length > 0) {
-        setError(res.errors.map((e) => `${e.path}: ${e.message}`).join('；'))
+        notify(res.errors.map((e) => `${e.path}: ${e.message}`).join('；'), 'error')
       } else {
         flash(`已删除 ${deleting.length} 项`)
       }
@@ -249,13 +243,12 @@ export function FilesPage() {
       setSelected(new Set())
       invalidate()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '删除失败')
+      notify(err instanceof ApiError ? err.message : '删除失败', 'error')
     }
   }
 
   async function togglePin() {
     if (!path) return
-    setError('')
     try {
       if (pinned) {
         await removePin(path)
@@ -267,13 +260,12 @@ export function FilesPage() {
       // 立即刷新 pin 列表，避免左侧面板需刷新页面才更新
       await queryClient.invalidateQueries({ queryKey: ['files-pins'] })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : pinned ? '取消固定失败' : '固定失败')
+      notify(err instanceof ApiError ? err.message : pinned ? '取消固定失败' : '固定失败', 'error')
     }
   }
 
   async function toggleSource() {
     if (!path) return
-    setError('')
     try {
       if (isSource) {
         if (
@@ -293,18 +285,17 @@ export function FilesPage() {
       }
       await queryClient.invalidateQueries({ queryKey: ['files-sources'] })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : isSource ? '取消多媒体源失败' : '标记多媒体源失败')
+      notify(err instanceof ApiError ? err.message : isSource ? '取消多媒体源失败' : '标记多媒体源失败', 'error')
     }
   }
 
   async function rescanSource(p: string) {
-    setError('')
     try {
       await scanSource(p)
       flash('已提交重新扫描')
       await queryClient.invalidateQueries({ queryKey: ['files-sources'] })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '重新扫描失败')
+      notify(err instanceof ApiError ? err.message : '重新扫描失败', 'error')
     }
   }
 
@@ -312,13 +303,12 @@ export function FilesPage() {
   async function markSelected() {
     const paths = !hasDirSelected && entries.some((e) => !e.is_dir && e.is_video) ? [path] : Array.from(selected)
     if (paths.length === 0 || paths.some((p) => !p)) return
-    setError('')
     try {
       await markResources(paths, 'series')
       const label = hasDirSelected ? '系列' : '当前目录为系列'
       flash(`已标记 ${paths.length} 个${label}，开始入库…`)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '标记失败')
+      notify(err instanceof ApiError ? err.message : '标记失败', 'error')
     }
   }
 
@@ -379,7 +369,7 @@ export function FilesPage() {
           entryCount={visibleEntries.length}
           selectedCount={selectedCount}
           clipboard={clipboard}
-          notice={notice}
+          notice=""
           onNavigate={go}
           onGoUp={goUp}
           onCut={() => setClipboardMode('cut')}
@@ -405,8 +395,6 @@ export function FilesPage() {
           mediaOnly={mediaOnly}
           onToggleMedia={() => setMediaOnly((v) => !v)}
         />
-
-        {error && <p className="border-b border-neutral-100 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
         <FileListView
           path={path}
