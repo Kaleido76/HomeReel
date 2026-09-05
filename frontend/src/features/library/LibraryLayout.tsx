@@ -7,7 +7,8 @@ import { SeriesDetailPage } from '../series/SeriesDetailPage'
 import { VideoDetailPane } from '../player/VideoDetailPane'
 import { PlayerPane } from '../player/PlayerPane'
 import { viewTabs, type GridState, type ListSelection } from './types'
-import { useMediaQuery } from '../../lib/useMediaQuery'
+import { useIsWide } from '../../lib/breakpoints'
+import { NarrowBack } from '../../components/NarrowBack'
 
 // parseGridSearch reads the grid state from the /library URL so a refresh or
 // deep link restores the same filter/search the user had open.
@@ -84,7 +85,7 @@ export function LibraryLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const pathname = location.pathname
-  const wide = useMediaQuery('(min-width: 1024px)')
+  const wide = useIsWide()
   const stack = parseStack(pathname)
   const onGridRoute = stack.length === 1
 
@@ -360,19 +361,4 @@ function backLabel(parent: string): string {
   if (parent === '/library') return '返回视频库'
   if (parent.startsWith('/series/')) return '返回系列'
   return '返回详情'
-}
-
-// NarrowBack is the single-column back link shown on narrow screens where the
-// stack collapses to a single full-page column per level.
-function NarrowBack({ label, onBack }: { label: string; onBack: () => void }) {
-  return (
-    <div className="flex items-center gap-2 border-b border-neutral-200 bg-white px-4 py-2">
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-      >
-        <ArrowLeft className="size-4" /> {label}
-      </button>
-    </div>
-  )
 }

@@ -19,7 +19,7 @@ import {
   removeSource,
   scanSource,
 } from '../../api/files'
-import { DriveRail } from './DriveRail'
+import { HomePane } from './HomePane'
 import { Toolbar, type ClipMode, type Clipboard, type ClipboardItem, type SortState } from './Toolbar'
 import { FileListView } from './FileListView'
 import { ConfirmDelete } from './ConfirmDelete'
@@ -31,6 +31,7 @@ import { basename, parentPath } from './path'
 import { useRealtimeMessage } from '../../components/RealtimeProvider'
 import { useNotify } from '../../components/NotificationProvider'
 import { openFormat } from '../../tabs/manager'
+import { useIsWide } from '../../lib/breakpoints'
 import type { ConvertTarget } from '../tools/format/queue'
 
 interface FilesSearch {
@@ -55,6 +56,7 @@ export function FilesPage() {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string[] | null>(null)
   const [mediaOnly, setMediaOnly] = useState(false)
+  const wide = useIsWide()
   const { notify } = useNotify()
 
   const disks = useQuery({ queryKey: ['files-disks'], queryFn: fetchDisks, staleTime: 60_000 })
@@ -62,23 +64,18 @@ export function FilesPage() {
   const sources = useQuery({
     queryKey: ['files-sources'],
     queryFn: fetchSources,
-    // 轮询以感知扫描完成/离线状态变化
     refetchInterval: 5000,
   })
   const list = useQuery({
     queryKey: ['files-list', path],
     queryFn: () => fetchFilesList(path),
     enabled: !!path,
-    // 轮询以感知后台复制/移动任务完成后目录内容的变化（同旧文件页的 busy 轮询）
     refetchInterval: 5000,
   })
 
   const entries = list.data?.entries ?? []
-  // 多媒体视图：目录始终保留以便继续导航，文件仅显示视频/音乐。
   const visibleEntries = mediaOnly ? entries.filter((e) => e.is_dir || isMediaName(e.name)) : entries
 
-  // 扫描任务结束即刷新源列表，让源行旋转标识与顶部任务面板同步消失
-  // （否则要等 5s 轮询才看到 scanning=false）。事件桥的 jobs.done/failed 带 type 字段。
   useRealtimeMessage('events.jobs.done', (data) => {
     if ((data as { type?: string } | undefined)?.type === 'scan_source') {
       void queryClient.invalidateQueries({ queryKey: ['files-sources'] })
@@ -139,8 +136,6 @@ export function FilesPage() {
     })
   }
 
-  // selectedItems snapshots the checked rows into display metadata so drawers
-  // keep rendering name/icon even if checkboxes change while they are open.
   function selectedItems(): ClipboardItem[] {
     return Array.from(selected).map((p) => {
       const e = entries.find((x) => x.path === p)
@@ -257,7 +252,6 @@ export function FilesPage() {
         await addPin(path)
         flash('已固定当前目录')
       }
-      // 立即刷新 pin 列表，避免左侧面板需刷新页面才更新
       await queryClient.invalidateQueries({ queryKey: ['files-pins'] })
     } catch (err) {
       notify(err instanceof ApiError ? err.message : pinned ? '取消固定失败' : '固定失败', 'error')
@@ -299,7 +293,6 @@ export function FilesPage() {
     }
   }
 
-  // 标记所选文件夹为手动系列（系列必须位于媒体源内；后端拒绝源外路径）。
   async function markSelected() {
     const paths = !hasDirSelected && entries.some((e) => !e.is_dir && e.is_video) ? [path] : Array.from(selected)
     if (paths.length === 0 || paths.some((p) => !p)) return
@@ -312,8 +305,6 @@ export function FilesPage() {
     }
   }
 
-  // 转到格式工厂：有勾选则把勾选的路径（文件=单集、文件夹=系列）整体移交，
-  // 无勾选但当前目录含视频时把当前目录作为系列移交。转换本身在格式工厂页签执行。
   function goFormat() {
     const toTarget = (p: string): ConvertTarget => {
       const e = entries.find((x) => x.path === p)
@@ -335,8 +326,6 @@ export function FilesPage() {
   const pinned = pins.data?.pins?.includes(path) ?? false
   const isSource = sources.data?.sources?.some((s) => s.path === path) ?? false
   const selectedCount = selected.size
-  // 系列标记：所选条目全部是文件夹时标记所选（系列 ↔ 物理文件夹严格对应）；
-  // 否则若当前目录含多媒体，标记当前所在文件夹。
   const hasDirSelected =
     selectedCount > 0 &&
     Array.from(selected).some((p) => {
@@ -352,17 +341,8 @@ export function FilesPage() {
   const canFormat = selectedCount > 0 || entries.some((e) => !e.is_dir && e.is_convertible)
 
   return (
-    <div className="flex h-full min-h-0">
-      <DriveRail
-        disks={disks.data?.disks ?? []}
-        pins={pins.data?.pins ?? []}
-        sources={sources.data?.sources ?? []}
-        currentPath={path}
-        onNavigate={go}
-        onRescanSource={rescanSource}
-      />
-
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
+      {path && (
         <Toolbar
           path={path}
           canGoUp={parentPath(path) !== null}
@@ -394,8 +374,11 @@ export function FilesPage() {
           onToggleSource={toggleSource}
           mediaOnly={mediaOnly}
           onToggleMedia={() => setMediaOnly((v) => !v)}
+          wide={wide}
         />
+      )}
 
+      {path ? (
         <FileListView
           path={path}
           entries={visibleEntries}
@@ -414,22 +397,30 @@ export function FilesPage() {
           onRenameCommit={commitRename}
           emptyText={mediaOnly ? '该目录没有视频或音乐文件' : '空目录'}
         />
+      ) : (
+        <HomePane
+          disks={disks.data?.disks ?? []}
+          pins={pins.data?.pins ?? []}
+          sources={sources.data?.sources ?? []}
+          onNavigate={go}
+          onRescanSource={rescanSource}
+        />
+      )}
 
-        <ToolDrawerShell open={activeDrawer === 'clipboard' && clipboard !== null}>
-          {clipboard && (
-            <ClipboardDrawer
-              items={clipboard.items}
-              mode={clipboard.mode}
-              onRemove={removeClipboardItem}
-              onClear={clearClipboard}
-            />
-          )}
-        </ToolDrawerShell>
+      <ToolDrawerShell open={activeDrawer === 'clipboard' && clipboard !== null}>
+        {clipboard && (
+          <ClipboardDrawer
+            items={clipboard.items}
+            mode={clipboard.mode}
+            onRemove={removeClipboardItem}
+            onClear={clearClipboard}
+          />
+        )}
+      </ToolDrawerShell>
 
-        <ToolDrawerShell open={activeDrawer === 'rename' && renameTargets !== null} heightClass="max-h-[26rem]">
-          {renameTargets && <RenameDrawer items={renameTargets} onClose={closeRenameDrawer} onApply={commitRenames} />}
-        </ToolDrawerShell>
-      </div>
+      <ToolDrawerShell open={activeDrawer === 'rename' && renameTargets !== null} heightClass="max-h-[26rem]">
+        {renameTargets && <RenameDrawer items={renameTargets} onClose={closeRenameDrawer} onApply={commitRenames} />}
+      </ToolDrawerShell>
 
       {deleting && (
         <ConfirmDelete

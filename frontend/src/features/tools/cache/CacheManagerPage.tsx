@@ -5,7 +5,7 @@ import { fetchCacheStats } from '../../../api/cache'
 import { fetchSeries } from '../../../api/series'
 import { fetchVideos, type Video } from '../../../api/videos'
 import { useJobs } from '../../jobs/useJobs'
-import { useMediaQuery } from '../../../lib/useMediaQuery'
+import { useIsWide } from '../../../lib/breakpoints'
 import { buildCacheModel, hasCache, hasStandaloneCache, type CacheSelection, type SeriesCacheInfo } from './model'
 import { CacheOverviewBar } from './CacheOverviewBar'
 import { CacheList } from './CacheList'
@@ -41,7 +41,7 @@ export function CacheManagerPage() {
   const [query, setQuery] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [showStandaloneAll, setShowStandaloneAll] = useState(false)
-  const wide = useMediaQuery('(min-width: 1024px)')
+  const wide = useIsWide()
 
   const seriesQuery = useQuery({ queryKey: ['series'], queryFn: () => fetchSeries() })
   const cacheQuery = useQuery({ queryKey: ['cache'], queryFn: fetchCacheStats })

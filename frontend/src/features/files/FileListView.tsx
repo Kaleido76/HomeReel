@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowDown, ArrowUp, Check, Folder, Loader2, RefreshCw, X } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import type { FileEntry } from '../../api/files'
 import { fileStyle } from './fileType'
 import { formatTime } from './path'
 import { formatBytes } from '../../lib/format'
+import { useIsWide } from '../../lib/breakpoints'
 import { Tooltip } from '../../components/Tooltip'
 import type { SortKey, SortState } from './Toolbar'
 import { useCheckboxDrag, useColumnWidths } from './listHooks'
@@ -53,6 +54,7 @@ export function FileListView({
 }) {
   const [renameValue, setRenameValue] = useState('')
   const { colWidths, onHeaderDrag } = useColumnWidths()
+  const wide = useIsWide()
 
   // Prefill the rename input with the entry's current name whenever a row
   // switches into renaming state.
@@ -81,7 +83,7 @@ export function FileListView({
         return a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' }) * dir
     }
   })
-  const { suppressIfDragged, onCheckboxMouseDown } = useCheckboxDrag(sorted.map((e) => e.path), selected, onSelectSet)
+  const { suppressIfDragged, onCheckboxPointerDown } = useCheckboxDrag(sorted.map((e) => e.path), selected, onSelectSet)
 
   if (loading) {
     return (
@@ -111,13 +113,13 @@ export function FileListView({
         <div className="flex h-full items-center justify-center text-neutral-400">
           <div className="text-center">
             <Folder className="mx-auto mb-2 size-10" />
-            <p>请从左侧选择盘符或常用目录开始浏览</p>
+            <p>{wide ? '请从左侧选择盘符或常用目录开始浏览' : '点击左上角菜单选择盘符或常用目录开始浏览'}</p>
           </div>
         </div>
       ) : (
         <div className="flex min-w-fit flex-col">
           <div className="sticky top-0 z-10 flex items-stretch border-b border-neutral-200 bg-neutral-50 text-left text-xs font-medium text-neutral-500">
-            <div className="w-10 shrink-0 px-1 py-2.5" />
+            <div className={`${wide ? 'w-10' : 'w-12'} shrink-0 px-1 py-2.5`} />
             <ColumnHeader
               title="名称"
               width={colWidths.name}
@@ -171,13 +173,13 @@ export function FileListView({
               >
                 <Tooltip content="选择">
                   <div
-                    onMouseDown={(ev) => onCheckboxMouseDown(e.path, ev)}
+                    onPointerDown={(ev) => onCheckboxPointerDown(e.path, ev)}
                     onClick={(ev) => {
                       ev.stopPropagation()
                       if (suppressIfDragged()) return
                       onToggle(e.path)
                     }}
-                    className="flex w-10 shrink-0 items-center justify-center px-1 py-2.5"
+                    className={`flex ${wide ? 'w-10' : 'w-12'} shrink-0 items-center justify-center px-1 py-2.5`}
                   >
                     <input
                       type="checkbox"
@@ -191,7 +193,7 @@ export function FileListView({
                     />
                   </div>
                 </Tooltip>
-                <div style={{ width: colWidths.name }} className="flex shrink-0 items-center gap-2 px-4 py-2.5">
+                <div style={{ width: colWidths.name }} className={`flex shrink-0 items-center gap-2 px-4 ${wide ? 'py-2.5' : 'py-3'}`}>
                   {isRenaming ? (
                     <RenameForm
                       value={renameValue}
@@ -240,7 +242,7 @@ function ColumnHeader({
   active: boolean
   dir: SortState['dir']
   onSort: () => void
-  onDrag: (e: ReactMouseEvent) => void
+  onDrag: (e: ReactPointerEvent) => void
 }) {
   return (
     <div style={{ width }} className={`group relative shrink-0 items-center px-4 py-2.5 ${className ?? ''}`}>
@@ -254,7 +256,7 @@ function ColumnHeader({
         {active && (dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
       </button>
       <div
-        onMouseDown={(e) => {
+        onPointerDown={(e) => {
           e.stopPropagation()
           onDrag(e)
         }}

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useWindowDrag } from './drag'
 
 const COL_WIDTH_KEY = 'files.colWidths'
@@ -52,7 +52,7 @@ export function useColumnWidths() {
     })
   })
 
-  function onHeaderDrag(key: ColKey, e: ReactMouseEvent) {
+  function onHeaderDrag(key: ColKey, e: ReactPointerEvent) {
     dragCol.current = { key, startWidth: colWidths[key] }
     beginDrag(e)
   }
@@ -117,7 +117,7 @@ export function useCheckboxDrag(
     return false
   }
 
-  function onCheckboxMouseDown(path: string, ev: ReactMouseEvent) {
+  function onCheckboxPointerDown(path: string, ev: ReactPointerEvent) {
     ev.stopPropagation()
     suppressClick.current = false
     dragSelect.current = { startPath: path, targetChecked: !selected.has(path) }
@@ -125,5 +125,5 @@ export function useCheckboxDrag(
     beginCheckDrag(ev)
   }
 
-  return { suppressIfDragged, onCheckboxMouseDown }
+  return { suppressIfDragged, onCheckboxPointerDown }
 }

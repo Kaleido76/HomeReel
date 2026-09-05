@@ -16,14 +16,17 @@
 > API 端点见 decisions.md §2.2；后端实现见 backend.md §9。
 
 机器级文件浏览器（HTTP 文件服务器模型）：每次进入目录后端实时读取，无索引/watcher。
-布局 = 左侧三段侧栏（盘符/pin/多媒体源）+ 右上工具栏（面包屑 + 按钮组）+ 列表。
+布局 = 根视图入口（`HomePane`）或全宽文件列表 + 工具栏（面包屑 + 按钮组）。
 
+- **根视图**（无路径）：`HomePane` 铺开三组入口块（盘符/常用目录/多媒体源），替代旧侧栏常驻导航
+- 非根视图：全宽列表，无侧栏；面包屑「这台电脑」图标回根视图
 - 无「..」行——回上级统一用工具栏向上按钮
 - 剪贴板为前端内存态；粘贴调 copy/move 入 jobs 后台任务
 - 批量重命名 `RenameDrawer`：查找/替换预览，关闭即撤销，提交走同步接口
 - 多媒体源：标记/取消/重扫；扫描完成监听 `events.jobs.done|failed(type=scan_source)` 即时失效
 - 标记为系列：所选文件夹入队 mark_resource
 - 详情页按需同步：单集 `source_status`；系列 `check`
+- **移动端适配**（`<1024px`）：PC/移动端统一布局；工具栏精简为高频按钮 + 「更多」溢出菜单；列表行触控优化（checkbox 加宽、行高加大）
 
 ## 2. Library 栏位栈
 
@@ -84,6 +87,7 @@
 
 ## 5. 响应式
 
-- 断点：1024px（宽/窄屏切换）
-- 宽屏：Library 栏位栈并排、文件页三段侧栏
-- 窄屏：单栏全页、NarrowBack 返回条、播放器全屏
+- 断点：1024px（宽/窄屏切换），统一由 `lib/breakpoints.ts` 常量 `WIDE` 和 `useIsWide()` hook 管理
+- 宽屏：Library 栏位栈并排、缓存页 master-detail 双栏；文件页全宽无侧栏
+- 窄屏：单栏全页、NarrowBack 返回条（`components/NarrowBack.tsx`）、播放器全屏；文件页与 PC 统一布局
+- 拖拽手势统一使用 Pointer Events（`lib/drag.ts`），触摸/鼠标/笔输入均可工作
