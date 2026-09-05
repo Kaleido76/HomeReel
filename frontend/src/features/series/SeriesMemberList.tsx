@@ -257,7 +257,7 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
               </div>
               <div className="min-w-0 flex-1 px-4 py-3.5">
                 <p className="truncate text-sm font-medium text-neutral-800">{member.episode_title || member.title}</p>
-                {member.duration > 0 && (member.progress >= member.duration || (member.progress > 0 && member.progress < member.duration - RESUME_TAIL)) && (
+                {member.duration > 0 && member.progress > 0 && (
                   <ProgressBar
                     value={Math.min(100, (member.progress / member.duration) * 100)}
                     className="mt-2 h-1 w-full max-w-xs"
@@ -319,7 +319,7 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
           >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-neutral-800">{dragMember.episode_title || dragMember.title}</p>
-                {dragMember.duration > 0 && (dragMember.progress >= dragMember.duration || (dragMember.progress > 0 && dragMember.progress < dragMember.duration - RESUME_TAIL)) && (
+                {dragMember.duration > 0 && dragMember.progress > 0 && (
                   <ProgressBar
                     value={Math.min(100, (dragMember.progress / dragMember.duration) * 100)}
                     className="mt-2 h-1 w-full max-w-xs"

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 export type TooltipPlacement = 'top' | 'bottom' | 'left' | 'right'
 
 const GAP = 8
+const TOUCH_DISMISS_MS = 2000
 
 function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), Math.max(min, max))
@@ -75,6 +76,8 @@ export function Tooltip({
   const [shown, setShown] = useState(false)
   const wrapRef = useRef<HTMLSpanElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const touchDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isTouch = useRef(typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
 
   const measure = useCallback((node: HTMLDivElement | null) => {
     if (node) setSize({ w: node.offsetWidth, h: node.offsetHeight })
@@ -89,6 +92,7 @@ export function Tooltip({
   useEffect(
     () => () => {
       if (hideTimer.current) clearTimeout(hideTimer.current)
+      if (touchDismissTimer.current) clearTimeout(touchDismissTimer.current)
     },
     [],
   )
@@ -98,14 +102,25 @@ export function Tooltip({
       clearTimeout(hideTimer.current)
       hideTimer.current = null
     }
+    if (touchDismissTimer.current) {
+      clearTimeout(touchDismissTimer.current)
+      touchDismissTimer.current = null
+    }
     const r = wrapRef.current?.getBoundingClientRect()
     if (r) {
       setAnchor(r)
       setShown(false)
+      if (isTouch.current) {
+        touchDismissTimer.current = setTimeout(() => hide(), TOUCH_DISMISS_MS)
+      }
     }
   }
   function hide() {
     setShown(false)
+    if (touchDismissTimer.current) {
+      clearTimeout(touchDismissTimer.current)
+      touchDismissTimer.current = null
+    }
     hideTimer.current = setTimeout(() => setAnchor(null), 180)
   }
 

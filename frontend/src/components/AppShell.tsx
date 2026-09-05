@@ -12,7 +12,7 @@ export function AppShell() {
   return (
     <NotificationProvider>
       <div className="flex h-dvh flex-col bg-neutral-50">
-        <header className="relative z-50 shrink-0 border-b border-neutral-200 bg-white">
+        <header className="shrink-0 border-b border-neutral-200 bg-white">
           <div className="flex h-14 w-full items-center justify-between gap-4 px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <button

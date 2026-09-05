@@ -135,7 +135,7 @@ func (s *Service) ListRemuxCache() []RemuxCacheFile {
 	}
 	var out []RemuxCacheFile
 	for _, e := range entries {
-		if e.IsDir() || strings.HasSuffix(e.Name(), ".meta") {
+		if e.IsDir() {
 			continue
 		}
 		info, err := e.Info()

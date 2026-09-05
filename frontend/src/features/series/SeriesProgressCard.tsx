@@ -9,11 +9,10 @@ import { ProgressBar } from '../../components/ProgressBar'
 const WATCHED_RATIO = 0.9
 
 // SeriesProgressCard is the 观看进度 小节 of the series detail page (rendered
-// inside the merged PlaybackHistoryCard): it aggregates every member's resume
-// position into one overall progress (已观看时长 / 总时长) plus a watched-episode
-// count, with an icon-only clear action (DELETE /api/series/{id}/history). The
-// detail response already carries members with progress, so no extra query is
-// needed.
+// inside the merged PlaybackHistoryCard): it shows watched-episode count and a
+// progress bar (看完集数 / 总集数), with an icon-only clear action (DELETE
+// /api/series/{id}/history). The detail response already carries members with
+// progress, so no extra query is needed.
 export function SeriesProgressCard({ seriesId, members }: { seriesId: string; members: SeriesMember[] }) {
   const queryClient = useQueryClient()
   const clearAll = useMutation({
@@ -24,10 +23,8 @@ export function SeriesProgressCard({ seriesId, members }: { seriesId: string; me
     },
   })
 
-  const total = members.reduce((s, m) => s + Math.max(0, m.duration), 0)
-  const consumed = members.reduce((s, m) => s + Math.min(Math.max(0, m.progress), Math.max(0, m.duration)), 0)
-  const pct = total > 0 ? Math.min(100, (consumed / total) * 100) : 0
   const watched = members.filter((m) => m.duration > 0 && m.progress > m.duration * WATCHED_RATIO).length
+  const pct = members.length > 0 ? (watched / members.length) * 100 : 0
   const hasHistory = members.some((m) => m.progress > 0)
 
   return (
@@ -46,10 +43,9 @@ export function SeriesProgressCard({ seriesId, members }: { seriesId: string; me
       ) : (
         <>
           <p className="mt-2 text-sm text-neutral-500">
-            已观看 {watched} / {members.length} 集
-            {total > 0 ? ` · 整体进度 ${Math.round(pct)}%` : ''}
+            已观看 {watched} / {members.length} 集 · 整体进度 {Math.round(pct)}%
           </p>
-          {total > 0 && <ProgressBar value={pct} className="mt-2 h-1.5 w-full" />}
+          <ProgressBar value={pct} className="mt-2 h-1.5 w-full" />
         </>
       )}
     </HistorySection>
