@@ -59,12 +59,15 @@ Library 达到简易 JellyFin 体验；基础层稳定前不引入 AI。
 
 ### 5.1 播放（media.md §4）
 
-1. mp4/h264 直连秒开、可拖、续播正常；播完存完整时长
-2. MKV h264+aac：Chromium 直连；Firefox/Safari 走 Remux
-3. MKV AC3/EAC3/DTS/PCM → Transcode HLS 几秒起播有声
-4. AVI/WMV h264+aac → Remux；编码不兼容 → Transcode
-5. 多音轨切换保持进度；播放选择记忆自动应用
-6. 多终端并发：两设备同播互不挤占
+1. 播放页签：库详情/系列成员点播放 → 切到播放页签，视频占左侧，剧集列表占右侧窄栏；点击页签栏「视频库」返回浏览
+2. 播放页签空态：首访无播放时显示引导；浏览器后退/前进在库与播放页签间正确切换
+3. mp4/h264 直连秒开、可拖、续播正常；播完存完整时长
+4. MKV h264+aac：Chromium 直连；Firefox/Safari 走 Remux
+5. MKV AC3/EAC3/DTS/PCM → Transcode HLS 几秒起播有声
+6. AVI/WMV h264+aac → Remux；编码不兼容 → Transcode
+7. 多音轨切换保持进度；播放选择记忆自动应用
+8. 多终端并发：两设备同播互不挤占
+9. 切出播放页签自动暂停；切回不丢失进度
 
 ### 5.2 单集 / 系列管理（backend.md §4）
 

@@ -336,13 +336,13 @@ export function VideoPlayer({
     [video.id, video.show_id, queryClient, savePrefs, flushVolume, saveHistory],
   )
 
-  // Auto-pause when the user switches away from the library tab: the player's
+  // Auto-pause when the user switches away from the player tab: the player's
   // component tree stays alive (keep-alive), so the media would otherwise keep
   // playing in the background like an uncontrolled browser tab.
   useEffect(
     () =>
       subscribeTabs(() => {
-        if (getActiveTab() !== 'library') {
+        if (getActiveTab() !== 'player') {
           remote.pause()
         }
       }),

@@ -6,6 +6,7 @@ import { reorderSeriesMembers, resortSeries, type SeriesMember } from '../../api
 import { formatDuration } from '../../lib/format'
 import { playMode } from '../../lib/playability'
 import { RESUME_TAIL } from '../../lib/playback'
+import { playVideo } from '../../tabs/manager'
 import { ProgressBar } from '../../components/ProgressBar'
 import { Tooltip } from '../../components/Tooltip'
 import { SeriesRenameModal } from './SeriesRenameModal'
@@ -271,16 +272,15 @@ export function SeriesMemberList({ seriesId, members }: { seriesId: string; memb
                 {/* member carries both the probe metadata and the backend
                     capability flags playMode reads, so it serves as both args. */}
                 {playMode(member, member) !== 'none' ? (
-                  <Link
-                    to="/series/$id/play/$videoId"
-                    params={{ id: seriesId, videoId: member.video_id }}
+                  <button
+                    onClick={() => playVideo(member.video_id, seriesId)}
                     className="flex shrink-0 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
                   >
                     <Play className="size-3.5" />{' '}
                     <span className="hidden sm:inline">
                       {member.progress > 0 && member.progress < member.duration - RESUME_TAIL ? '续播' : '播放'}
                     </span>
-                  </Link>
+                  </button>
                 ) : (
                   <Tooltip content="无法在线播放">
                     <button

@@ -17,7 +17,7 @@ import {
 import { useNotify } from '../../components/NotificationProvider'
 import { playMode } from '../../lib/playability'
 import { formatVolume } from '../../lib/format'
-import { openFormatVideo } from '../../tabs/manager'
+import { openFormatVideo, playVideo } from '../../tabs/manager'
 import { PlaybackHistoryCard } from '../player/PlaybackHistoryCard'
 import { PlaybackPrefsCard } from '../player/PlaybackPrefsCard'
 import { PlaybackProgressSection } from '../player/PlaybackProgressSection'
@@ -39,12 +39,8 @@ function describePrefSubtitle(prefs: PlaybackPrefs, seriesScoped: boolean): stri
 
 // VideoDetailPane is the single-video detail shown in the middle column. It is
 // deliberately compact: a play action, the editable metadata panel and a
-// technical summary line. The heavy player lives in the right-hand column
-// (PlayerPane), which opens on play.
-//
-// playHref is resolved by the caller from the column stack: a detail opened
-// inside a series plays within the series (/series/:id/play/:videoId), a
-// standalone detail plays via /library/video/:id/play.
+// technical summary line. The heavy player lives in its own tab (PlayerPage),
+// which this pane jumps to on play.
 //
 // seriesScoped marks a detail already opened inside a series column (the caller
 // renders the top 「返回系列」 bar). When a video belongs to a series but is
@@ -59,11 +55,9 @@ function describePrefSubtitle(prefs: PlaybackPrefs, seriesScoped: boolean): stri
 // removal only deletes metadata, never the file).
 export function VideoDetailPane({
   videoId,
-  playHref,
   seriesScoped = false,
 }: {
   videoId: string
-  playHref: string
   seriesScoped?: boolean
 }) {
   const navigate = useNavigate()
@@ -168,7 +162,7 @@ export function VideoDetailPane({
         <h1 className="text-xl font-semibold text-neutral-900">详情</h1>
         {mode !== 'none' && (
           <button
-            onClick={() => navigate({ href: playHref })}
+            onClick={() => playVideo(video.id, detail.data?.series_id)}
             className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
           >
             <Play className="size-4" /> 播放

@@ -1,84 +1,80 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, Play, Repeat } from 'lucide-react'
-import { fetchVideo } from '../../api/videos'
-import { coverUrl } from '../../api/videos'
+import { Check, Loader2, Play, Repeat, Volume2 } from 'lucide-react'
+import { fetchVideo, fetchVideoPrefs } from '../../api/videos'
 import { fetchSeriesDetail } from '../../api/series'
-import { formatBytes, formatDuration } from '../../lib/format'
+import { formatBytes, formatDuration, formatVolume } from '../../lib/format'
 import { playMode, prefetchPlayability } from '../../lib/playability'
-import { openFormatVideo } from '../../tabs/manager'
-import { Tooltip } from '../../components/Tooltip'
+import { openFormatVideo, playVideo } from '../../tabs/manager'
 import { VideoPlayer } from './VideoPlayer'
 
-// PlayerPane is the right-hand column of the wide-screen library. Layout, top
-// to bottom:
-//   - a slim toolbar with the "exit playback" action (back to detail state)
-//   - the player, filling the whole remaining height (aspect-ratio auto) so the
-//     control bar sits in the bottom black margin instead of over the subtitles
-//   - a compact info bar (title + duration + resolution)
-//   - prev/next + autoplay controls
-//   - a subtle "接下来播放" (up next) list with the next ~3 series members
+// PlayerPane is the player tab's playback view. The PC layout is three zones:
 //
-// Prev/next and the up-next list come from the series' ordered members;
-// standalone videos get neither. Autoplay plays the next member on ended.
+//   ┌───────────────────────────────┬──────────────────────────┐
+//   │                               │  Playback Memory          │
+//   │         Video Player          │  (audio / subtitle / vol) │
+//   │         (16:9, flex-1)        ├──────────────────────────┤
+//   │                               │  Episode List (scroll)    │
+//   │                               │  (watched ✓ / active ▶)   │
+//   ├───────────────────────────────┴──────────────────────────┤
+//   │  [Prev] [Next]  [Autoplay]                 [reserved]    │
+//   └──────────────────────────────────────────────────────────┘
 //
-// The navigation targets are resolved by the caller from the column stack, not
-// from video attributes: exitHref is the player column's parent (pop target)
-// and goHref builds the prev/next/up-next URLs. A player pushed on a series
-// detail exits back to the series and stays inside it; a standalone player
-// exits back to its video detail.
+// The video area determines the main row's height (16:9 aspect); the sidebar
+// stretches to match. On narrow screens the sidebar stacks below the video
+// (responsive breakpoint left as an extension point). The bottom controls bar
+// holds playback navigation and advanced settings; additional controls will be
+// added in the reserved area on the right.
+//
+// The component receives only videoId and seriesId; navigation (prev/next,
+// episode clicks) goes through the manager, so the player tab's URL stays in
+// sync. For standalone videos (no seriesId) the sidebar is hidden.
 export function PlayerPane({
   videoId,
-  exitHref,
-  goHref,
+  seriesId,
 }: {
   videoId: string
-  exitHref: string
-  goHref: (id: string) => string
+  seriesId?: string
 }) {
-  const navigate = useNavigate()
   const detail = useQuery({ queryKey: ['video', videoId], queryFn: () => fetchVideo(videoId) })
   const seriesDetail = useQuery({
-    queryKey: ['series', detail.data?.series_id ?? 'none'],
-    queryFn: () => {
-      const seriesId = detail.data?.series_id
-      if (!seriesId) throw new Error('无系列上下文')
-      return fetchSeriesDetail(seriesId)
-    },
-    enabled: !!detail.data?.series_id,
+    queryKey: ['series', seriesId ?? 'none'],
+    queryFn: () => fetchSeriesDetail(seriesId!),
+    enabled: !!seriesId,
+  })
+  const prefs = useQuery({
+    queryKey: ['prefs', videoId],
+    queryFn: () => fetchVideoPrefs(videoId),
   })
   const [autoplay, setAutoplay] = useState(true)
 
-  // 播放栏载入系列成员后预收集其可播放性，上下集/「接下来播放」跳转时直接
-  // 命中缓存，避免切换时逐个探测。
   const seriesMembers = seriesDetail.data?.members
   useEffect(() => {
     if (seriesMembers) prefetchPlayability(seriesMembers)
   }, [seriesMembers])
 
   const video = detail.data?.video
-  // Playback tier decided at runtime (ADR-006 修订); the decision chain lives in
-  // lib/playability.ts and is shared with the detail pane.
   const mode = video && detail.data ? playMode(video, detail.data) : 'none'
   const openConvert = () => video && openFormatVideo(video.path)
 
-  // neighbours and the up-next list in the series' member order (by episode number)
-  const { neighbours, upNext } = useMemo(() => {
+  const neighbours = useMemo(() => {
     const members = seriesDetail.data?.members ?? []
     const idx = members.findIndex((m) => m.video_id === videoId)
-    if (idx < 0) return { neighbours: { prev: undefined, next: undefined }, upNext: [] }
+    if (idx < 0) return { prev: undefined, next: undefined }
     return {
-      neighbours: {
-        prev: idx > 0 ? members[idx - 1].video_id : undefined,
-        next: idx < members.length - 1 ? members[idx + 1].video_id : undefined,
-      },
-      upNext: members.slice(idx + 1, idx + 4),
+      prev: idx > 0 ? members[idx - 1].video_id : undefined,
+      next: idx < members.length - 1 ? members[idx + 1].video_id : undefined,
     }
   }, [seriesDetail.data, videoId])
 
-  const exit = () => navigate({ href: exitHref })
-  const go = (id: string) => navigate({ href: goHref(id) })
+  const go = (id: string) => playVideo(id, seriesId)
+
+  const p = prefs.data?.prefs
+  const prefAudio = p?.scope === 'series' ? p.audio_track_name : typeof p?.audio_track === 'number' ? `音轨 ${p.audio_track + 1}` : undefined
+  const prefSubtitle = p?.scope === 'series'
+    ? (typeof p.subtitle_name === 'string' ? (p.subtitle_name === '' ? '关闭' : p.subtitle_name) : undefined)
+    : (typeof p?.subtitle_id === 'string' ? (p.subtitle_id === '' ? '关闭' : p.subtitle_id) : undefined)
+  const prefVolume = typeof p?.volume === 'number' ? formatVolume(p.volume, p.muted) : undefined
 
   if (detail.isLoading) {
     return (
@@ -98,125 +94,177 @@ export function PlayerPane({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2">
-        <button
-          onClick={exit}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-        >
-          <ArrowLeft className="size-4" /> 退出播放
-        </button>
-        <span className="min-w-0 flex-1 truncate text-xs text-neutral-400" title={video.title}>
-          {video.title}
-        </span>
-      </div>
-
-      {mode !== 'none' ? (
-        <div className="min-h-0 flex-1 overflow-hidden bg-black">
-          <VideoPlayer video={video} mode={mode} onEnded={autoplay && neighbours.next ? () => go(neighbours.next!) : undefined} />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-neutral-50 p-6">
-          <p className="text-sm text-neutral-700">
-            该文件无法在线播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
-          </p>
-          <p className="max-w-md text-center text-xs text-neutral-400">
-            此环境既不支持直连播放，动态流转换也不可用（未配置 ffmpeg 或源文件不可达）。请用格式工厂转换为
-            MP4 后再观看。转换不会修改原文件。
-          </p>
-          <button
-            onClick={openConvert}
-            className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-          >
-            <Play className="size-4" /> 格式工厂转换
-          </button>
-        </div>
-      )}
-
-      <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-neutral-200 bg-white px-4 py-2.5">
-        <p className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800" title={video.title}>
-          {video.title}
-        </p>
-        <span className="shrink-0 text-xs text-neutral-400">
-          {video.width && video.height ? `${video.width}×${video.height} · ` : ''}
-          {video.duration > 0 ? `${formatDuration(video.duration)} · ` : ''}
-          {formatBytes(video.size)}
-        </span>
-        {detail.data?.series_id ? (
-          <Link
-            to="/series/$id"
-            params={{ id: detail.data.series_id }}
-            className="shrink-0 text-xs text-blue-600 hover:underline"
-          >
-            所属系列
-          </Link>
-        ) : null}
-      </div>
-
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-neutral-100 bg-white px-4 py-2.5">
-        <Tooltip content="上一集">
-          <button
-            onClick={() => neighbours.prev && go(neighbours.prev)}
-            disabled={!neighbours.prev}
-            className="flex items-center gap-1 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
-          >
-            <ChevronLeft className="size-4" /> 上一集
-          </button>
-        </Tooltip>
-        <Tooltip content="下一集">
-          <button
-            onClick={() => neighbours.next && go(neighbours.next)}
-            disabled={!neighbours.next}
-            className="flex items-center gap-1 rounded border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
-          >
-            下一集 <ChevronRight className="size-4" />
-          </button>
-        </Tooltip>
-        <span className="ml-auto flex items-center gap-1.5 text-sm text-neutral-600">
-          <Repeat className="size-4" />
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={autoplay}
-              onChange={(e) => setAutoplay(e.target.checked)}
-              className="accent-blue-600"
+      {/* Main area: video + sidebar.
+          Narrow: CSS Grid with two rows — video row is auto-sized (content
+          height,不可压缩), sidebar fills the rest and scrolls. This prevents
+          the video from being squeezed out when the viewport is short.
+          Wide: flex row — video takes remaining width, sidebar fixed 320px.
+          Web fullscreen: video expands to cover the entire viewport. */}
+      <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] lg:flex lg:flex-row">
+        {/* Video area: aspect-ratio is determined by Vidstack (video's natural ratio,
+            typically 16:9). overflow-hidden keeps the Vidstack controls inside. */}
+        <div className="relative min-w-0 overflow-hidden bg-black lg:flex-1 lg:shrink-0">
+          {mode !== 'none' ? (
+            <VideoPlayer
+              video={video}
+              mode={mode}
+              onEnded={autoplay && neighbours.next ? () => go(neighbours.next!) : undefined}
             />
-            自动连播
-          </label>
-        </span>
-      </div>
-
-      {upNext.length > 0 && (
-        <div className="shrink-0 border-t border-neutral-100 bg-white px-4 py-3">
-          <p className="mb-2 text-xs font-medium text-neutral-500">接下来播放</p>
-          <ul className="space-y-1">
-            {upNext.map((m) => (
-              <li key={m.video_id}>
-                <button
-                  onClick={() => go(m.video_id)}
-                  className="flex w-full items-center gap-3 rounded px-2 py-1.5 text-left transition-colors hover:bg-neutral-50"
-                >
-                  <div className="relative h-12 w-20 shrink-0 overflow-hidden rounded border border-neutral-200 bg-neutral-100">
-                    {m.thumb_path ? (
-                      <img src={coverUrl(m.video_id, true)} alt={m.title} loading="lazy" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-neutral-300">
-                        <Play className="size-4" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-neutral-700" title={m.episode_title || m.title}>
-                      {m.episode_title || m.title}
-                    </p>
-                    <p className="truncate text-xs text-neutral-400">第 {m.episode_number} 集</p>
-                  </div>
-                  {m.duration > 0 && <span className="shrink-0 text-xs text-neutral-400">{formatDuration(m.duration)}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
+              <p className="text-sm text-neutral-700">
+                该文件无法在线播放（{video.container?.toUpperCase() || '未知容器'} · {video.codec || '未知编码'}）
+              </p>
+              <p className="max-w-md text-center text-xs text-neutral-400">
+                此环境既不支持直连播放，动态流转换也不可用（未配置 ffmpeg 或源文件不可达）。请用格式工厂转换为
+                MP4 后再观看。转换不会修改原文件。
+              </p>
+              <button
+                onClick={openConvert}
+                className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+              >
+                <Play className="size-4" /> 格式工厂转换
+              </button>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Sidebar: always visible. For series playback it shows the full
+            metadata + episode list; for standalone videos the episode list
+            is empty and the title falls back to the video title. */}
+        <div className="flex min-h-0 min-w-0 flex-col overflow-y-auto border-l-0 border-t border-neutral-200 bg-white lg:w-[320px] lg:shrink-0 lg:overflow-y-visible lg:border-l lg:border-t-0">
+          {/* Section 1: Title — series name or video title */}
+          <div className="flex shrink-0 items-baseline gap-2 border-b border-neutral-200 px-3 py-2.5">
+            <p className="min-w-0 truncate text-sm font-medium text-neutral-800" title={seriesDetail.data?.series.name ?? video.title}>
+              {seriesDetail.data?.series.name ?? video.title}
+            </p>
+            {seriesDetail.data && (
+              <span className="shrink-0 text-xs text-neutral-400">
+                {seriesDetail.data.series.member_count} 集
+              </span>
+            )}
+          </div>
+
+          {/* Section 2: Detailed info */}
+          <div className="shrink-0 border-b border-neutral-200">
+            <p className="px-3 pt-2.5 pb-1.5 text-sm font-medium text-neutral-700">详细信息</p>
+            <div className="px-3 pb-2.5">
+              <p className="mb-1.5 text-xs font-medium text-neutral-500">播放习惯</p>
+              <dl className="space-y-1 text-xs">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">音轨</dt>
+                  <dd className="min-w-0 truncate text-right text-neutral-700">{prefAudio ?? '默认'}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">字幕</dt>
+                  <dd className="min-w-0 truncate text-right text-neutral-700">{prefSubtitle ?? '默认'}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">音量</dt>
+                  <dd className="flex shrink-0 items-center gap-1 text-neutral-700">
+                    {prefVolume ? (
+                      <>
+                        <Volume2 className="size-3" />
+                        {prefVolume}
+                      </>
+                    ) : (
+                      '默认'
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+            <div className="px-3 pb-2.5">
+              <p className="mb-1.5 text-xs font-medium text-neutral-500">技术信息</p>
+              <dl className="space-y-1 text-xs">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">容器</dt>
+                  <dd className="text-neutral-700">{video.container?.toUpperCase() || '未知'}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">视频</dt>
+                  <dd className="text-right text-neutral-700">
+                    {video.codec?.toUpperCase() || '未知'}
+                    {video.width && video.height ? ` · ${video.width}×${video.height}` : ''}
+                    {video.fps ? ` · ${video.fps}fps` : ''}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">音频</dt>
+                  <dd className="text-neutral-700">{video.audio_codec?.toUpperCase() || '未知'}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-neutral-500">时长 / 大小</dt>
+                  <dd className="text-right text-neutral-700">
+                    {video.duration > 0 ? `${formatDuration(video.duration)} · ` : ''}
+                    {formatBytes(video.size)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+
+          {/* Section 3: Episode list — only meaningful for series playback */}
+          {seriesDetail.data && (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="flex shrink-0 items-center justify-between px-3 pt-2.5 pb-1.5">
+                <p className="text-sm font-medium text-neutral-700">剧集列表</p>
+                <button
+                  onClick={() => setAutoplay((v) => !v)}
+                  className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs transition-colors ${
+                    autoplay
+                      ? 'bg-blue-50 text-blue-600'
+                      : 'bg-neutral-100 text-neutral-400'
+                  }`}
+                >
+                  <Repeat className="size-3" />
+                  连播
+                </button>
+              </div>
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+                <ul className="divide-y divide-neutral-100">
+                  {seriesDetail.data.members.map((m) => {
+                    const active = m.video_id === videoId
+                    const watched = m.progress > 0
+                    return (
+                      <li key={m.video_id}>
+                        <button
+                          onClick={() => go(m.video_id)}
+                          className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                            active ? 'bg-blue-50' : 'hover:bg-neutral-50'
+                          }`}
+                        >
+                          <span
+                            className={`w-5 shrink-0 text-center text-xs font-medium ${
+                              active ? 'text-blue-600' : 'text-neutral-400'
+                            }`}
+                          >
+                            {active ? <Play className="mx-auto size-3.5" /> : m.episode_number}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p
+                              className={`truncate text-sm ${active ? 'font-medium text-blue-700' : 'text-neutral-700'}`}
+                              title={m.episode_title || m.title}
+                            >
+                              {m.episode_title || m.title}
+                            </p>
+                          </div>
+                          {watched && !active && (
+                            <Check className="size-3.5 shrink-0 text-emerald-500" />
+                          )}
+                          {m.duration > 0 && (
+                            <span className="shrink-0 text-xs text-neutral-400">{formatDuration(m.duration)}</span>
+                          )}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

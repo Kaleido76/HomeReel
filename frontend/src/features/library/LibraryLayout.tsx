@@ -5,7 +5,6 @@ import { AdvancedFilter } from './AdvancedFilter'
 import { LibraryList } from './LibraryList'
 import { SeriesDetailPage } from '../series/SeriesDetailPage'
 import { VideoDetailPane } from '../player/VideoDetailPane'
-import { PlayerPane } from '../player/PlayerPane'
 import { viewTabs, type GridState, type ListSelection } from './types'
 import { useIsWide } from '../../lib/breakpoints'
 import { NarrowBack } from '../../components/NarrowBack'
@@ -25,49 +24,40 @@ function parseGridSearch(search: Record<string, unknown>): GridState {
 }
 
 // The wide-screen library is a column stack. Browse is always the bottom column;
-// selecting a video/series pushes a detail column, and playing pushes a player
-// column. The viewport shows only the top two columns (each 50vw) — earlier
-// columns are pushed off-screen to the left via translateX. The stack itself is
-// encoded in the URL path, so every state survives refresh / back-forward:
+// selecting a video/series pushes a detail column. The viewport shows only the
+// top two columns (each 50vw) — earlier columns are pushed off-screen to the
+// left via translateX. The stack itself is encoded in the URL path, so every
+// state survives refresh / back-forward:
 //
 //   /library                            -> [browse]
 //   /library/video/:id                  -> [browse][video-detail]
-//   /library/video/:id/play             -> [browse][video-detail][player]
 //   /series/:id                         -> [browse][series-detail]
 //   /series/:id/video/:videoId          -> [browse][series-detail][video-detail]
-//   /series/:id/play/:videoId           -> [browse][series-detail][player]
 //
 // Each column carries its own path and its parent's path, so "back" is just a
 // pop to the parent. The stack is extensible: future column types only need a
-// new path segment + a renderer below.
+// new path segment + a renderer below. Playback no longer lives here — it moved
+// to its own player tab (features/player/PlayerPage).
 type Column =
   | { type: 'browse'; path: string }
   | { type: 'video-detail'; id: string; path: string; parent: string }
   | { type: 'series-detail'; id: string; path: string; parent: string }
-  | { type: 'player'; id: string; path: string; parent: string }
 
 function parseStack(pathname: string): Column[] {
   const browse: Column = { type: 'browse', path: '/library' }
-  const video = pathname.match(/^\/library\/video\/([^/]+)(?:\/play)?$/)
+  const video = pathname.match(/^\/library\/video\/([^/]+)$/)
   if (video) {
     const id = video[1]
-    const playing = pathname.endsWith('/play')
     const detailPath = `/library/video/${id}`
-    const detail: Column = { type: 'video-detail', id, path: detailPath, parent: browse.path }
-    if (playing) return [browse, detail, { type: 'player', id, path: pathname, parent: detailPath }]
-    return [browse, detail]
+    return [browse, { type: 'video-detail', id, path: detailPath, parent: browse.path }]
   }
-  const seriesChild = pathname.match(/^\/series\/([^/]+)\/(video|play)\/([^/]+)$/)
+  const seriesChild = pathname.match(/^\/series\/([^/]+)\/video\/([^/]+)$/)
   if (seriesChild) {
     const seriesId = seriesChild[1]
-    const videoId = seriesChild[3]
+    const videoId = seriesChild[2]
     const seriesPath = `/series/${seriesId}`
     const seriesCol: Column = { type: 'series-detail', id: seriesId, path: seriesPath, parent: browse.path }
-    const col: Column =
-      seriesChild[2] === 'play'
-        ? { type: 'player', id: videoId, path: pathname, parent: seriesPath }
-        : { type: 'video-detail', id: videoId, path: pathname, parent: seriesPath }
-    return [browse, seriesCol, col]
+    return [browse, seriesCol, { type: 'video-detail', id: videoId, path: pathname, parent: seriesPath }]
   }
   const series = pathname.match(/^\/series\/([^/]+)$/)
   if (series) {
@@ -195,15 +185,9 @@ export function LibraryLayout() {
 
   const top = stack[stack.length - 1]
 
-  // The player is rendered at the LibraryLayout root as a layer keyed by video
-  // id (see the overlay below), not inside the narrow/wide branches. Both
-  // branches therefore leave a placeholder where the player column would sit;
-  // the real player lives in one stable spot, so resizing across the 1024px
-  // breakpoint mid-playback no longer unmounts/remounts it (Bug #1).
-
   // ---- wide: render the whole stack, slide it so the top two columns are on screen ----
   // translateX = -(depth - 2) * 50vw, so [browse] alone shows browse + hint,
-  // depth 2 shows [browse][detail], depth 3 shows [detail][player], etc.
+  // depth 2 shows [browse][detail], depth 3 shows [series][video-detail].
   const translate = -Math.max(0, stack.length - 2) * 50
 
   return (
@@ -247,37 +231,19 @@ export function LibraryLayout() {
             {top.type === 'video-detail' ? (
               <>
                 <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
-                <VideoDetailPane
-                  videoId={top.id}
-                  playHref={videoPlayHref(top.parent, top.id)}
-                  seriesScoped={top.parent.startsWith('/series/')}
-                />
+                <VideoDetailPane videoId={top.id} seriesScoped={top.parent.startsWith('/series/')} />
               </>
             ) : top.type === 'series-detail' ? (
               <>
                 <NarrowBack label={backLabel(top.parent)} onBack={() => goPath(top.parent)} />
                 <SeriesDetailPage seriesId={top.id} />
               </>
-            ) : top.type === 'player' ? (
-              null
             ) : (
               <div className="h-full py-4">
                 <LibraryList state={grid} onUpdate={update} selection={selection} onSelect={onSelect} />
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {/* The player overlay: mounted here (top-level) so the video survives the
-          wide/narrow switch. The player column is always the top/last column, so
-          it fills the right half in wide mode and the whole column in narrow. */}
-      {top.type === 'player' && (
-        <div
-          className="absolute inset-y-0 z-20"
-          style={wide ? { left: '50vw', width: '50vw' } : { left: 0, width: '100%' }}
-        >
-          <PlayerPane videoId={top.id} exitHref={top.parent} goHref={playerGo(top.parent)} />
         </div>
       )}
     </div>
@@ -292,23 +258,12 @@ function colKey(col: Column): string {
       return `video-${col.id}`
     case 'series-detail':
       return `series-${col.id}`
-    case 'player':
-      return `player-${col.id}`
   }
 }
 
-// columnContent renders one detail/player column. Navigation targets are
-// derived from the column's parent in the stack (not from the video's own
-// attributes), so the behaviour is fully determined by how the column was
-// reached:
-//
-//   - video-detail over a series: play stays inside the series
-//     (/series/:id/play/:videoId) and replaces this detail with the player;
-//     a toolbar offers the way back to the series.
-//   - video-detail over browse (standalone): play uses /library/video/:id/play.
-//   - player over a series: exit pops back to the series detail, prev/next/
-//     up-next URLs stay inside the series.
-//   - player over a standalone video detail: exit pops back to that detail.
+// columnContent renders one detail column. The 「返回系列」 bar is drawn only
+// for a video-detail opened inside a series, so the way back is always the
+// series context's top bar.
 function columnContent(col: Column, goPath: (href: string) => void): ReactNode {
   if (col.type === 'video-detail' && col.parent.startsWith('/series/')) {
     return (
@@ -322,39 +277,19 @@ function columnContent(col: Column, goPath: (href: string) => void): ReactNode {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <VideoDetailPane videoId={col.id} playHref={videoPlayHref(col.parent, col.id)} seriesScoped />
+          <VideoDetailPane videoId={col.id} seriesScoped />
         </div>
       </div>
     )
   }
   switch (col.type) {
     case 'video-detail':
-      return <VideoDetailPane videoId={col.id} playHref={videoPlayHref(col.parent, col.id)} />
+      return <VideoDetailPane videoId={col.id} />
     case 'series-detail':
       return <SeriesDetailPage seriesId={col.id} />
-    case 'player':
-      // The real player is rendered at the LibraryLayout root overlay (Bug #1);
-      // the column itself is a placeholder reserving the 50vw slot.
-      return <div className="h-full" />
     case 'browse':
       return null
   }
-}
-
-// videoPlayHref resolves the play target of a video-detail column from its
-// parent in the stack: inside a series it stays within the series
-// (/series/:id/play/:videoId); a standalone detail uses /library/video/:id/play.
-function videoPlayHref(parent: string, id: string): string {
-  return parent.startsWith('/series/') ? `${parent}/play/${id}` : `/library/video/${id}/play`
-}
-
-// playerGo builds the prev/next/up-next URLs for a player column. A player
-// pushed on top of a series detail stays inside that series; a standalone
-// player keeps the plain video route (never used, as standalone videos have
-// no neighbours, but kept for safety).
-function playerGo(parent: string): (id: string) => string {
-  if (parent.startsWith('/series/')) return (id) => `${parent}/play/${id}`
-  return (id) => `/library/video/${id}/play`
 }
 
 function backLabel(parent: string): string {

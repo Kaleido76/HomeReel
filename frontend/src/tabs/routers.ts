@@ -14,7 +14,7 @@ type AnyRouter = ReturnType<typeof createRouter>
 // ("懒加载"), then kept alive by the tab host.
 const HomePage = lazy(() => import('../features/home/HomePage').then((m) => ({ default: m.HomePage })))
 const LibraryLayout = lazy(() => import('../features/library/LibraryLayout').then((m) => ({ default: m.LibraryLayout })))
-const SearchPage = lazy(() => import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })))
+const PlayerPage = lazy(() => import('../features/player/PlayerPage').then((m) => ({ default: m.PlayerPage })))
 const ToolsPage = lazy(() => import('../features/tools/ToolsPage').then((m) => ({ default: m.ToolsPage })))
 const FilesPage = lazy(() =>
   import('../features/files/FilesPage').then((m) => ({ default: m.FilesPage })),
@@ -46,13 +46,13 @@ export const homeRouter = createRouter({
   defaultPreload: 'intent',
 })
 
-// ---- library tab (library / video detail / player / series detail) ----
+// ---- library tab (library browse / video detail / series detail) ----
 // The root route carries LibraryLayout, which is the single source of truth
-// for the wide-screen three-column browser (browse | detail | player). The
-// child routes below only exist so the URL stays parseable and deep links /
-// back-forward resolve; their components are never rendered via <Outlet/> —
-// LibraryLayout parses location.pathname itself and renders the matching panes
-// directly (the natural route IDs are preserved so tabFromPath keeps working).
+// for the wide-screen two-column browser (browse | detail). The child routes
+// below only exist so the URL stays parseable and deep links / back-forward
+// resolve; their components are never rendered via <Outlet/> — LibraryLayout
+// parses location.pathname itself and renders the matching panes directly (the
+// natural route IDs are preserved so tabFromPath keeps working).
 const libraryRoot = createRootRoute({ component: LibraryLayout })
 const libraryIndex = createRoute({
   getParentRoute: () => libraryRoot,
@@ -64,31 +64,17 @@ const libraryVideo = createRoute({
   path: '/library/video/$id',
   component: () => null,
 })
-// /play is a child of the video route so that /library/video/:id/play keeps the
-// parent match in the tree — useParams({ from: '/library/video/$id' }) resolves
-// in both the detail and the playing state.
-const libraryPlay = createRoute({
-  getParentRoute: () => libraryVideo,
-  path: 'play',
-  component: () => null,
-})
 const librarySeries = createRoute({
   getParentRoute: () => libraryRoot,
   path: '/series/$id',
   component: () => null,
 })
-// /video and /play are children of the series route so that
-// /series/:id/video/:videoId (episode detail inside a series) and
-// /series/:id/play/:videoId (playing an episode inside a series) keep the
+// /video is a child of the series route so that
+// /series/:id/video/:videoId (episode detail inside a series) keeps the
 // parent match — LibraryLayout parses the pathname into its column stack itself.
 const librarySeriesVideo = createRoute({
   getParentRoute: () => librarySeries,
   path: 'video/$videoId',
-  component: () => null,
-})
-const librarySeriesPlay = createRoute({
-  getParentRoute: () => librarySeries,
-  path: 'play/$videoId',
   component: () => null,
 })
 const libraryNotFound = createRoute({
@@ -99,8 +85,8 @@ const libraryNotFound = createRoute({
 })
 const libraryTree = libraryRoot.addChildren([
   libraryIndex,
-  libraryVideo.addChildren([libraryPlay]),
-  librarySeries.addChildren([librarySeriesVideo, librarySeriesPlay]),
+  libraryVideo,
+  librarySeries.addChildren([librarySeriesVideo]),
   libraryNotFound,
 ])
 export const libraryRouter = createRouter({
@@ -109,24 +95,35 @@ export const libraryRouter = createRouter({
   defaultPreload: 'intent',
 })
 
-// ---- search tab ----
-const searchRoot = createRootRoute()
-const searchIndex = createRoute({
-  getParentRoute: () => searchRoot,
-  path: '/search',
-  component: SearchPage,
-  validateSearch: (search) => ({ q: typeof search.q === 'string' ? search.q : '' }),
+// ---- player tab (standalone playback page) ----
+// The player owns its own tab so playback never competes with the library
+// columns. /player is the tab root (empty state); /player/:videoId plays one
+// video, with an optional ?series= carrying the series context that drives
+// prev/next/up-next (a series member entered without the context still plays,
+// it just has no neighbours).
+const playerRoot = createRootRoute()
+const playerIndex = createRoute({
+  getParentRoute: () => playerRoot,
+  path: '/player',
+  component: PlayerPage,
+  validateSearch: () => ({}),
 })
-const searchNotFound = createRoute({
-  getParentRoute: () => searchRoot,
+const playerVideo = createRoute({
+  getParentRoute: () => playerRoot,
+  path: '/player/$videoId',
+  component: PlayerPage,
+  validateSearch: (search) => ({ series: typeof search.series === 'string' ? search.series : undefined }),
+})
+const playerNotFound = createRoute({
+  getParentRoute: () => playerRoot,
   path: '*',
-  beforeLoad: () => redirect({ to: '/search' }),
+  beforeLoad: () => redirect({ to: '/player' }),
   component: () => null,
 })
-const searchTree = searchRoot.addChildren([searchIndex, searchNotFound])
-export const searchRouter = createRouter({
-  routeTree: searchTree,
-  history: createMemoryHistory({ initialEntries: [initialEntry('search')] }),
+const playerTree = playerRoot.addChildren([playerIndex, playerVideo, playerNotFound])
+export const playerRouter = createRouter({
+  routeTree: playerTree,
+  history: createMemoryHistory({ initialEntries: [initialEntry('player')] }),
   defaultPreload: 'intent',
 })
 
@@ -179,7 +176,7 @@ export const filesRouter = createRouter({
 export const routers: Record<TabId, AnyRouter> = {
   home: homeRouter as unknown as AnyRouter,
   library: libraryRouter as unknown as AnyRouter,
-  search: searchRouter as unknown as AnyRouter,
+  player: playerRouter as unknown as AnyRouter,
   tools: toolsRouter as unknown as AnyRouter,
   files: filesRouter as unknown as AnyRouter,
 }
