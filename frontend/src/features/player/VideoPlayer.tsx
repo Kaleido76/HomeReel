@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Hls from 'hls.js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -12,9 +12,11 @@ import {
   type MediaProviderAdapter,
   type VideoSrc,
 } from '@vidstack/react'
+import { TheatreModeExitIcon, TheatreModeIcon } from '@vidstack/react/icons'
 import {
   DefaultMenuRadioGroup,
   DefaultMenuSection,
+  DefaultTooltip,
   DefaultVideoLayout,
   defaultLayoutIcons,
 } from '@vidstack/react/player/layouts/default'
@@ -41,7 +43,7 @@ import { type SeriesPlaybackPrefs } from '../../api/series'
 import { getActiveTab, subscribeTabs } from '../../tabs/manager'
 import { NEAR_END, RESUME_MIN, RESUME_TAIL, SAVE_INTERVAL } from '../../lib/playback'
 import type { PlayMode } from '../../lib/playability'
-import { useFakeFullscreen } from '../../lib/useFakeFullscreen'
+import { useWebFullscreen } from '../../lib/useWebFullscreen'
 
 // StreamSrc is the media source handed to <MediaPlayer>: a plain MP4 (direct /
 // remux) or the transcode HLS playlist. /api/stream/{id} has no extension, so the
@@ -49,11 +51,11 @@ import { useFakeFullscreen } from '../../lib/useFakeFullscreen'
 type StreamSrc = VideoSrc | { src: string; type: 'application/x-mpegurl' }
 
 // FullscreenClock shows the current system time (HH:mm) in the player's top-right
-// corner while the media is fullscreen (native or the mobile fake-fullscreen
-// overlay). It sits inside <MediaPlayer> so it can read the fullscreen state;
-// the clock is pointer-events-none so it never blocks the controls underneath.
-function FullscreenClock({ fakeActive }: { fakeActive: boolean }) {
-  const fullscreen = useMediaState('fullscreen') || fakeActive
+// corner while the media is fullscreen (native or the web fullscreen overlay). It
+// sits inside <MediaPlayer> so it can read the fullscreen state; the clock is
+// pointer-events-none so it never blocks the controls underneath.
+function FullscreenClock({ webActive }: { webActive: boolean }) {
+  const fullscreen = useMediaState('fullscreen') || webActive
   const [time, setTime] = useState(() => new Date())
 
   useEffect(() => {
@@ -72,35 +74,98 @@ function FullscreenClock({ fakeActive }: { fakeActive: boolean }) {
   )
 }
 
-// PlayerFullscreenButton replaces the layout's native fullscreen button so the
-// same control routes to the right fullscreen mode per device (ADR-006 修订):
-// desktop keeps Vidstack's native fullscreen, touch/mobile uses the fake CSS
-// overlay (which native fullscreen would otherwise hide our controls/subtitles
-// behind, or be unavailable on iOS <div>). It reuses the default button's
-// classes and icon set so it looks and behaves identically to the original.
-function PlayerFullscreenButton({
-  fake,
+// FullscreenToolbarButton is the shared chrome for the two fullscreen controls
+// (web + native). It must activate like the layout's own buttons, which fire on
+// a primary pointer-up rather than click: the layout tooltip cancels touchstart,
+// and on touch devices that suppresses the synthetic click a plain onClick
+// would rely on (ADR-006). The pointer-up covers mouse/touch/pen and the
+// keyboard click (detail === 0) covers Enter/Space; the trailing mouse click
+// (detail >= 1) after a handled pointer-up is ignored so it does not fire twice.
+function FullscreenToolbarButton({
+  active,
+  onToggle,
+  enterText,
+  exitText,
+  icon,
+}: {
+  active: boolean
+  onToggle: () => void
+  enterText: string
+  exitText: string
+  icon: ReactNode
+}) {
+  return (
+    <DefaultTooltip content={active ? exitText : enterText} placement="top end">
+      <button
+        type="button"
+        aria-label={active ? exitText : enterText}
+        data-media-tooltip="fullscreen"
+        data-active={active ? '' : undefined}
+        className="vds-fullscreen-button vds-button"
+        onPointerUp={(e) => {
+          if (e.button === 0) onToggle()
+        }}
+        onClick={(e) => {
+          if (e.detail === 0) onToggle()
+        }}
+      >
+        {icon}
+      </button>
+    </DefaultTooltip>
+  )
+}
+
+// PlayerWebFullscreenButton is the dedicated "web fullscreen" control: it fills
+// the browser viewport with the CSS overlay (useWebFullscreen) instead of the
+// native Fullscreen API, so the browser chrome stays visible and the app's own
+// controls/subtitles are never hidden behind a native overlay. It is the only
+// fullscreen control on mobile (the native button is dropped there) and a
+// distinct "fill the viewport" option on desktop, behaving identically on every
+// device (ADR-006). The theatre-mode glyph (YouTube-style "fill the viewport"
+// without true fullscreen) tells it apart from the native fullscreen button,
+// which keeps the standard fullscreen-arrow icon.
+function PlayerWebFullscreenButton({
+  active,
   onToggle,
 }: {
-  fake: { active: boolean; mobile: boolean }
+  active: boolean
   onToggle: () => void
 }) {
-  const nativeFullscreen = useMediaState('fullscreen')
-  const active = nativeFullscreen || fake.active
-  const enterText = '全屏'
-  const exitText = '退出全屏'
-  const Icon = active ? defaultLayoutIcons.FullscreenButton.Exit : defaultLayoutIcons.FullscreenButton.Enter
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={active ? exitText : enterText}
-      data-media-tooltip="fullscreen"
-      data-active={active ? '' : undefined}
-      className="vds-fullscreen-button vds-button"
-    >
-      <Icon className="vds-icon" />
-    </button>
+    <FullscreenToolbarButton
+      active={active}
+      onToggle={onToggle}
+      enterText="网页全屏"
+      exitText="退出网页全屏"
+      icon={
+        active ? (
+          <TheatreModeExitIcon className="vds-icon" />
+        ) : (
+          <TheatreModeIcon className="vds-icon" />
+        )
+      }
+    />
+  )
+}
+
+// PlayerNativeFullscreenButton is the layout's native fullscreen control: it
+// requests real browser fullscreen via the Fullscreen API. It is shown only on
+// desktop; on mobile it is hidden because the web fullscreen button already
+// covers the CSS overlay path. It reuses the default button's classes and icon
+// set so it looks identical to the original control (ADR-006).
+function PlayerNativeFullscreenButton({ onToggle }: { onToggle: () => void }) {
+  const fullscreen = useMediaState('fullscreen')
+  const Icon = fullscreen
+    ? defaultLayoutIcons.FullscreenButton.Exit
+    : defaultLayoutIcons.FullscreenButton.Enter
+  return (
+    <FullscreenToolbarButton
+      active={fullscreen}
+      onToggle={onToggle}
+      enterText="全屏"
+      exitText="退出全屏"
+      icon={<Icon className="vds-icon" />}
+    />
   )
 }
 
@@ -123,23 +188,31 @@ export function VideoPlayer({
   const playerRef = useRef<MediaPlayerInstance>(null)
   const remote = useMediaRemote(playerRef)
   const queryClient = useQueryClient()
-  // Mobile browsers get the fake (CSS) fullscreen (ADR-006 修订); desktop keeps
-  // native fullscreen. The fullscreen control routes to fake on mobile and to
-  // native remote otherwise. landscape tells the hook whether the video content
-  // is wide (width > height) so it can decide to force-rotate on portrait.
-  const fake = useFakeFullscreen((video.width ?? 0) > (video.height ?? 0))
+  // Web fullscreen is the dedicated CSS overlay control on every device
+  // (ADR-006); native fullscreen remains a separate desktop-only control. The
+  // hook's mobile flag only decides which control the layout shows (mobile drops
+  // the native button), it never changes how web fullscreen behaves.
+  const webFullscreen = useWebFullscreen()
 
-  // The layout's native fullscreen button is replaced by PlayerFullscreenButton
-  // (see below), so the "f" shortcut and the button both route here: native on
-  // desktop, fake on mobile.
-  const toggleFullscreen = useCallback(() => {
-    if (fake.mobile) fake.toggle()
-    else remote.toggleFullscreen()
-  }, [fake, remote])
+  // Web (CSS) fullscreen and native fullscreen are two independent controls now
+  // (see the slots below): the web fullscreen button always toggles the CSS
+  // overlay on every device, and the native fullscreen button requests real
+  // browser fullscreen on desktop. Both are kept mutually exclusive.
+  const toggleWebFullscreen = useCallback(() => {
+    // If the browser is already in native fullscreen, back out of it first so
+    // the CSS overlay is not trapped under the browser chrome.
+    remote.exitFullscreen()
+    webFullscreen.toggle()
+  }, [remote, webFullscreen])
+
+  const toggleNativeFullscreen = useCallback(() => {
+    remote.toggleFullscreen()
+  }, [remote])
 
   // Restore the native "f" shortcut that the replaced default button used to
-  // own. Only handled when the player (or its descendant control) has focus so
-  // typing an "f" elsewhere is unaffected.
+  // own. It maps to native fullscreen (the standard desktop behavior); the web
+  // fullscreen button is reachable on screen. Only handled when the player (or
+  // its descendant control) has focus so typing an "f" elsewhere is unaffected.
   useEffect(() => {
     const el = playerRef.current?.el
     if (!el) return
@@ -148,13 +221,13 @@ export function VideoPlayer({
         const t = e.target as Node | null
         if (el.contains(t)) {
           e.preventDefault()
-          toggleFullscreen()
+          toggleNativeFullscreen()
         }
       }
     }
     el.addEventListener('keydown', onKeyDown)
     return () => el.removeEventListener('keydown', onKeyDown)
-  }, [toggleFullscreen])
+  }, [toggleNativeFullscreen])
   const [resumeAt, setResumeAt] = useState(0)
   const posRef = useRef(0)
   const lastSaveRef = useRef(0)
@@ -545,7 +618,7 @@ export function VideoPlayer({
   }
 
   return (
-    <div ref={fake.attach} className="relative h-full w-full">
+    <div ref={webFullscreen.attach} className="relative h-full w-full">
       <MediaPlayer
         ref={playerRef}
         src={mediaSrc}
@@ -558,12 +631,12 @@ export function VideoPlayer({
         style={{ aspectRatio: 'auto' }}
         onProviderChange={onProviderChange}
         onFullscreenChange={() => {
-          // If the browser managed to enter native fullscreen while the fake
+          // If the browser managed to enter native fullscreen while the web
           // overlay is already up (e.g. the native "f" shortcut or double-tap),
-          // back out of native and restore the fake overlay so they never stack.
-          if (fake.active) {
+          // back out of native and restore the web overlay so they never stack.
+          if (webFullscreen.active) {
             remote.exitFullscreen()
-            fake.enter()
+            webFullscreen.enter()
           }
         }}
         onCanPlay={() => {
@@ -618,9 +691,17 @@ export function VideoPlayer({
         <DefaultVideoLayout
           icons={defaultLayoutIcons}
           slots={{
-            fullscreenButton: (
-              <PlayerFullscreenButton fake={fake} onToggle={toggleFullscreen} />
+            // The project does not use Google Cast; drop the layout's cast
+            // button so it never appears on supported (Chrome) clients.
+            googleCastButton: null,
+            beforeFullscreenButton: (
+              <PlayerWebFullscreenButton active={webFullscreen.active} onToggle={toggleWebFullscreen} />
             ),
+            // Native fullscreen is desktop-only: on mobile the web fullscreen
+            // button already covers the CSS overlay path, and native fullscreen
+            // would hide our custom controls and subtitles. Rendering null here
+            // drops the native button from the layout on mobile.
+            fullscreenButton: webFullscreen.mobile ? null : <PlayerNativeFullscreenButton onToggle={toggleNativeFullscreen} />,
             settingsMenuItemsEnd:
               audioList.length > 1 ? (
                 <DefaultMenuSection label="音轨" value={currentAudioLabel ?? `音轨 ${audio + 1}`}>
@@ -636,7 +717,7 @@ export function VideoPlayer({
               ) : null,
           }}
         />
-        <FullscreenClock fakeActive={fake.active} />
+        <FullscreenClock webActive={webFullscreen.active} />
       </MediaPlayer>
     </div>
   )

@@ -89,32 +89,19 @@ body {
   animation-delay: 0ms, calc(var(--notify-hold, 3500ms) + 200ms);
 }
 
-/* Fake fullscreen (ADR-006 修订): the player wrapper is stretched over the whole
-   dynamic viewport to simulate native fullscreen on touch browsers, where native
-   fullscreen is unavailable (iOS <div>) or hides our custom controls/subtitles.
-   The overlay must be fixed (covering the tab bar too), so none of the player's
-   ancestors may carry a CSS transform (a transformed ancestor would become the
-   fixed element's containing block). */
-.fake-fullscreen {
+/* Web fullscreen (ADR-006): the player wrapper is stretched over the whole
+   dynamic viewport via pure CSS instead of the native Fullscreen API, so the
+   browser chrome stays visible and our custom controls/subtitles are never
+   hidden behind a native overlay. The overlay must be fixed (covering the tab
+   bar too), so none of the player's ancestors may carry a CSS transform (a
+   transformed ancestor would become the fixed element's containing block). */
+.web-fullscreen {
   position: fixed;
   inset: 0;
   width: 100dvw;
   height: 100dvh;
   z-index: 99999;
   background: #000;
-}
-
-/* Portrait device + landscape content: rotate the wrapper 90 degrees so the
-   video fills the screen width-wise instead of leaving black bars. The rotation
-   is applied to the fullscreen overlay itself, so the whole player (controls,
-   custom subtitles) rotates together. */
-.fake-fullscreen-rotate {
-  width: 100dvh;
-  height: 100dvw;
-  transform: rotate(90deg);
-  transform-origin: top left;
-  top: 0;
-  left: 100dvw;
 }
 
 @media (prefers-reduced-motion: reduce) {

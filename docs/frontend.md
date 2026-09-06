@@ -71,8 +71,14 @@
   - 自动应用每字段至多一次；音量/静音经受控 props 应用
   - 保存触发点：音轨菜单选择、字幕切换、音量变化（防抖 400ms）
   - prefs 查询 `refetchOnMount: 'always'`
-- **伪全屏**：触摸端走纯 CSS 伪全屏（`useFakeFullscreen`），桌面保持原生；播放页签
-  全出血布局（`TabHost` fullBleed），伪全屏固定定位覆盖含 Header 的整个视口
+- **网页全屏 / 原生全屏**：`DefaultVideoLayout` 的 `beforeFullscreenButton` 插槽注入
+  独立「网页全屏」按钮（纯 CSS 覆盖 `useWebFullscreen`，各端行为一致，不区分设备）；
+  `fullscreenButton` 插槽保留原生全屏按钮但**仅桌面显示**（移动端渲染 null，只留网页全屏）。
+  两按钮互斥：进入网页全屏前先退出原生。`f` 快捷键映射原生全屏。
+  **激活事件**：按钮用 pointerup + 键盘 click（detail===0）激活而非 onClick —— 布局
+  `DefaultTooltip` 会取消 touchstart，触屏上会抑制合成 click。`googleCastButton` 插槽置 null
+  移除布局自带 Google Cast 按钮。播放页签全出血布局（`TabHost` fullBleed），网页全屏固定定位
+  覆盖含 Header 的整个视口
 
 ## 4. 工具页签
 

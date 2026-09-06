@@ -16,6 +16,7 @@
     "@vidstack/react": "^1.15.6",
     "hls.js": "^1.6.18",
     "lucide-react": "^1.28.0",
+    "media-icons": "1.1.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3"
